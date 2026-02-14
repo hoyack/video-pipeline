@@ -27,10 +27,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Configuration loads from config.yaml and environment variables with type validation
   3. Binary artifacts save to tmp/{project_id}/ with structured subdirectories (keyframes/, clips/, output/)
   4. Database operations survive crashes without corruption (WAL + synchronous=FULL)
-**Plans**: TBD
+**Plans**: 3 plans in 3 waves
 
 Plans:
-- [ ] 01-01: [Brief description of first plan]
+- [ ] 01-01-PLAN.md — Project structure and SQLAlchemy models with Mapped annotations
+- [ ] 01-02-PLAN.md — Configuration loading with pydantic-settings and YAML source
+- [ ] 01-03-PLAN.md — Database engine with WAL mode, file manager, and schema initialization
 
 ### Phase 2: Generation Pipeline
 **Goal**: Pipeline generates storyboards, keyframes, video clips, and stitched output from text prompts using Google Vertex AI APIs
@@ -71,6 +73,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/TBD | Not started | - |
+| 1. Foundation | 0/3 | Ready to execute | - |
 | 2. Generation Pipeline | 0/TBD | Not started | - |
 | 3. Orchestration & Interfaces | 0/TBD | Not started | - |

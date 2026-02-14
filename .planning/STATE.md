@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 2 of 3 (Generation Pipeline)
-Plan: 3 of 4 in current phase
-Status: In Progress
-Last activity: 2026-02-14 — Completed plan 02-03 (Video Generation)
+Plan: 4 of 4 in current phase
+Status: Phase Complete
+Last activity: 2026-02-14 — Completed plan 02-04 (Video Stitching)
 
-Progress: [█████░░░░░] 40%
+Progress: [██████░░░░] 53%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 2.2 min
-- Total execution time: 0.22 hours
+- Total plans completed: 7
+- Average duration: 2.1 min
+- Total execution time: 0.25 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-foundation | 3 | 7.0 min | 2.3 min |
-| 02-generation-pipeline | 3 | 6.6 min | 2.2 min |
+| 02-generation-pipeline | 4 | 8.0 min | 2.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-03 (2.5min), 02-01 (3.6min), 02-02 (1.7min), 02-03 (1.3min)
-- Trend: Accelerating execution for focused implementation tasks
+- Last 5 plans: 02-01 (3.6min), 02-02 (1.7min), 02-03 (1.3min), 02-04 (1.4min)
+- Trend: Consistent fast execution for pipeline implementation tasks
 
 *Updated after each plan completion*
 
@@ -71,6 +71,10 @@ Recent decisions affecting current work:
 - **02-03:** Use async sleep in polling loop to avoid blocking event loop
 - **02-03:** Mark RAI-filtered clips and continue pipeline rather than crashing
 - **02-03:** Resume polling from clip.poll_count for idempotent crash recovery
+- **02-04:** Used concat demuxer with -safe 0 flag for absolute path support in concat list
+- **02-04:** Stream copy (-c copy) for concat demuxer to preserve audio quality without re-encoding
+- **02-04:** Wrapped subprocess.run() in asyncio.to_thread() to prevent event loop blocking
+- **02-04:** Validate ffmpeg at startup rather than during pipeline execution for fail-fast error handling
 
 ### Pending Todos
 
@@ -83,8 +87,8 @@ None yet.
 
 **Phase 2:**
 - Rate limiting on Vertex AI free tier may require quota increase or billing enablement for production use
-- FFmpeg must be validated at startup to provide clear error before any generation work
 - ADC authentication requires GOOGLE_APPLICATION_CREDENTIALS environment variable in production
+- ffmpeg must be installed on deployment environment (validated at startup with clear error message)
 
 **Phase 3:**
 - Cost estimation ($15 per 5-scene project) should be communicated to users before generation starts
@@ -92,5 +96,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-14 (plan execution)
-Stopped at: Completed 02-03-PLAN.md - Video Generation
+Stopped at: Completed 02-04-PLAN.md - Video Stitching (Phase 2 Complete)
 Resume file: None

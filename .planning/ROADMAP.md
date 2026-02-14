@@ -12,7 +12,7 @@ This roadmap transforms a text prompt into a multi-scene AI-generated video thro
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation** - Crash-safe state management, database, config, and artifact storage
+- [x] **Phase 1: Foundation** - Crash-safe state management, database, config, and artifact storage ✓
 - [ ] **Phase 2: Generation Pipeline** - Vertex AI integration and all content generators (storyboard, keyframes, video, stitch)
 - [ ] **Phase 3: Orchestration & Interfaces** - State machine coordinator, resume logic, CLI, and HTTP API
 
@@ -30,9 +30,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans in 3 waves
 
 Plans:
-- [ ] 01-01-PLAN.md — Project structure and SQLAlchemy models with Mapped annotations
-- [ ] 01-02-PLAN.md — Configuration loading with pydantic-settings and YAML source
-- [ ] 01-03-PLAN.md — Database engine with WAL mode, file manager, and schema initialization
+- [x] 01-01-PLAN.md — Project structure and SQLAlchemy models with Mapped annotations
+- [x] 01-02-PLAN.md — Configuration loading with pydantic-settings and YAML source
+- [x] 01-03-PLAN.md — Database engine with WAL mode, file manager, and schema initialization
 
 ### Phase 2: Generation Pipeline
 **Goal**: Pipeline generates storyboards, keyframes, video clips, and stitched output from text prompts using Google Vertex AI APIs
@@ -73,6 +73,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/3 | Ready to execute | - |
+| 1. Foundation | 3/3 | ✓ Complete | 2026-02-14 |
 | 2. Generation Pipeline | 0/TBD | Not started | - |
 | 3. Orchestration & Interfaces | 0/TBD | Not started | - |

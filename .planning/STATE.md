@@ -5,33 +5,34 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 1: Foundation
+**Current focus:** Phase 2: Generation Pipeline
 
 ## Current Position
 
-Phase: 1 of 3 (Foundation)
-Plan: 3 of 3 in current phase
-Status: Complete
-Last activity: 2026-02-14 — Completed plan 01-03 (Database Engine and File Management)
+Phase: 2 of 3 (Generation Pipeline)
+Plan: 1 of 4 in current phase
+Status: In Progress
+Last activity: 2026-02-14 — Completed plan 02-01 (Storyboard Generation)
 
-Progress: [██████████] 100%
+Progress: [███░░░░░░░] 25%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 2.3 min
-- Total execution time: 0.12 hours
+- Total plans completed: 4
+- Average duration: 2.5 min
+- Total execution time: 0.18 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-foundation | 3 | 7.0 min | 2.3 min |
+| 02-generation-pipeline | 1 | 3.6 min | 3.6 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (2.5min), 01-02 (2min), 01-03 (2.5min)
-- Trend: Consistent velocity
+- Last 5 plans: 01-01 (2.5min), 01-02 (2min), 01-03 (2.5min), 02-01 (3.6min)
+- Trend: Slightly increased duration for AI integration
 
 *Updated after each plan completion*
 
@@ -58,6 +59,10 @@ Recent decisions affecting current work:
 - **01-03:** Use synchronous=FULL for maximum crash safety per FOUND-04 requirement
 - **01-03:** Implement path traversal protection using is_relative_to() method
 - **01-03:** Use metadata.create_all() instead of Alembic for v1 simplicity
+- **02-01:** Used google-genai SDK in Vertex AI mode with ADC for unified authentication
+- **02-01:** Implemented tenacity retry with temperature reduction (0.7 → 0.55 → 0.4) on JSON failures
+- **02-01:** Corrected model names: gemini-2.0-flash-exp, imagen-3.0-generate-001, veo-2.0-generate-001
+- **02-01:** Applied singleton pattern to vertex_client to avoid repeated client initialization
 
 ### Pending Todos
 
@@ -69,8 +74,9 @@ None yet.
 - ~~SQLite WAL mode must be enabled from first migration to prevent database corruption during crashes~~ ✓ Resolved in 01-03
 
 **Phase 2:**
-- Rate limiting strategy needed for Nano Banana Pro (free tier ~10 req/min)
+- Rate limiting on Vertex AI free tier may require quota increase or billing enablement for production use
 - FFmpeg must be validated at startup to provide clear error before any generation work
+- ADC authentication requires GOOGLE_APPLICATION_CREDENTIALS environment variable in production
 
 **Phase 3:**
 - Cost estimation ($15 per 5-scene project) should be communicated to users before generation starts
@@ -78,5 +84,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-14 (plan execution)
-Stopped at: Completed 01-03-PLAN.md - Database Engine and File Management (Phase 1 Complete)
+Stopped at: Completed 02-01-PLAN.md - Storyboard Generation
 Resume file: None

@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 2 of 3 (Generation Pipeline)
-Plan: 1 of 4 in current phase
+Plan: 2 of 4 in current phase
 Status: In Progress
-Last activity: 2026-02-14 — Completed plan 02-01 (Storyboard Generation)
+Last activity: 2026-02-14 — Completed plan 02-02 (Keyframe Generation)
 
-Progress: [███░░░░░░░] 25%
+Progress: [████░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 2.5 min
-- Total execution time: 0.18 hours
+- Total plans completed: 5
+- Average duration: 2.4 min
+- Total execution time: 0.20 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-foundation | 3 | 7.0 min | 2.3 min |
-| 02-generation-pipeline | 1 | 3.6 min | 3.6 min |
+| 02-generation-pipeline | 2 | 5.3 min | 2.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (2.5min), 01-02 (2min), 01-03 (2.5min), 02-01 (3.6min)
-- Trend: Slightly increased duration for AI integration
+- Last 5 plans: 01-02 (2min), 01-03 (2.5min), 02-01 (3.6min), 02-02 (1.7min)
+- Trend: Faster completion for focused implementation tasks
 
 *Updated after each plan completion*
 
@@ -63,6 +63,10 @@ Recent decisions affecting current work:
 - **02-01:** Implemented tenacity retry with temperature reduction (0.7 → 0.55 → 0.4) on JSON failures
 - **02-01:** Corrected model names: gemini-2.0-flash-exp, imagen-3.0-generate-001, veo-2.0-generate-001
 - **02-01:** Applied singleton pattern to vertex_client to avoid repeated client initialization
+- **02-02:** Used image-conditioned generation for end frames to maintain visual style and composition
+- **02-02:** Commit after each scene (not at end) for crash recovery and resumability
+- **02-02:** Applied jitter to retry backoff to prevent thundering herd on rate limit errors
+- **02-02:** Scene 0 start frame from text alone, all other start frames inherited from previous end frame
 
 ### Pending Todos
 
@@ -84,5 +88,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-14 (plan execution)
-Stopped at: Completed 02-01-PLAN.md - Storyboard Generation
+Stopped at: Completed 02-02-PLAN.md - Keyframe Generation
 Resume file: None

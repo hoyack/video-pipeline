@@ -64,10 +64,12 @@ Plans:
   4. User can check project status, list all projects, resume failed projects, and re-stitch with crossfade via CLI
   5. HTTP API accepts generation requests in background and returns project_id immediately
   6. HTTP API serves status polling, project details, project listing, resume triggers, and final MP4 downloads
-**Plans**: TBD
+**Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 03-01: [Brief description]
+- [ ] 03-01-PLAN.md — Pipeline orchestrator with state machine, resume logic, and run metadata tracking
+- [ ] 03-02-PLAN.md — Typer CLI interface with generate, resume, status, list, and stitch commands
+- [ ] 03-03-PLAN.md — FastAPI HTTP API with 7 endpoints for async generation, polling, and downloads
 
 ## Progress
 
@@ -78,4 +80,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Foundation | 3/3 | ✓ Complete | 2026-02-14 |
 | 2. Generation Pipeline | 4/4 | ✓ Complete | 2026-02-14 |
-| 3. Orchestration & Interfaces | 0/TBD | Not started | - |
+| 3. Orchestration & Interfaces | 0/3 | Not started | - |

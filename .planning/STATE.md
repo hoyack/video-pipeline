@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 2 of 3 (Generation Pipeline)
-Plan: 2 of 4 in current phase
+Plan: 3 of 4 in current phase
 Status: In Progress
-Last activity: 2026-02-14 — Completed plan 02-02 (Keyframe Generation)
+Last activity: 2026-02-14 — Completed plan 02-03 (Video Generation)
 
-Progress: [████░░░░░░] 33%
+Progress: [█████░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 2.4 min
-- Total execution time: 0.20 hours
+- Total plans completed: 6
+- Average duration: 2.2 min
+- Total execution time: 0.22 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-foundation | 3 | 7.0 min | 2.3 min |
-| 02-generation-pipeline | 2 | 5.3 min | 2.7 min |
+| 02-generation-pipeline | 3 | 6.6 min | 2.2 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (2min), 01-03 (2.5min), 02-01 (3.6min), 02-02 (1.7min)
-- Trend: Faster completion for focused implementation tasks
+- Last 5 plans: 01-03 (2.5min), 02-01 (3.6min), 02-02 (1.7min), 02-03 (1.3min)
+- Trend: Accelerating execution for focused implementation tasks
 
 *Updated after each plan completion*
 
@@ -67,6 +67,10 @@ Recent decisions affecting current work:
 - **02-02:** Commit after each scene (not at end) for crash recovery and resumability
 - **02-02:** Applied jitter to retry backoff to prevent thundering herd on rate limit errors
 - **02-02:** Scene 0 start frame from text alone, all other start frames inherited from previous end frame
+- **02-03:** Persist operation_name to database BEFORE polling starts for crash recovery
+- **02-03:** Use async sleep in polling loop to avoid blocking event loop
+- **02-03:** Mark RAI-filtered clips and continue pipeline rather than crashing
+- **02-03:** Resume polling from clip.poll_count for idempotent crash recovery
 
 ### Pending Todos
 
@@ -88,5 +92,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-14 (plan execution)
-Stopped at: Completed 02-02-PLAN.md - Keyframe Generation
+Stopped at: Completed 02-03-PLAN.md - Video Generation
 Resume file: None

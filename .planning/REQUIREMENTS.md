@@ -116,54 +116,54 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | — | Pending |
-| FOUND-02 | — | Pending |
-| FOUND-03 | — | Pending |
-| FOUND-04 | — | Pending |
-| STOR-01 | — | Pending |
-| STOR-02 | — | Pending |
-| STOR-03 | — | Pending |
-| STOR-04 | — | Pending |
-| STOR-05 | — | Pending |
-| KEYF-01 | — | Pending |
-| KEYF-02 | — | Pending |
-| KEYF-03 | — | Pending |
-| KEYF-04 | — | Pending |
-| KEYF-05 | — | Pending |
-| KEYF-06 | — | Pending |
-| VGEN-01 | — | Pending |
-| VGEN-02 | — | Pending |
-| VGEN-03 | — | Pending |
-| VGEN-04 | — | Pending |
-| VGEN-05 | — | Pending |
-| VGEN-06 | — | Pending |
-| STCH-01 | — | Pending |
-| STCH-02 | — | Pending |
-| STCH-03 | — | Pending |
-| STCH-04 | — | Pending |
-| STCH-05 | — | Pending |
-| ORCH-01 | — | Pending |
-| ORCH-02 | — | Pending |
-| ORCH-03 | — | Pending |
-| ORCH-04 | — | Pending |
-| CLI-01 | — | Pending |
-| CLI-02 | — | Pending |
-| CLI-03 | — | Pending |
-| CLI-04 | — | Pending |
-| CLI-05 | — | Pending |
-| API-01 | — | Pending |
-| API-02 | — | Pending |
-| API-03 | — | Pending |
-| API-04 | — | Pending |
-| API-05 | — | Pending |
-| API-06 | — | Pending |
-| API-07 | — | Pending |
+| FOUND-01 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Pending |
+| STOR-01 | Phase 2 | Pending |
+| STOR-02 | Phase 2 | Pending |
+| STOR-03 | Phase 2 | Pending |
+| STOR-04 | Phase 2 | Pending |
+| STOR-05 | Phase 2 | Pending |
+| KEYF-01 | Phase 2 | Pending |
+| KEYF-02 | Phase 2 | Pending |
+| KEYF-03 | Phase 2 | Pending |
+| KEYF-04 | Phase 2 | Pending |
+| KEYF-05 | Phase 2 | Pending |
+| KEYF-06 | Phase 2 | Pending |
+| VGEN-01 | Phase 2 | Pending |
+| VGEN-02 | Phase 2 | Pending |
+| VGEN-03 | Phase 2 | Pending |
+| VGEN-04 | Phase 2 | Pending |
+| VGEN-05 | Phase 2 | Pending |
+| VGEN-06 | Phase 2 | Pending |
+| STCH-01 | Phase 2 | Pending |
+| STCH-02 | Phase 2 | Pending |
+| STCH-03 | Phase 2 | Pending |
+| STCH-04 | Phase 2 | Pending |
+| STCH-05 | Phase 2 | Pending |
+| ORCH-01 | Phase 3 | Pending |
+| ORCH-02 | Phase 3 | Pending |
+| ORCH-03 | Phase 3 | Pending |
+| ORCH-04 | Phase 3 | Pending |
+| CLI-01 | Phase 3 | Pending |
+| CLI-02 | Phase 3 | Pending |
+| CLI-03 | Phase 3 | Pending |
+| CLI-04 | Phase 3 | Pending |
+| CLI-05 | Phase 3 | Pending |
+| API-01 | Phase 3 | Pending |
+| API-02 | Phase 3 | Pending |
+| API-03 | Phase 3 | Pending |
+| API-04 | Phase 3 | Pending |
+| API-05 | Phase 3 | Pending |
+| API-06 | Phase 3 | Pending |
+| API-07 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 41 total
-- Mapped to phases: 0
-- Unmapped: 41
+- Mapped to phases: 41
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-14*
-*Last updated: 2026-02-14 after initial definition*
+*Last updated: 2026-02-14 after roadmap creation*

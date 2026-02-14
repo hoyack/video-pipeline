@@ -45,10 +45,13 @@ Plans:
   4. RAI-filtered clips are marked and pipeline continues without crashing
   5. All completed clips are concatenated into single MP4 with optional crossfade transitions
   6. ffmpeg is validated at startup with clear error if missing
-**Plans**: TBD
+**Plans**: 4 plans in 4 waves
 
 Plans:
-- [ ] 02-01: [Brief description]
+- [ ] 02-01-PLAN.md — Storyboard generation with Gemini structured output
+- [ ] 02-02-PLAN.md — Sequential keyframe generation with visual continuity
+- [ ] 02-03-PLAN.md — Video generation with Veo polling and error handling
+- [ ] 02-04-PLAN.md — Video stitching with ffmpeg and startup validation
 
 ### Phase 3: Orchestration & Interfaces
 **Goal**: Users can generate videos via CLI or HTTP API with full crash recovery, status tracking, and resume capability
@@ -74,5 +77,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 3/3 | ✓ Complete | 2026-02-14 |
-| 2. Generation Pipeline | 0/TBD | Not started | - |
+| 2. Generation Pipeline | 0/4 | Not started | - |
 | 3. Orchestration & Interfaces | 0/TBD | Not started | - |

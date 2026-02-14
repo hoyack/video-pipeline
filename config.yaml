@@ -1,0 +1,30 @@
+google_cloud:
+  project_id: "hoyack-1577568661630"
+  location: "us-central1"
+  use_vertex_ai: true
+
+models:
+  storyboard_llm: "gemini-3-pro"
+  image_gen: "gemini-3-pro-image-preview"
+  video_gen: "veo-3.1-generate-001"
+
+pipeline:
+  default_style: "cinematic"
+  default_aspect_ratio: "16:9"
+  default_clip_duration: 4
+  max_scenes: 15
+  image_gen_delay: 3
+  video_poll_interval: 15
+  video_poll_max: 40
+  video_gen_concurrency: 1
+  crossfade_seconds: 0.0
+  retry_max_attempts: 5
+  retry_base_delay: 2
+
+storage:
+  database_url: "sqlite+aiosqlite:///vidpipe.db"
+  tmp_dir: "./tmp"
+
+server:
+  host: "0.0.0.0"
+  port: 8000

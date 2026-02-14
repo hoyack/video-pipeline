@@ -13,7 +13,7 @@ This roadmap transforms a text prompt into a multi-scene AI-generated video thro
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation** - Crash-safe state management, database, config, and artifact storage ✓
-- [ ] **Phase 2: Generation Pipeline** - Vertex AI integration and all content generators (storyboard, keyframes, video, stitch)
+- [x] **Phase 2: Generation Pipeline** - Vertex AI integration and all content generators (storyboard, keyframes, video, stitch) ✓
 - [ ] **Phase 3: Orchestration & Interfaces** - State machine coordinator, resume logic, CLI, and HTTP API
 
 ## Phase Details
@@ -48,10 +48,10 @@ Plans:
 **Plans**: 4 plans in 4 waves
 
 Plans:
-- [ ] 02-01-PLAN.md — Storyboard generation with Gemini structured output
-- [ ] 02-02-PLAN.md — Sequential keyframe generation with visual continuity
-- [ ] 02-03-PLAN.md — Video generation with Veo polling and error handling
-- [ ] 02-04-PLAN.md — Video stitching with ffmpeg and startup validation
+- [x] 02-01-PLAN.md — Storyboard generation with Gemini structured output
+- [x] 02-02-PLAN.md — Sequential keyframe generation with visual continuity
+- [x] 02-03-PLAN.md — Video generation with Veo polling and error handling
+- [x] 02-04-PLAN.md — Video stitching with ffmpeg and startup validation
 
 ### Phase 3: Orchestration & Interfaces
 **Goal**: Users can generate videos via CLI or HTTP API with full crash recovery, status tracking, and resume capability
@@ -77,5 +77,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 3/3 | ✓ Complete | 2026-02-14 |
-| 2. Generation Pipeline | 0/4 | Not started | - |
+| 2. Generation Pipeline | 4/4 | ✓ Complete | 2026-02-14 |
 | 3. Orchestration & Interfaces | 0/TBD | Not started | - |

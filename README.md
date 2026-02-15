@@ -11,17 +11,18 @@ Text Prompt
     │
     ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  1. STORYBOARD (Gemini 2.5 Flash)                           │
+│  1. STORYBOARD (Gemini LLM)                                 │
 │     Prompt → structured scene breakdown with style guide,   │
-│     keyframe prompts, motion descriptions, transitions      │
+│     character bible, keyframe prompts, motion descriptions  │
 ├─────────────────────────────────────────────────────────────┤
-│  2. KEYFRAMES (Imagen 3.0 + Gemini Flash Image)             │
-│     Scene 0 start frame from text (Imagen)                  │
-│     End frames via image-conditioned generation (Gemini)    │
+│  2. KEYFRAMES (Imagen / Gemini Image)                       │
+│     Scene 0 start frame from text                           │
+│     End frames via image-conditioned generation             │
 │     Scene N+1 start = Scene N end (visual continuity)       │
 ├─────────────────────────────────────────────────────────────┤
-│  3. VIDEO GENERATION (Veo 2.0)                              │
+│  3. VIDEO GENERATION (Veo)                                   │
 │     Start frame + end frame → interpolated video clip       │
+│     Optional audio generation (Veo 3+)                      │
 │     Long-running operations polled with crash-safe resume   │
 ├─────────────────────────────────────────────────────────────┤
 │  4. STITCHING (ffmpeg)                                      │
@@ -47,7 +48,7 @@ video-pipeline/
 │   ├── src/
 │   └── package.json
 ├── config.yaml         # Pipeline + model configuration
-├── .env                # Credentials (not committed)
+├── .env                # Credentials + GCP project (not committed)
 ├── .env.example
 └── docs/
 ```
@@ -65,42 +66,49 @@ video-pipeline/
 # Clone
 git clone <repo-url> && cd video-pipeline
 
-# Configure credentials
-echo 'GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-service-account.json' > .env
-
-# Verify config
-cat config.yaml  # check project_id matches your GCP project
+# Configure credentials and GCP project
+cp .env.example .env
+# Edit .env:
+#   GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-service-account.json
+#   VIDPIPE_GOOGLE_CLOUD__PROJECT_ID=your-gcp-project-id
 
 # Install backend
 pip install -e backend/
 
 # Install frontend
-cd frontend && npm install && cd ..
+cd frontend && npm install && npm run build && cd ..
 
-# Start backend
+# Start backend (serves both API and frontend)
 uvicorn vidpipe.api.app:app --host 0.0.0.0 --port 8000
-
-# Start frontend (separate terminal)
-cd frontend && npm run dev
 ```
 
-The frontend dev server runs on `http://localhost:5173` and proxies `/api` requests to the backend on port 8000.
+Open `http://localhost:8000` to use the app.
+
+For frontend development with hot reload, run `npm run dev` in the `frontend/` directory (proxies to backend on port 8000).
 
 ## Configuration
 
-The `config.yaml` file controls all settings:
+### Credentials (`.env`)
+
+Google Cloud credentials and project ID live in `.env` (never committed):
+
+```bash
+# Required
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+VIDPIPE_GOOGLE_CLOUD__PROJECT_ID=your-gcp-project-id
+
+# Optional (defaults to us-central1)
+# VIDPIPE_GOOGLE_CLOUD__LOCATION=us-central1
+```
+
+### Pipeline settings (`config.yaml`)
 
 ```yaml
-google_cloud:
-  project_id: "your-gcp-project-id"
-  location: "us-central1"
-  use_vertex_ai: true
-
 models:
   storyboard_llm: "gemini-2.5-flash"
-  image_gen: "imagen-3.0-generate-001"
+  image_gen: "imagen-4.0-fast-generate-001"
   image_conditioned: "gemini-2.5-flash-image"
-  video_gen: "veo-2.0-generate-001"
+  video_gen: "veo-3.1-fast-generate-001"
 
 pipeline:
   default_style: "cinematic"
@@ -113,11 +121,25 @@ pipeline:
   crossfade_seconds: 0.0          # 0 = hard cuts, >0 = crossfade
 ```
 
-Environment variables override YAML values using `VIDPIPE_` prefix with `__` for nesting:
+Any setting can be overridden via environment variables with `VIDPIPE_` prefix and `__` for nesting:
 ```bash
 export VIDPIPE_PIPELINE__MAX_SCENES=10
-export VIDPIPE_GOOGLE_CLOUD__PROJECT_ID=my-project
+export VIDPIPE_MODELS__VIDEO_GEN=veo-3.0-generate-001
 ```
+
+## Supported Models
+
+All models can be selected per-project in the UI.
+
+**Text (storyboard):** Gemini 2.5 Flash, Flash Lite, Pro | Gemini 3 Flash, Pro
+
+**Image (keyframes):** Imagen 3, 4, 4 Fast, 4 Ultra | Gemini Flash Image, 3 Pro Image
+
+**Video:** Veo 2 | Veo 3, 3 Fast | Veo 3.1, 3.1 GA, 3.1 Fast, 3.1 Fast GA
+
+Audio generation is supported on Veo 3+ models and can be toggled per-project.
+
+Some preview models (Gemini 3 Flash/Pro, Gemini 3 Pro Image) are automatically routed to the `global` Vertex AI endpoint.
 
 ## CLI Usage
 
@@ -137,7 +159,7 @@ python -m vidpipe status <project-id>
 # List all projects
 python -m vidpipe list
 
-# Resume a failed run
+# Resume a failed or stopped run
 python -m vidpipe resume <project-id>
 
 # Re-stitch with crossfade
@@ -152,9 +174,24 @@ python -m vidpipe stitch <project-id> --crossfade 0.5
 | `GET` | `/api/projects/{id}/status` | Poll project status |
 | `GET` | `/api/projects/{id}` | Full project details with scenes |
 | `GET` | `/api/projects` | List all projects |
-| `POST` | `/api/projects/{id}/resume` | Resume failed project |
+| `POST` | `/api/projects/{id}/resume` | Resume failed/stopped project |
+| `POST` | `/api/projects/{id}/stop` | Stop a running pipeline |
 | `GET` | `/api/projects/{id}/download` | Download final MP4 |
 | `GET` | `/api/health` | Health check |
+
+## Pipeline States
+
+```
+pending → storyboarding → keyframing → video_gen → stitching → complete
+                                                                   │
+                          ┌──── stopped (user) ◄───────────────────┤
+                          │                                        │
+                          └──── failed (error) ◄───────────────────┘
+                                    │
+                                    └──► resume picks up from last checkpoint
+```
+
+Stopped and failed projects can be resumed — the pipeline skips completed steps and picks up from the failure/stop point.
 
 ## Crash Recovery
 
@@ -169,13 +206,15 @@ If anything fails, `python -m vidpipe resume <project-id>` skips completed steps
 
 ## Cost Estimate
 
+Costs vary by model selection. Examples using default models (Imagen 4 Fast + Veo 3.1 Fast):
+
 | Scenes | Clip Duration | Estimated Cost |
 |--------|--------------|----------------|
-| 3 | 5s | ~$9 |
-| 5 | 5s | ~$15 |
-| 5 | 8s | ~$15 |
+| 3 | 4s | ~$2.50 |
+| 5 | 6s | ~$5.50 |
+| 5 | 8s | ~$7.00 |
 
-Imagen and Gemini calls are minimal cost by comparison.
+Higher-tier models (Veo 3.1 GA, Imagen 4 Ultra) cost more. The UI shows a cost estimate before generation starts.
 
 ## License
 

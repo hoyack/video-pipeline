@@ -1,8 +1,3 @@
-google_cloud:
-  project_id: "hoyack-1577568661630"
-  location: "us-central1"
-  use_vertex_ai: true
-
 models:
   storyboard_llm: "gemini-2.5-flash"
   image_gen: "imagen-4.0-fast-generate-001"

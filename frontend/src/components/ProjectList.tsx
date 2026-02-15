@@ -1,7 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { listProjects } from "../api/client.ts";
 import type { ProjectListItem } from "../api/types.ts";
+import { estimateCost } from "../lib/constants.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
+
+function formatCost(item: ProjectListItem): string | null {
+  if (!item.total_duration || !item.clip_duration || !item.text_model || !item.image_model || !item.video_model) {
+    return null;
+  }
+  const cost = estimateCost(
+    item.total_duration,
+    item.clip_duration,
+    item.text_model,
+    item.image_model,
+    item.video_model,
+    item.audio_enabled ?? false,
+  );
+  return `$${cost.toFixed(2)}`;
+}
 
 interface ProjectListProps {
   onSelectProject: (projectId: string) => void;
@@ -70,29 +86,38 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
               <th className="px-4 py-2.5 text-left font-medium text-gray-400">
                 Status
               </th>
+              <th className="px-4 py-2.5 text-right font-medium text-gray-400">
+                Est. Cost
+              </th>
               <th className="px-4 py-2.5 text-left font-medium text-gray-400">
                 Created
               </th>
             </tr>
           </thead>
           <tbody>
-            {projects.map((p) => (
-              <tr
-                key={p.project_id}
-                onClick={() => onSelectProject(p.project_id)}
-                className="cursor-pointer border-b border-gray-800/50 hover:bg-gray-900/80 transition-colors"
-              >
-                <td className="px-4 py-2.5 text-gray-200 max-w-md truncate">
-                  {p.prompt}
-                </td>
-                <td className="px-4 py-2.5">
-                  <StatusBadge status={p.status} />
-                </td>
-                <td className="px-4 py-2.5 text-gray-500">
-                  {new Date(p.created_at).toLocaleString()}
-                </td>
-              </tr>
-            ))}
+            {projects.map((p) => {
+              const cost = formatCost(p);
+              return (
+                <tr
+                  key={p.project_id}
+                  onClick={() => onSelectProject(p.project_id)}
+                  className="cursor-pointer border-b border-gray-800/50 hover:bg-gray-900/80 transition-colors"
+                >
+                  <td className="px-4 py-2.5 text-gray-200 max-w-md truncate">
+                    {p.prompt}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <StatusBadge status={p.status} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono text-gray-400">
+                    {cost ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-gray-500">
+                    {new Date(p.created_at).toLocaleString()}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

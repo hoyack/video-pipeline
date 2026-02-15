@@ -51,6 +51,7 @@ export interface ProjectDetail {
   scenes: SceneDetail[];
   error_message: string | null;
   total_duration?: number | null;
+  clip_duration?: number | null;
   text_model?: string | null;
   image_model?: string | null;
   video_model?: string | null;
@@ -63,6 +64,12 @@ export interface ProjectListItem {
   prompt: string;
   status: string;
   created_at: string;
+  total_duration?: number | null;
+  clip_duration?: number | null;
+  text_model?: string | null;
+  image_model?: string | null;
+  video_model?: string | null;
+  audio_enabled?: boolean | null;
 }
 
 /** Response from POST /api/projects/{id}/resume */
@@ -76,4 +83,20 @@ export interface ResumeResponse {
 export interface StopResponse {
   project_id: string;
   status: string;
+}
+
+/** Response from GET /api/metrics */
+export interface MetricsResponse {
+  total_projects: number;
+  status_counts: Record<string, number>;
+  style_counts: Record<string, number>;
+  aspect_ratio_counts: Record<string, number>;
+  text_model_counts: Record<string, number>;
+  image_model_counts: Record<string, number>;
+  video_model_counts: Record<string, number>;
+  audio_counts: Record<string, number>;
+  scene_count_counts: Record<string, number>;
+  total_estimated_cost: number;
+  total_video_seconds: number;
+  avg_clip_duration: number | null;
 }

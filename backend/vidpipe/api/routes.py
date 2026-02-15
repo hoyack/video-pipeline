@@ -10,13 +10,15 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func as sa_func, select
 from sqlalchemy.orm import selectinload
 
 from vidpipe.db import async_session
 from vidpipe.db.models import Project, Scene, Keyframe, VideoClip
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
+
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,93 @@ ALLOWED_DURATIONS: dict[str, list[int]] = {
     "veo-3.1-fast-generate-preview": [4, 6, 8],
     "veo-3.1-fast-generate-001": [4, 6, 8],
 }
+
+# ---------------------------------------------------------------------------
+# Pricing (for server-side cost estimation)
+# ---------------------------------------------------------------------------
+TEXT_MODEL_COST: dict[str, float] = {
+    "gemini-2.5-flash": 0.006,
+    "gemini-2.5-flash-lite": 0.001,
+    "gemini-2.5-pro": 0.023,
+    "gemini-3-flash-preview": 0.007,
+    "gemini-3-pro-preview": 0.028,
+}
+
+IMAGE_MODEL_COST: dict[str, float] = {
+    "imagen-3.0-generate-002": 0.03,
+    "imagen-4.0-generate-001": 0.04,
+    "imagen-4.0-fast-generate-001": 0.02,
+    "imagen-4.0-ultra-generate-001": 0.06,
+    "gemini-2.5-flash-image": 0.04,
+    "gemini-3-pro-image-preview": 0.13,
+}
+
+VIDEO_MODEL_COST_SILENT: dict[str, float] = {
+    "veo-2.0-generate-001": 0.35,
+    "veo-3.0-generate-001": 0.40,
+    "veo-3.0-fast-generate-001": 0.15,
+    "veo-3.1-generate-preview": 0.40,
+    "veo-3.1-generate-001": 0.40,
+    "veo-3.1-fast-generate-preview": 0.10,
+    "veo-3.1-fast-generate-001": 0.10,
+}
+
+VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
+    "veo-2.0-generate-001": 0.35,
+    "veo-3.0-generate-001": 0.40,
+    "veo-3.0-fast-generate-001": 0.15,
+    "veo-3.1-generate-preview": 0.40,
+    "veo-3.1-generate-001": 0.40,
+    "veo-3.1-fast-generate-preview": 0.15,
+    "veo-3.1-fast-generate-001": 0.15,
+}
+
+
+def _estimate_project_cost(
+    project: "Project",
+    generated_keyframes: int = 0,
+    completed_clips: int = 0,
+    has_storyboard: bool = False,
+) -> float:
+    """Estimate cost based on actual artifacts generated.
+
+    For complete projects, uses the theoretical full cost.
+    For incomplete projects, counts only what was actually generated:
+    - text cost if storyboard was produced
+    - image cost per generated keyframe
+    - video cost per completed clip × clip_duration
+    """
+    clip_dur = project.target_clip_duration or 6
+    audio = project.audio_enabled and project.video_model in AUDIO_CAPABLE_MODELS
+    vid_rate = (
+        VIDEO_MODEL_COST_AUDIO.get(project.video_model or "", 0.40)
+        if audio
+        else VIDEO_MODEL_COST_SILENT.get(project.video_model or "", 0.40)
+    )
+    img_rate = IMAGE_MODEL_COST.get(project.image_model or "", 0.04)
+    text_cost_rate = TEXT_MODEL_COST.get(project.text_model or "", 0.01)
+
+    if project.status == "complete":
+        # Full theoretical cost for completed projects
+        scene_count = project.target_scene_count or math.ceil(
+            (project.total_duration or 15) / clip_dur
+        )
+        return (
+            text_cost_rate
+            + (scene_count + 1) * img_rate
+            + scene_count * clip_dur * vid_rate
+        )
+
+    if project.status == "pending":
+        return 0.0
+
+    # Partial cost based on actual artifacts
+    cost = 0.0
+    if has_storyboard:
+        cost += text_cost_rate
+    cost += generated_keyframes * img_rate
+    cost += completed_clips * clip_dur * vid_rate
+    return cost
 
 
 # ============================================================================
@@ -133,6 +222,7 @@ class ProjectDetail(BaseModel):
     scenes: list[SceneDetail]
     error_message: Optional[str] = None
     total_duration: Optional[int] = None
+    clip_duration: Optional[int] = None
     text_model: Optional[str] = None
     image_model: Optional[str] = None
     video_model: Optional[str] = None
@@ -145,6 +235,12 @@ class ProjectListItem(BaseModel):
     prompt: str
     status: str
     created_at: str
+    total_duration: Optional[int] = None
+    clip_duration: Optional[int] = None
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    audio_enabled: Optional[bool] = None
 
 
 class ResumeResponse(BaseModel):
@@ -158,6 +254,22 @@ class StopResponse(BaseModel):
     """Response schema for POST /api/projects/{id}/stop."""
     project_id: str
     status: str
+
+
+class MetricsResponse(BaseModel):
+    """Response schema for GET /api/metrics."""
+    total_projects: int
+    status_counts: dict[str, int]
+    style_counts: dict[str, int]
+    aspect_ratio_counts: dict[str, int]
+    text_model_counts: dict[str, int]
+    image_model_counts: dict[str, int]
+    video_model_counts: dict[str, int]
+    audio_counts: dict[str, int]
+    scene_count_counts: dict[str, int]
+    total_estimated_cost: float
+    total_video_seconds: int
+    avg_clip_duration: Optional[float] = None
 
 
 # ============================================================================
@@ -341,6 +453,7 @@ async def get_project_detail(project_id: uuid.UUID):
             scenes=scene_details,
             error_message=project.error_message,
             total_duration=project.total_duration,
+            clip_duration=project.target_clip_duration,
             text_model=project.text_model,
             image_model=project.image_model,
             video_model=project.video_model,
@@ -363,6 +476,12 @@ async def list_projects():
                 prompt=p.prompt,
                 status=p.status,
                 created_at=p.created_at.isoformat(),
+                total_duration=p.total_duration,
+                clip_duration=p.target_clip_duration,
+                text_model=p.text_model,
+                image_model=p.image_model,
+                video_model=p.video_model,
+                audio_enabled=p.audio_enabled,
             )
             for p in projects
         ]
@@ -477,6 +596,108 @@ async def download_video(project_id: uuid.UUID):
                 "Content-Disposition": f'attachment; filename="video_{project_id}.mp4"'
             }
         )
+
+
+@router.get("/metrics", response_model=MetricsResponse)
+async def get_metrics():
+    """Aggregate metrics across all projects.
+
+    Cost estimation is artifact-based: complete projects use theoretical full
+    cost; incomplete projects count only actually-generated keyframes and
+    completed video clips.
+    """
+    async with async_session() as session:
+        result = await session.execute(select(Project))
+        projects = result.scalars().all()
+
+        # Build lookup of actual artifacts per project for cost accuracy.
+        # generated keyframes per project (only source='generated', not 'inherited')
+        kf_q = await session.execute(
+            select(
+                Scene.project_id,
+                sa_func.count(Keyframe.id),
+            )
+            .join(Scene, Keyframe.scene_id == Scene.id)
+            .where(Keyframe.source == "generated")
+            .group_by(Scene.project_id)
+        )
+        kf_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in kf_q}
+
+        # completed video clips per project
+        vc_q = await session.execute(
+            select(
+                Scene.project_id,
+                sa_func.count(VideoClip.id),
+            )
+            .join(Scene, VideoClip.scene_id == Scene.id)
+            .where(VideoClip.status == "complete")
+            .group_by(Scene.project_id)
+        )
+        vc_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in vc_q}
+
+        # actual scene counts per project
+        sc_q = await session.execute(
+            select(
+                Scene.project_id,
+                sa_func.count(Scene.id),
+            )
+            .group_by(Scene.project_id)
+        )
+        scene_counts_per_project: dict[uuid.UUID, int] = {row[0]: row[1] for row in sc_q}
+
+    status_counts: Counter[str] = Counter()
+    style_counts: Counter[str] = Counter()
+    aspect_ratio_counts: Counter[str] = Counter()
+    text_model_counts: Counter[str] = Counter()
+    image_model_counts: Counter[str] = Counter()
+    video_model_counts: Counter[str] = Counter()
+    audio_counts: Counter[str] = Counter()
+    scene_count_counts: Counter[str] = Counter()
+    total_cost = 0.0
+    total_seconds = 0
+    clip_durations: list[int] = []
+
+    for p in projects:
+        status_counts[p.status] += 1
+        style_counts[p.style] += 1
+        aspect_ratio_counts[p.aspect_ratio] += 1
+        if p.text_model:
+            text_model_counts[p.text_model] += 1
+        if p.image_model:
+            image_model_counts[p.image_model] += 1
+        if p.video_model:
+            video_model_counts[p.video_model] += 1
+        audio_counts["enabled" if p.audio_enabled else "disabled"] += 1
+        sc = scene_counts_per_project.get(p.id, 0)
+        if sc > 0:
+            scene_count_counts[str(sc)] += 1
+        if p.total_duration:
+            total_seconds += p.total_duration
+        if p.target_clip_duration:
+            clip_durations.append(p.target_clip_duration)
+        total_cost += _estimate_project_cost(
+            p,
+            generated_keyframes=kf_counts.get(p.id, 0),
+            completed_clips=vc_counts.get(p.id, 0),
+            has_storyboard=p.storyboard_raw is not None,
+        )
+
+    avg_clip = sum(clip_durations) / len(clip_durations) if clip_durations else None
+
+    return MetricsResponse(
+        total_projects=len(projects),
+        status_counts=dict(status_counts),
+        style_counts=dict(style_counts),
+        aspect_ratio_counts=dict(aspect_ratio_counts),
+        text_model_counts=dict(text_model_counts),
+        image_model_counts=dict(image_model_counts),
+        video_model_counts=dict(video_model_counts),
+        audio_counts=dict(audio_counts),
+        scene_count_counts=dict(scene_count_counts),
+        total_estimated_cost=round(total_cost, 2),
+        total_video_seconds=total_seconds,
+        avg_clip_duration=round(avg_clip, 1) if avg_clip is not None else None,
+    )
 
 
 @router.get("/health")

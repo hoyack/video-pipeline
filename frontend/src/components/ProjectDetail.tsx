@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getProjectDetail, resumeProject, getDownloadUrl } from "../api/client.ts";
 import type { ProjectDetail as ProjectDetailType } from "../api/types.ts";
-import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from "../lib/constants.ts";
+import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, estimateCost } from "../lib/constants.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
@@ -75,8 +75,12 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
   if (!detail) return null;
 
   const isTerminal = TERMINAL_STATUSES.has(detail.status);
-  const canResume = detail.status === "failed";
+  const canResume = detail.status === "failed" || detail.status === "stopped";
   const isRunning = !isTerminal;
+
+  const costEstimate = detail.total_duration && detail.clip_duration && detail.text_model && detail.image_model && detail.video_model
+    ? estimateCost(detail.total_duration, detail.clip_duration, detail.text_model, detail.image_model, detail.video_model, detail.audio_enabled ?? false)
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -143,6 +147,14 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
             <span className="text-xs text-gray-500">Audio</span>
             <p className="mt-1 text-sm text-gray-200">
               {detail.audio_enabled ? "Enabled" : "Disabled"}
+            </p>
+          </div>
+        )}
+        {costEstimate != null && (
+          <div>
+            <span className="text-xs text-gray-500">Est. Cost</span>
+            <p className="mt-1 text-sm font-mono text-gray-200">
+              ${costEstimate.toFixed(2)}
             </p>
           </div>
         )}

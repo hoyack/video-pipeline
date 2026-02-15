@@ -35,11 +35,14 @@ class YamlConfigSettingsSource(PydanticBaseSettingsSource):
 
 
 class GoogleCloudConfig(BaseModel):
-    """Google Cloud configuration."""
+    """Google Cloud configuration.
+
+    project_id is required and must be set via .env or environment variable.
+    """
 
     project_id: str
-    location: str
-    use_vertex_ai: bool
+    location: str = "us-central1"
+    use_vertex_ai: bool = True
 
 
 class ModelsConfig(BaseModel):
@@ -101,6 +104,9 @@ class Settings(BaseSettings):
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_nested_delimiter="__",
         env_prefix="VIDPIPE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     google_cloud: GoogleCloudConfig
@@ -127,6 +133,7 @@ class Settings(BaseSettings):
         """
         return (
             env_settings,
+            dotenv_settings,
             YamlConfigSettingsSource(settings_cls),
             init_settings,
         )

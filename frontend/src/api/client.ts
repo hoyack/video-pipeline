@@ -6,6 +6,7 @@ import type {
   ProjectListItem,
   ResumeResponse,
   StopResponse,
+  MetricsResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -68,6 +69,11 @@ export function stopProject(projectId: string): Promise<StopResponse> {
 /** GET /api/projects/{id}/download — returns download URL (not JSON) */
 export function getDownloadUrl(projectId: string): string {
   return `/api/projects/${projectId}/download`;
+}
+
+/** GET /api/metrics — aggregate metrics across all projects */
+export function getMetrics(): Promise<MetricsResponse> {
+  return request<MetricsResponse>("/api/metrics");
 }
 
 export { ApiError };

@@ -5,6 +5,7 @@ import { GenerateForm } from "./components/GenerateForm.tsx";
 import { ProgressView } from "./components/ProgressView.tsx";
 import { ProjectList } from "./components/ProjectList.tsx";
 import { ProjectDetail } from "./components/ProjectDetail.tsx";
+import { Dashboard } from "./components/Dashboard.tsx";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("generate");
@@ -53,6 +54,7 @@ function App() {
           onViewProgress={handleViewProgress}
         />
       )}
+      {currentView === "dashboard" && <Dashboard />}
     </Layout>
   );
 }

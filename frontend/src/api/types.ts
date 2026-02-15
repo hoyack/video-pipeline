@@ -4,6 +4,11 @@ export interface GenerateRequest {
   style: string;
   aspect_ratio: string;
   clip_duration: number;
+  total_duration: number;
+  text_model: string;
+  image_model: string;
+  video_model: string;
+  enable_audio: boolean;
 }
 
 /** Response from POST /api/generate */
@@ -45,6 +50,11 @@ export interface ProjectDetail {
   scene_count: number;
   scenes: SceneDetail[];
   error_message: string | null;
+  total_duration?: number | null;
+  text_model?: string | null;
+  image_model?: string | null;
+  video_model?: string | null;
+  audio_enabled?: boolean | null;
 }
 
 /** Item in GET /api/projects list */
@@ -60,4 +70,10 @@ export interface ResumeResponse {
   project_id: string;
   status: string;
   status_url: string;
+}
+
+/** Response from POST /api/projects/{id}/stop */
+export interface StopResponse {
+  project_id: string;
+  status: string;
 }

@@ -5,6 +5,7 @@ import type {
   ProjectDetail,
   ProjectListItem,
   ResumeResponse,
+  StopResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -53,6 +54,13 @@ export function listProjects(): Promise<ProjectListItem[]> {
 /** POST /api/projects/{id}/resume — resume a failed/interrupted job */
 export function resumeProject(projectId: string): Promise<ResumeResponse> {
   return request<ResumeResponse>(`/api/projects/${projectId}/resume`, {
+    method: "POST",
+  });
+}
+
+/** POST /api/projects/{id}/stop — stop a running pipeline */
+export function stopProject(projectId: string): Promise<StopResponse> {
+  return request<StopResponse>(`/api/projects/${projectId}/stop`, {
     method: "POST",
   });
 }

@@ -27,6 +27,25 @@ class StyleGuide(BaseModel):
     )
 
 
+class CharacterDescription(BaseModel):
+    """Consistent character description for cross-scene identity.
+
+    Ensures every appearance of a character uses identical visual details
+    so downstream image models render them consistently.
+    """
+
+    name: str = Field(
+        description="Character name or short identifier (e.g., 'the woman', 'the detective')"
+    )
+    physical_description: str = Field(
+        description="Detailed physical appearance: build, height, hair color and style, "
+        "eye color, skin tone, facial features, age range, distinguishing marks"
+    )
+    clothing_description: str = Field(
+        description="Detailed clothing: garments, colors, textures, accessories, shoes"
+    )
+
+
 class SceneSchema(BaseModel):
     """Individual scene definition with keyframe and motion prompts.
 
@@ -41,13 +60,17 @@ class SceneSchema(BaseModel):
         description="Brief narrative description of what happens in this scene"
     )
     start_frame_prompt: str = Field(
-        description="Detailed image prompt for opening keyframe with composition, lighting, and style details"
+        description="Detailed image prompt beginning with 'A {style} rendering of...' "
+        "followed by subject, action, setting, lighting, camera, style cues, and color palette. "
+        "Character descriptions must match the character bible exactly."
     )
     end_frame_prompt: str = Field(
-        description="Detailed image prompt for closing keyframe showing scene progression"
+        description="Detailed image prompt beginning with 'A {style} rendering of...' "
+        "showing scene progression. Character descriptions must match the character bible exactly."
     )
     video_motion_prompt: str = Field(
-        description="Motion/action description for video interpolation between keyframes"
+        description="Motion and camera movement ONLY. Do not re-describe characters, "
+        "setting, or style. Example: 'Slow dolly forward as the subject turns to face the camera'"
     )
     transition_notes: str = Field(
         description="How this scene visually connects to the next scene"
@@ -64,6 +87,11 @@ class StoryboardOutput(BaseModel):
     style_guide: StyleGuide = Field(
         description="Visual consistency guide applied across all scenes"
     )
+    characters: list[CharacterDescription] = Field(
+        description="All characters appearing in the video with consistent physical and "
+        "clothing descriptions. These descriptions must be referenced identically in every "
+        "keyframe prompt where the character appears."
+    )
     scenes: list[SceneSchema] = Field(
-        description="List of 3-5 scenes with detailed prompts and motion descriptions"
+        description="List of scenes with detailed prompts and motion descriptions"
     )

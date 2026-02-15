@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vidpipe.config import settings
 from vidpipe.db.models import Project, Scene, Keyframe, VideoClip
 from vidpipe.services.file_manager import FileManager
-from vidpipe.services.vertex_client import get_vertex_client
+from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 
 
 async def generate_videos(session: AsyncSession, project: Project) -> None:
@@ -50,7 +50,8 @@ async def generate_videos(session: AsyncSession, project: Project) -> None:
         - Updates scene statuses to video_done, rai_filtered, or timed_out
         - Updates project status to "stitching"
     """
-    client = get_vertex_client()
+    video_model = project.video_model or settings.models.video_gen
+    client = get_vertex_client(location=location_for_model(video_model))
     file_mgr = FileManager()
 
     # Query scenes ready for video generation
@@ -64,7 +65,13 @@ async def generate_videos(session: AsyncSession, project: Project) -> None:
 
     # Generate video for each scene
     for scene in scenes:
-        await _generate_video_for_scene(session, scene, file_mgr, client, project)
+        # Check for user-requested stop
+        await session.refresh(project)
+        if project.status == "stopped":
+            from vidpipe.orchestrator.pipeline import PipelineStopped
+            raise PipelineStopped("Pipeline stopped by user")
+
+        await _generate_video_for_scene(session, scene, file_mgr, client, project, video_model)
 
     # Update project status
     project.status = "stitching"
@@ -76,7 +83,8 @@ async def _generate_video_for_scene(
     scene: Scene,
     file_mgr: FileManager,
     client,
-    project: Project
+    project: Project,
+    video_model: str,
 ) -> None:
     """Generate video clip for a single scene with polling and error handling.
 
@@ -118,15 +126,41 @@ async def _generate_video_for_scene(
 
     # If clip is None, submit new Veo job
     if clip is None:
+        # For image-to-video, the style is already baked into the keyframe
+        # images. The prompt should focus only on motion/camera/action.
+        # Adding style text can conflict with the source frames.
+        video_prompt = (
+            f"{scene.video_motion_prompt}. "
+            f"Maintain the visual style shown in the source frames."
+        )
+
+        video_config = types.GenerateVideosConfig(
+            aspect_ratio=project.aspect_ratio,
+            duration_seconds=project.target_clip_duration,
+            last_frame=types.Image(image_bytes=end_frame_bytes, mime_type="image/png"),
+            negative_prompt=(
+                "photorealistic, photo, photograph, hyperrealistic, "
+                "text overlay, watermark, logo, blurry, deformed"
+            ),
+        )
+
+        # Set audio generation for Veo 3+ models
+        if video_model != "veo-2.0-generate-001":
+            video_config.generate_audio = bool(project.audio_enabled)
+
+        # Use consistent seed for visual coherence across scenes
+        if project.seed is not None:
+            video_config.seed = project.seed
+
+        # Disable prompt rewriter on Veo 2 (prevents cinematic/photorealistic drift)
+        if video_model == "veo-2.0-generate-001":
+            video_config.enhance_prompt = False
+
         operation = await client.aio.models.generate_videos(
-            model=settings.models.video_gen,  # "veo-3.1-generate-001"
-            prompt=scene.video_motion_prompt,
+            model=video_model,
+            prompt=video_prompt,
             image=types.Image(image_bytes=start_frame_bytes, mime_type="image/png"),
-            config=types.GenerateVideosConfig(
-                aspect_ratio=project.aspect_ratio,
-                duration_seconds=project.target_clip_duration,
-                last_frame=types.Image(image_bytes=end_frame_bytes, mime_type="image/png")
-            )
+            config=video_config,
         )
 
         # CRITICAL: Persist operation ID BEFORE polling (VGEN-03)
@@ -187,6 +221,12 @@ async def _generate_video_for_scene(
         # Not done yet, commit poll progress and sleep
         await session.commit()
         await asyncio.sleep(poll_interval)
+
+        # Check for user-requested stop between polls
+        await session.refresh(project)
+        if project.status == "stopped":
+            from vidpipe.orchestrator.pipeline import PipelineStopped
+            raise PipelineStopped("Pipeline stopped by user")
 
     # Timeout (VGEN-05)
     clip.status = "timed_out"

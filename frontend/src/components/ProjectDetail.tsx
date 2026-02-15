@@ -1,10 +1,22 @@
 import { useEffect, useState } from "react";
 import { getProjectDetail, resumeProject, getDownloadUrl } from "../api/client.ts";
 import type { ProjectDetail as ProjectDetailType } from "../api/types.ts";
-import { TERMINAL_STATUSES } from "../lib/constants.ts";
+import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from "../lib/constants.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
+
+function modelLabel(
+  catalogs: { id: string; label: string }[][],
+  id: string | null | undefined,
+): string | null {
+  if (!id) return null;
+  for (const catalog of catalogs) {
+    const found = catalog.find((m) => m.id === id);
+    if (found) return found.label;
+  }
+  return id; // fallback to raw ID
+}
 
 interface ProjectDetailProps {
   projectId: string;
@@ -96,6 +108,44 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
           <span className="text-xs text-gray-500">Scenes</span>
           <p className="mt-1 text-sm text-gray-200">{detail.scene_count}</p>
         </div>
+        {detail.total_duration && (
+          <div>
+            <span className="text-xs text-gray-500">Total Duration</span>
+            <p className="mt-1 text-sm text-gray-200">{detail.total_duration}s</p>
+          </div>
+        )}
+        {detail.text_model && (
+          <div>
+            <span className="text-xs text-gray-500">Text Model</span>
+            <p className="mt-1 text-sm text-gray-200">
+              {modelLabel([TEXT_MODELS], detail.text_model)}
+            </p>
+          </div>
+        )}
+        {detail.image_model && (
+          <div>
+            <span className="text-xs text-gray-500">Image Model</span>
+            <p className="mt-1 text-sm text-gray-200">
+              {modelLabel([IMAGE_MODELS], detail.image_model)}
+            </p>
+          </div>
+        )}
+        {detail.video_model && (
+          <div>
+            <span className="text-xs text-gray-500">Video Model</span>
+            <p className="mt-1 text-sm text-gray-200">
+              {modelLabel([VIDEO_MODELS], detail.video_model)}
+            </p>
+          </div>
+        )}
+        {detail.audio_enabled != null && (
+          <div>
+            <span className="text-xs text-gray-500">Audio</span>
+            <p className="mt-1 text-sm text-gray-200">
+              {detail.audio_enabled ? "Enabled" : "Disabled"}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Prompt */}

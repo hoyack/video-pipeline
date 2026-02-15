@@ -1,6 +1,8 @@
 """API route handlers and Pydantic response schemas."""
 
 import logging
+import math
+import random
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -20,6 +22,59 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
+# ---------------------------------------------------------------------------
+# Allowed model IDs
+# ---------------------------------------------------------------------------
+ALLOWED_TEXT_MODELS = {
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+}
+ALLOWED_IMAGE_MODELS = {
+    "imagen-3.0-generate-002",
+    "imagen-4.0-generate-001",
+    "imagen-4.0-fast-generate-001",
+    "imagen-4.0-ultra-generate-001",
+    "gemini-2.5-flash-image",
+    "gemini-3-pro-image-preview",
+}
+ALLOWED_VIDEO_MODELS = {
+    "veo-2.0-generate-001",
+    "veo-3.0-generate-001",
+    "veo-3.0-fast-generate-001",
+    "veo-3.1-generate-preview",
+    "veo-3.1-generate-001",
+    "veo-3.1-fast-generate-preview",
+    "veo-3.1-fast-generate-001",
+}
+
+# Video models that support audio generation
+AUDIO_CAPABLE_MODELS = ALLOWED_VIDEO_MODELS - {"veo-2.0-generate-001"}
+
+# Auto-pairing: Imagen models → gemini-2.5-flash-image for conditioned generation.
+# Gemini image models → use the same model for conditioning.
+IMAGE_CONDITIONED_MAP: dict[str, str] = {
+    "imagen-3.0-generate-002": "gemini-2.5-flash-image",
+    "imagen-4.0-generate-001": "gemini-2.5-flash-image",
+    "imagen-4.0-fast-generate-001": "gemini-2.5-flash-image",
+    "imagen-4.0-ultra-generate-001": "gemini-2.5-flash-image",
+    "gemini-2.5-flash-image": "gemini-2.5-flash-image",
+    "gemini-3-pro-image-preview": "gemini-3-pro-image-preview",
+}
+
+# Allowed clip durations per video model
+ALLOWED_DURATIONS: dict[str, list[int]] = {
+    "veo-2.0-generate-001": [5, 6, 7, 8],
+    "veo-3.0-generate-001": [4, 6, 8],
+    "veo-3.0-fast-generate-001": [4, 6, 8],
+    "veo-3.1-generate-preview": [4, 6, 8],
+    "veo-3.1-generate-001": [4, 6, 8],
+    "veo-3.1-fast-generate-preview": [4, 6, 8],
+    "veo-3.1-fast-generate-001": [4, 6, 8],
+}
+
 
 # ============================================================================
 # Pydantic Schemas
@@ -30,7 +85,12 @@ class GenerateRequest(BaseModel):
     prompt: str
     style: str = "cinematic"
     aspect_ratio: str = "16:9"
-    clip_duration: int = 5
+    clip_duration: int = 6
+    total_duration: int = 15
+    text_model: str = "gemini-2.5-flash"
+    image_model: str = "imagen-4.0-fast-generate-001"
+    video_model: str = "veo-3.1-fast-generate-001"
+    enable_audio: bool = True
 
 
 class GenerateResponse(BaseModel):
@@ -72,6 +132,11 @@ class ProjectDetail(BaseModel):
     scene_count: int
     scenes: list[SceneDetail]
     error_message: Optional[str] = None
+    total_duration: Optional[int] = None
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    audio_enabled: Optional[bool] = None
 
 
 class ProjectListItem(BaseModel):
@@ -87,6 +152,12 @@ class ResumeResponse(BaseModel):
     project_id: str
     status: str
     status_url: str
+
+
+class StopResponse(BaseModel):
+    """Response schema for POST /api/projects/{id}/stop."""
+    project_id: str
+    status: str
 
 
 # ============================================================================
@@ -118,6 +189,36 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
     Creates project record with pending status and adds pipeline execution
     to background tasks. Returns 202 Accepted with project_id and status URL.
     """
+    # Validate aspect ratio (Veo supports 16:9 and 9:16 only)
+    if request.aspect_ratio not in ("16:9", "9:16"):
+        raise HTTPException(status_code=422, detail=f"aspect_ratio must be 16:9 or 9:16, got {request.aspect_ratio}")
+
+    # Validate clip duration per video model
+    allowed = ALLOWED_DURATIONS.get(request.video_model, [5, 6, 7, 8])
+    if request.clip_duration not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=f"clip_duration {request.clip_duration} not supported for {request.video_model}. Allowed: {allowed}",
+        )
+
+    # Validate model IDs
+    if request.text_model not in ALLOWED_TEXT_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid text_model: {request.text_model}")
+    if request.image_model not in ALLOWED_IMAGE_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid image_model: {request.image_model}")
+    if request.video_model not in ALLOWED_VIDEO_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid video_model: {request.video_model}")
+
+    # Validate audio: reject enable_audio=True for models without audio support
+    if request.enable_audio and request.video_model not in AUDIO_CAPABLE_MODELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Audio generation not supported for {request.video_model}",
+        )
+
+    # Derive scene count from total duration and clip duration
+    scene_count = math.ceil(request.total_duration / request.clip_duration)
+
     async with async_session() as session:
         # Create project record
         project = Project(
@@ -125,6 +226,13 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             style=request.style,
             aspect_ratio=request.aspect_ratio,
             target_clip_duration=request.clip_duration,
+            target_scene_count=scene_count,
+            total_duration=request.total_duration,
+            text_model=request.text_model,
+            image_model=request.image_model,
+            video_model=request.video_model,
+            audio_enabled=request.enable_audio,
+            seed=random.randint(0, 2**32 - 1),
             status="pending",
         )
         session.add(project)
@@ -232,6 +340,11 @@ async def get_project_detail(project_id: uuid.UUID):
             scene_count=len(scenes),
             scenes=scene_details,
             error_message=project.error_message,
+            total_duration=project.total_duration,
+            text_model=project.text_model,
+            image_model=project.image_model,
+            video_model=project.video_model,
+            audio_enabled=project.audio_enabled,
         )
 
 
@@ -287,6 +400,41 @@ async def resume_project(project_id: uuid.UUID, background_tasks: BackgroundTask
         status=project.status,
         status_url=f"/api/projects/{project_id}/status",
     )
+
+
+@router.post("/projects/{project_id}/stop", response_model=StopResponse)
+async def stop_project(project_id: uuid.UUID):
+    """Stop a running pipeline.
+
+    Sets the project status to 'stopped'. The background pipeline checks this
+    flag between steps and inside long-running loops, then exits gracefully.
+    The project can be resumed later with POST /resume.
+
+    Returns 409 if project is already in a terminal state (complete/failed/stopped).
+    """
+    ACTIVE_STATUSES = {"pending", "storyboarding", "keyframing", "video_gen", "stitching"}
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if project.status not in ACTIVE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project cannot be stopped from status '{project.status}'"
+            )
+
+        project.status = "stopped"
+        await session.commit()
+
+        logger.info(f"Project {project_id} marked as stopped")
+
+    return StopResponse(project_id=str(project_id), status="stopped")
 
 
 @router.get("/projects/{project_id}/download")

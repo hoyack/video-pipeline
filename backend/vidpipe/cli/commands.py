@@ -9,6 +9,8 @@ Implements all 5 CLI commands:
 """
 
 import asyncio
+import math
+import random
 import uuid
 import sys
 from typing import Optional
@@ -26,6 +28,50 @@ from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.pipeline.stitcher import stitch_videos
 from vidpipe.config import settings
+from vidpipe.api.routes import ALLOWED_TEXT_MODELS, ALLOWED_IMAGE_MODELS, ALLOWED_VIDEO_MODELS
+
+# Per-model cost constants for CLI cost estimate (silent / base price)
+_VIDEO_COST_PER_SECOND = {
+    "veo-2.0-generate-001": 0.35,
+    "veo-3.0-generate-001": 0.40,
+    "veo-3.0-fast-generate-001": 0.15,
+    "veo-3.1-generate-preview": 0.40,
+    "veo-3.1-generate-001": 0.40,
+    "veo-3.1-fast-generate-preview": 0.10,
+    "veo-3.1-fast-generate-001": 0.10,
+}
+_VIDEO_COST_PER_SECOND_AUDIO = {
+    "veo-3.0-generate-001": 0.40,
+    "veo-3.0-fast-generate-001": 0.15,
+    "veo-3.1-generate-preview": 0.40,
+    "veo-3.1-generate-001": 0.40,
+    "veo-3.1-fast-generate-preview": 0.15,
+    "veo-3.1-fast-generate-001": 0.15,
+}
+_IMAGE_COST_PER_IMAGE = {
+    "imagen-3.0-generate-002": 0.03,
+    "imagen-4.0-generate-001": 0.04,
+    "imagen-4.0-fast-generate-001": 0.02,
+    "imagen-4.0-ultra-generate-001": 0.06,
+    "gemini-2.5-flash-image": 0.04,
+    "gemini-3-pro-image-preview": 0.13,
+}
+_TEXT_COST_PER_CALL = {
+    "gemini-2.5-flash": 0.006,
+    "gemini-2.5-flash-lite": 0.001,
+    "gemini-2.5-pro": 0.023,
+    "gemini-3-flash-preview": 0.007,
+    "gemini-3-pro-preview": 0.028,
+}
+_ALLOWED_DURATIONS: dict[str, list[int]] = {
+    "veo-2.0-generate-001": [5, 6, 7, 8],
+    "veo-3.0-generate-001": [4, 6, 8],
+    "veo-3.0-fast-generate-001": [4, 6, 8],
+    "veo-3.1-generate-preview": [4, 6, 8],
+    "veo-3.1-generate-001": [4, 6, 8],
+    "veo-3.1-fast-generate-preview": [4, 6, 8],
+    "veo-3.1-fast-generate-001": [4, 6, 8],
+}
 
 app = typer.Typer(name="vidpipe", help="AI-powered multi-scene video generation pipeline")
 console = Console()
@@ -36,7 +82,12 @@ def generate(
     prompt: str = typer.Argument(..., help="Text prompt for video generation"),
     style: str = typer.Option("cinematic", "--style", "-s", help="Visual style"),
     aspect_ratio: str = typer.Option("16:9", "--aspect-ratio", "-a", help="Video aspect ratio"),
-    clip_duration: int = typer.Option(5, "--clip-duration", "-d", help="Target clip duration in seconds"),
+    clip_duration: int = typer.Option(6, "--clip-duration", "-d", help="Target clip duration in seconds"),
+    total_duration: int = typer.Option(30, "--total-duration", "-t", help="Total video duration in seconds"),
+    text_model: str = typer.Option("gemini-2.5-flash", "--text-model", help="Text/storyboard model"),
+    image_model: str = typer.Option("imagen-4.0-fast-generate-001", "--image-model", help="Image generation model"),
+    video_model: str = typer.Option("veo-3.1-fast-generate-001", "--video-model", help="Video generation model"),
+    enable_audio: bool = typer.Option(True, "--enable-audio/--no-audio", help="Enable audio generation (Veo 3+ only)"),
 ):
     """Generate a new video from a text prompt.
 
@@ -50,17 +101,65 @@ def generate(
         console.print(f"[red]Error:[/red] {str(e)}")
         raise typer.Exit(code=1)
 
-    # Cost warning before starting
-    console.print("[yellow]Estimated cost:[/yellow] ~$15 per 5-scene project (Veo video generation)")
+    # Validate model IDs
+    if text_model not in ALLOWED_TEXT_MODELS:
+        console.print(f"[red]Error:[/red] Invalid text model: {text_model}")
+        console.print(f"Allowed: {', '.join(sorted(ALLOWED_TEXT_MODELS))}")
+        raise typer.Exit(code=1)
+    if image_model not in ALLOWED_IMAGE_MODELS:
+        console.print(f"[red]Error:[/red] Invalid image model: {image_model}")
+        console.print(f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_MODELS))}")
+        raise typer.Exit(code=1)
+    if video_model not in ALLOWED_VIDEO_MODELS:
+        console.print(f"[red]Error:[/red] Invalid video model: {video_model}")
+        console.print(f"Allowed: {', '.join(sorted(ALLOWED_VIDEO_MODELS))}")
+        raise typer.Exit(code=1)
+
+    # Validate audio + model compatibility
+    from vidpipe.api.routes import AUDIO_CAPABLE_MODELS
+    if enable_audio and video_model not in AUDIO_CAPABLE_MODELS:
+        console.print(f"[red]Error:[/red] Audio not supported for {video_model}")
+        raise typer.Exit(code=1)
+
+    # Validate clip duration per video model
+    allowed_durs = _ALLOWED_DURATIONS.get(video_model, [5, 6, 7, 8])
+    if clip_duration not in allowed_durs:
+        console.print(f"[red]Error:[/red] clip_duration {clip_duration} not supported for {video_model}")
+        console.print(f"Allowed: {allowed_durs}")
+        raise typer.Exit(code=1)
+
+    # Dynamic cost estimate
+    scene_count = math.ceil(total_duration / clip_duration)
+    if enable_audio and video_model in _VIDEO_COST_PER_SECOND_AUDIO:
+        vid_rate = _VIDEO_COST_PER_SECOND_AUDIO[video_model]
+    else:
+        vid_rate = _VIDEO_COST_PER_SECOND.get(video_model, 0.40)
+    vid_cost = scene_count * clip_duration * vid_rate
+    img_cost = (scene_count + 1) * _IMAGE_COST_PER_IMAGE.get(image_model, 0.04)
+    txt_cost = _TEXT_COST_PER_CALL.get(text_model, 0.01)
+    est_cost = vid_cost + img_cost + txt_cost
+
+    audio_label = " +audio" if enable_audio else ""
+    console.print(f"[yellow]Estimated cost:[/yellow] ~${est_cost:.2f} ({scene_count} scenes, {video_model}{audio_label})")
     console.print()
 
-    asyncio.run(_generate_async(prompt, style, aspect_ratio, clip_duration))
+    asyncio.run(_generate_async(
+        prompt, style, aspect_ratio, clip_duration,
+        total_duration, text_model, image_model, video_model,
+        enable_audio,
+    ))
 
 
-async def _generate_async(prompt: str, style: str, aspect_ratio: str, clip_duration: int):
+async def _generate_async(
+    prompt: str, style: str, aspect_ratio: str, clip_duration: int,
+    total_duration: int, text_model: str, image_model: str, video_model: str,
+    enable_audio: bool,
+):
     """Async implementation of generate command."""
     # Initialize database
     await init_database()
+
+    scene_count = math.ceil(total_duration / clip_duration)
 
     # Create project
     async with async_session() as session:
@@ -69,6 +168,13 @@ async def _generate_async(prompt: str, style: str, aspect_ratio: str, clip_durat
             style=style,
             aspect_ratio=aspect_ratio,
             target_clip_duration=clip_duration,
+            target_scene_count=scene_count,
+            total_duration=total_duration,
+            text_model=text_model,
+            image_model=image_model,
+            video_model=video_model,
+            audio_enabled=enable_audio,
+            seed=random.randint(0, 2**32 - 1),
             status="pending",
         )
         session.add(project)
@@ -256,6 +362,16 @@ async def _status_async(project_id_str: str):
             f"[bold]Created:[/bold] {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
             f"[bold]Updated:[/bold] {project.updated_at.strftime('%Y-%m-%d %H:%M:%S')}",
         ]
+
+        # Add model info if available
+        if project.total_duration:
+            info_lines.append(f"[bold]Total Duration:[/bold] {project.total_duration}s")
+        if project.text_model:
+            info_lines.append(f"[bold]Text Model:[/bold] {project.text_model}")
+        if project.image_model:
+            info_lines.append(f"[bold]Image Model:[/bold] {project.image_model}")
+        if project.video_model:
+            info_lines.append(f"[bold]Video Model:[/bold] {project.video_model}")
 
         # Add output path if complete
         if project.status == "complete" and project.output_path:

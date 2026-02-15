@@ -15,6 +15,7 @@ PIPELINE_STATES = {
     "stitching": "Concatenating clips into final MP4",
     "complete": "Pipeline finished successfully",
     "failed": "Pipeline encountered unrecoverable error",
+    "stopped": "Pipeline stopped by user",
 }
 
 # State transitions for active pipeline steps
@@ -30,6 +31,7 @@ STEP_TRANSITIONS = {
 RESUMABLE_STATES = {
     "pending",
     "failed",
+    "stopped",
     "storyboarding",
     "keyframing",
     "video_gen",
@@ -72,8 +74,8 @@ def get_resume_step(status: str, completed_steps: Dict[str, bool]) -> str:
         >>> get_resume_step("failed", {"has_storyboard": True, "has_keyframes": False, ...})
         'keyframing'
     """
-    # If failed, use completed_steps to determine resume point
-    if status == "failed":
+    # If failed/stopped, use completed_steps to determine resume point
+    if status in ("failed", "stopped"):
         if not completed_steps.get("has_storyboard", False):
             return "pending"
         elif not completed_steps.get("has_keyframes", False):

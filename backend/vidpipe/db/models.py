@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Text, JSON, Integer, Float, ForeignKey, func
+from sqlalchemy import String, Text, JSON, Integer, Float, Boolean, ForeignKey, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -25,6 +25,13 @@ class Project(Base):
     style: Mapped[str] = mapped_column(String(50))
     aspect_ratio: Mapped[str] = mapped_column(String(10))
     target_clip_duration: Mapped[int] = mapped_column(Integer)
+    target_scene_count: Mapped[int] = mapped_column(Integer, default=3)
+    total_duration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    text_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    image_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    video_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    audio_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    seed: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

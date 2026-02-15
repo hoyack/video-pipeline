@@ -27,6 +27,18 @@ from vidpipe.pipeline.stitcher import stitch_videos
 logger = logging.getLogger(__name__)
 
 
+class PipelineStopped(Exception):
+    """Raised when the user requests a pipeline stop."""
+
+
+async def _check_stopped(session: AsyncSession, project_id: uuid.UUID) -> None:
+    """Re-read project status from DB; raise PipelineStopped if stopped."""
+    result = await session.execute(select(Project.status).where(Project.id == project_id))
+    status = result.scalar_one()
+    if status == "stopped":
+        raise PipelineStopped("Pipeline stopped by user")
+
+
 async def run_pipeline(
     session: AsyncSession,
     project_id: uuid.UUID,
@@ -99,6 +111,8 @@ async def run_pipeline(
             step_log["storyboard"] = step_duration
             logger.info(f"Storyboard step completed in {step_duration:.2f}s")
 
+        await _check_stopped(session, project_id)
+
         # Step 2: Keyframe generation
         if project.status == "keyframing":
             step_start = time.monotonic()
@@ -120,6 +134,8 @@ async def run_pipeline(
             step_log["keyframes"] = step_duration
             logger.info(f"Keyframes step completed in {step_duration:.2f}s")
 
+        await _check_stopped(session, project_id)
+
         # Step 3: Video generation
         if project.status == "video_gen":
             step_start = time.monotonic()
@@ -136,6 +152,8 @@ async def run_pipeline(
             step_duration = time.monotonic() - step_start
             step_log["video_gen"] = step_duration
             logger.info(f"Video generation step completed in {step_duration:.2f}s")
+
+        await _check_stopped(session, project_id)
 
         # Step 4: Stitching
         if project.status == "stitching":
@@ -159,6 +177,14 @@ async def run_pipeline(
         await session.commit()
 
         logger.info(f"Pipeline completed successfully in {run.total_duration_seconds:.2f}s")
+
+    except PipelineStopped:
+        logger.info(f"Pipeline stopped by user at step {project.status}")
+        run.completed_at = datetime.utcnow()
+        run.total_duration_seconds = time.monotonic() - pipeline_start
+        run.log = step_log
+        await session.commit()
+        return
 
     except Exception as e:
         # Handle pipeline failure

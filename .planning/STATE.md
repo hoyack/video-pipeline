@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 3 of 3 (Orchestration & Interfaces)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: Active
-Last activity: 2026-02-15 — Completed plan 03-01 (Pipeline Orchestrator)
+Last activity: 2026-02-15 — Completed plan 03-02 (CLI Interface)
 
-Progress: [███████░░░] 60%
+Progress: [████████░░] 70%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
+- Total plans completed: 9
 - Average duration: 2.1 min
-- Total execution time: 0.29 hours
+- Total execution time: 0.32 hours
 
 **By Phase:**
 
@@ -29,11 +29,11 @@ Progress: [███████░░░] 60%
 |-------|-------|-------|----------|
 | 01-foundation | 3 | 7.0 min | 2.3 min |
 | 02-generation-pipeline | 4 | 8.0 min | 2.0 min |
-| 03-orchestration-interfaces | 1 | 2.2 min | 2.2 min |
+| 03-orchestration-interfaces | 2 | 4.1 min | 2.1 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (1.7min), 02-03 (1.3min), 02-04 (1.4min), 03-01 (2.2min)
-- Trend: Consistent fast execution with orchestration layer now complete
+- Last 5 plans: 02-03 (1.3min), 02-04 (1.4min), 03-01 (2.2min), 03-02 (1.9min)
+- Trend: Consistent fast execution, CLI interface now complete
 
 *Updated after each plan completion*
 
@@ -78,6 +78,9 @@ Recent decisions affecting current work:
 - **02-04:** Validate ffmpeg at startup rather than during pipeline execution for fail-fast error handling
 - [Phase 03-01]: Use completed_steps dict from database queries for failed state resume logic
 - [Phase 03-01]: Fix status mismatch between generate_keyframes (generating_video) and state machine (video_gen) in orchestrator
+- [Phase 03-02]: Use asyncio.run() wrapper pattern for Typer + async database operations
+- [Phase 03-02]: Implement progress_callback wrapper to update Rich status spinners from orchestrator
+- [Phase 03-02]: Temporarily override settings.pipeline.crossfade_seconds in stitch command for per-invocation control
 
 ### Pending Todos
 
@@ -94,10 +97,10 @@ None yet.
 - ffmpeg must be installed on deployment environment (validated at startup with clear error message)
 
 **Phase 3:**
-- Cost estimation ($15 per 5-scene project) should be communicated to users before generation starts
+- ~~Cost estimation ($15 per 5-scene project) should be communicated to users before generation starts~~ ✓ Resolved in 03-02 (cost warning in CLI)
 
 ## Session Continuity
 
 Last session: 2026-02-15 (plan execution)
-Stopped at: Completed 03-01-PLAN.md - Pipeline Orchestrator
+Stopped at: Completed 03-02-PLAN.md - CLI Interface
 Resume file: None

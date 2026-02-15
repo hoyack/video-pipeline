@@ -144,13 +144,14 @@ async def _generate_video_for_scene(
     max_polls = settings.pipeline.video_poll_max  # default 40 (~10 min)
 
     for poll_attempt in range(clip.poll_count, max_polls):
-        operation = await client.aio.operations.get(clip.operation_name)
+        op_obj = types.GenerateVideosOperation(name=clip.operation_name)
+        operation = await client.aio.operations.get(operation=op_obj)
         clip.poll_count = poll_attempt + 1
 
         if operation.done:
             if operation.response:
                 # Check for RAI filtering (VGEN-04)
-                if hasattr(operation.response, 'raiMediaFilteredCount') and operation.response.raiMediaFilteredCount > 0:
+                if operation.response.rai_media_filtered_count and operation.response.rai_media_filtered_count > 0:
                     clip.status = "rai_filtered"
                     clip.error_message = "Content filtered by responsible AI"
                     scene.status = "rai_filtered"
@@ -158,12 +159,13 @@ async def _generate_video_for_scene(
                     return  # Continue with other scenes
 
                 # Success: download video
-                video = operation.response.generated_videos[0]
-                if hasattr(video, 'video_bytes'):
-                    video_bytes = video.video_bytes
+                gen_video = operation.response.generated_videos[0]
+                if gen_video.video and gen_video.video.video_bytes:
+                    video_bytes = gen_video.video.video_bytes
+                elif gen_video.video and gen_video.video.gcs_uri:
+                    video_bytes = await _download_from_gcs(gen_video.video.gcs_uri)
                 else:
-                    # GCS URI download if needed
-                    video_bytes = await _download_from_gcs(video.gcs_uri)
+                    raise ValueError("No video data in response")
 
                 # Save video clip (VGEN-06)
                 file_path = file_mgr.save_clip(project.id, scene.scene_index, video_bytes)

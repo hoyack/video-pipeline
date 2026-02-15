@@ -33,7 +33,9 @@ from vidpipe.services.vertex_client import get_vertex_client
     retry=retry_if_exception_type(Exception),
 )
 async def _generate_image_from_text(client, prompt: str, aspect_ratio: str) -> bytes:
-    """Generate image from text prompt using Nano Banana Pro.
+    """Generate image from text prompt using Imagen.
+
+    Uses the generate_images API which is the correct endpoint for Imagen models.
 
     Args:
         client: Vertex AI client instance
@@ -45,24 +47,19 @@ async def _generate_image_from_text(client, prompt: str, aspect_ratio: str) -> b
 
     Raises:
         ValueError: If no image found in response
-
-    Note:
-        Includes exponential backoff retry with jitter (max 5 attempts).
-        Retries on all exceptions to handle transient API failures.
     """
-    response = await client.aio.models.generate_content(
+    response = await client.aio.models.generate_images(
         model=settings.models.image_gen,
-        contents=[prompt],
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
+        prompt=prompt,
+        config=types.GenerateImagesConfig(
+            number_of_images=1,
+            aspect_ratio=aspect_ratio,
+            output_mime_type="image/png",
         ),
     )
 
-    # Extract image bytes from response
-    for part in response.candidates[0].content.parts:
-        if part.inline_data:
-            return part.inline_data.data
+    if response.generated_images:
+        return response.generated_images[0].image.image_bytes
 
     raise ValueError("No image generated in response")
 
@@ -77,6 +74,11 @@ async def _generate_image_conditioned(
 ) -> bytes:
     """Generate image using reference image for conditioning.
 
+    Uses Gemini model with multimodal input (reference image + text) and
+    image output via response_modalities. Imagen's generate_images API
+    doesn't support reference image conditioning, so we use Gemini which
+    natively handles multimodal understanding + image generation.
+
     Args:
         client: Vertex AI client instance
         reference_image_bytes: PNG image data to use as reference
@@ -88,20 +90,15 @@ async def _generate_image_conditioned(
 
     Raises:
         ValueError: If no image found in response
-
-    Note:
-        Includes exponential backoff retry with jitter (max 5 attempts).
-        Image conditioning maintains visual style and composition.
     """
     response = await client.aio.models.generate_content(
-        model=settings.models.image_gen,
+        model=settings.models.image_conditioned,
         contents=[
             types.Part.from_bytes(data=reference_image_bytes, mime_type="image/png"),
             types.Part.from_text(text=prompt),
         ],
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
         ),
     )
 

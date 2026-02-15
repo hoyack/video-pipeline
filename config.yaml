@@ -4,8 +4,9 @@ google_cloud:
   use_vertex_ai: true
 
 models:
-  storyboard_llm: "gemini-2.0-flash-exp"
+  storyboard_llm: "gemini-2.5-flash"
   image_gen: "imagen-3.0-generate-001"
+  image_conditioned: "gemini-2.5-flash-image"
   video_gen: "veo-2.0-generate-001"
 
 pipeline:

@@ -47,6 +47,7 @@ class ModelsConfig(BaseModel):
 
     storyboard_llm: str
     image_gen: str
+    image_conditioned: str
     video_gen: str
 
 

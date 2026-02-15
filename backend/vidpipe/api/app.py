@@ -2,9 +2,12 @@
 
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from vidpipe import validate_dependencies
 from vidpipe.db import init_database, shutdown
@@ -45,8 +48,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS for Vite dev server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Include router with all endpoints
 app.include_router(router)
+
+# Serve frontend static files in production (after API routes take priority)
+_frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
 
 
 @app.exception_handler(Exception)

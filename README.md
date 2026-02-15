@@ -35,26 +35,58 @@ Text Prompt
 
 Each step persists state to SQLite before proceeding. If the process crashes at any point, resume picks up where it left off — no wasted API calls.
 
+## Repository Structure
+
+```
+video-pipeline/
+├── backend/            # Python API + pipeline (see backend/README.md)
+│   ├── vidpipe/        # Python package
+│   ├── pyproject.toml
+│   └── requirements.txt
+├── frontend/           # React SPA (see frontend/README.md)
+│   ├── src/
+│   └── package.json
+├── config.yaml         # Pipeline + model configuration
+├── .env                # Credentials (not committed)
+├── .env.example
+└── docs/
+```
+
 ## Prerequisites
 
 - **Python 3.11+**
+- **Node.js 18+**
 - **ffmpeg** — `sudo apt-get install ffmpeg` (Ubuntu) or `brew install ffmpeg` (macOS)
 - **Google Cloud service account** with Vertex AI API enabled
 
-## Setup
+## Quick Start
 
 ```bash
-# Clone and install
+# Clone
 git clone <repo-url> && cd video-pipeline
-pip install -e .
 
 # Configure credentials
-# Place your GCP service account JSON in the project root, then:
 echo 'GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-service-account.json' > .env
 
 # Verify config
 cat config.yaml  # check project_id matches your GCP project
+
+# Install backend
+pip install -e backend/
+
+# Install frontend
+cd frontend && npm install && cd ..
+
+# Start backend
+uvicorn vidpipe.api.app:app --host 0.0.0.0 --port 8000
+
+# Start frontend (separate terminal)
+cd frontend && npm run dev
 ```
+
+The frontend dev server runs on `http://localhost:5173` and proxies `/api` requests to the backend on port 8000.
+
+## Configuration
 
 The `config.yaml` file controls all settings:
 
@@ -89,9 +121,8 @@ export VIDPIPE_GOOGLE_CLOUD__PROJECT_ID=my-project
 
 ## CLI Usage
 
-### Generate a video
-
 ```bash
+# Generate a video
 python -m vidpipe generate "A cat exploring a neon-lit Tokyo alley at night"
 
 # With options
@@ -99,114 +130,31 @@ python -m vidpipe generate "Ocean waves at sunset" \
   --style cinematic \
   --aspect-ratio 16:9 \
   --clip-duration 5
-```
 
-### Check status
-
-```bash
+# Check status
 python -m vidpipe status <project-id>
-```
 
-### List all projects
-
-```bash
+# List all projects
 python -m vidpipe list
-```
 
-### Resume a failed run
-
-```bash
+# Resume a failed run
 python -m vidpipe resume <project-id>
-```
 
-### Re-stitch with crossfade
-
-```bash
+# Re-stitch with crossfade
 python -m vidpipe stitch <project-id> --crossfade 0.5
 ```
 
 ## HTTP API
 
-Start the server:
-
-```bash
-uvicorn vidpipe.api.app:app --host 0.0.0.0 --port 8000
-```
-
-### Endpoints
-
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/generate` | Start new video generation (returns immediately) |
+| `POST` | `/api/generate` | Start new video generation |
 | `GET` | `/api/projects/{id}/status` | Poll project status |
 | `GET` | `/api/projects/{id}` | Full project details with scenes |
 | `GET` | `/api/projects` | List all projects |
 | `POST` | `/api/projects/{id}/resume` | Resume failed project |
 | `GET` | `/api/projects/{id}/download` | Download final MP4 |
 | `GET` | `/api/health` | Health check |
-
-### Example
-
-```bash
-# Start generation
-curl -X POST http://localhost:8000/api/generate \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "A cat exploring Tokyo at night", "style": "cinematic"}'
-
-# Poll status
-curl http://localhost:8000/api/projects/<project-id>/status
-
-# Download result
-curl -o video.mp4 http://localhost:8000/api/projects/<project-id>/download
-```
-
-## Project Structure
-
-```
-vidpipe/
-├── __init__.py          # ffmpeg validation
-├── __main__.py          # CLI entry point
-├── config.py            # Settings (YAML + env vars)
-├── cli/
-│   └── commands.py      # 5 Typer CLI commands
-├── api/
-│   ├── app.py           # FastAPI app with lifespan
-│   └── routes.py        # 7 API endpoints
-├── orchestrator/
-│   ├── pipeline.py      # State machine coordinator
-│   └── state.py         # Status transitions & resume logic
-├── pipeline/
-│   ├── storyboard.py    # Gemini structured output → scenes
-│   ├── keyframes.py     # Imagen + Gemini → start/end frame PNGs
-│   ├── video_gen.py     # Veo → MP4 clips with polling
-│   └── stitcher.py      # ffmpeg concat/crossfade → final MP4
-├── schemas/
-│   └── storyboard.py    # Pydantic models for storyboard output
-├── services/
-│   ├── vertex_client.py # Singleton Vertex AI client
-│   └── file_manager.py  # Artifact storage with path safety
-└── db/
-    ├── models.py         # SQLAlchemy 2.0 ORM models
-    ├── engine.py         # Async engine with WAL mode
-    └── __init__.py       # DB init and session factory
-```
-
-## Output Structure
-
-```
-tmp/<project-id>/
-├── keyframes/
-│   ├── scene_0_start.png
-│   ├── scene_0_end.png
-│   ├── scene_1_start.png
-│   └── ...
-├── clips/
-│   ├── scene_0.mp4
-│   ├── scene_1.mp4
-│   └── ...
-└── output/
-    └── final.mp4
-```
 
 ## Crash Recovery
 
@@ -220,8 +168,6 @@ Every step commits to SQLite (WAL mode) before proceeding:
 If anything fails, `python -m vidpipe resume <project-id>` skips completed steps and picks up from the failure point.
 
 ## Cost Estimate
-
-Veo video generation is the primary cost driver. Approximate per-project:
 
 | Scenes | Clip Duration | Estimated Cost |
 |--------|--------------|----------------|

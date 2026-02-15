@@ -1,0 +1,177 @@
+import { useEffect, useState } from "react";
+import { getProjectDetail, resumeProject, getDownloadUrl } from "../api/client.ts";
+import type { ProjectDetail as ProjectDetailType } from "../api/types.ts";
+import { TERMINAL_STATUSES } from "../lib/constants.ts";
+import { StatusBadge } from "./StatusBadge.tsx";
+import { PipelineStepper } from "./PipelineStepper.tsx";
+import { SceneCard } from "./SceneCard.tsx";
+
+interface ProjectDetailProps {
+  projectId: string;
+  onViewProgress: (projectId: string) => void;
+}
+
+export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps) {
+  const [detail, setDetail] = useState<ProjectDetailType | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
+    getProjectDetail(projectId)
+      .then((d) => {
+        if (!cancelled) {
+          setDetail(d);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  async function handleResume() {
+    setResuming(true);
+    try {
+      await resumeProject(projectId);
+      onViewProgress(projectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Resume failed");
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  if (loading) {
+    return <p className="text-center text-sm text-gray-500">Loading...</p>;
+  }
+
+  if (error && !detail) {
+    return <p className="text-center text-sm text-red-400">{error}</p>;
+  }
+
+  if (!detail) return null;
+
+  const isTerminal = TERMINAL_STATUSES.has(detail.status);
+  const canResume = detail.status === "failed";
+  const isRunning = !isTerminal;
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="mb-1 text-2xl font-bold text-white">Project Detail</h1>
+        <p className="text-sm text-gray-500 font-mono">{detail.project_id}</p>
+      </div>
+
+      {/* Meta */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div>
+          <span className="text-xs text-gray-500">Status</span>
+          <div className="mt-1">
+            <StatusBadge status={detail.status} />
+          </div>
+        </div>
+        <div>
+          <span className="text-xs text-gray-500">Style</span>
+          <p className="mt-1 text-sm capitalize text-gray-200">
+            {detail.style.replace("_", " ")}
+          </p>
+        </div>
+        <div>
+          <span className="text-xs text-gray-500">Aspect Ratio</span>
+          <p className="mt-1 text-sm text-gray-200">{detail.aspect_ratio}</p>
+        </div>
+        <div>
+          <span className="text-xs text-gray-500">Scenes</span>
+          <p className="mt-1 text-sm text-gray-200">{detail.scene_count}</p>
+        </div>
+      </div>
+
+      {/* Prompt */}
+      <div>
+        <span className="text-xs text-gray-500">Prompt</span>
+        <p className="mt-1 text-sm leading-relaxed text-gray-300">
+          {detail.prompt}
+        </p>
+      </div>
+
+      {/* Pipeline stepper */}
+      <div className="flex justify-center py-2">
+        <PipelineStepper status={detail.status} />
+      </div>
+
+      {/* Error */}
+      {detail.error_message && (
+        <div className="rounded-md border border-red-800 bg-red-900/50 px-3 py-2 text-sm text-red-300">
+          {detail.error_message}
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-md border border-amber-800 bg-amber-900/50 px-3 py-2 text-sm text-amber-300">
+          {error}
+        </div>
+      )}
+
+      {/* Scenes */}
+      {detail.scenes.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-sm font-medium text-gray-400">
+            Scenes ({detail.scenes.length})
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {detail.scenes.map((scene) => (
+              <SceneCard key={scene.scene_index} scene={scene} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Timestamps */}
+      <div className="flex gap-6 text-xs text-gray-600">
+        <span>Created: {new Date(detail.created_at).toLocaleString()}</span>
+        <span>Updated: {new Date(detail.updated_at).toLocaleString()}</span>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-3">
+        {detail.status === "complete" && (
+          <a
+            href={getDownloadUrl(projectId)}
+            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 transition-colors"
+          >
+            Download Video
+          </a>
+        )}
+        {canResume && (
+          <button
+            onClick={handleResume}
+            disabled={resuming}
+            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 transition-colors disabled:opacity-50"
+          >
+            {resuming ? "Resuming..." : "Resume Pipeline"}
+          </button>
+        )}
+        {isRunning && (
+          <button
+            onClick={() => onViewProgress(projectId)}
+            className="rounded-lg border border-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:border-gray-600 transition-colors"
+          >
+            View Progress
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

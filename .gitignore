@@ -44,6 +44,10 @@ tmp/
 *.json
 !config.json
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
 # OS
 .DS_Store
 Thumbs.db

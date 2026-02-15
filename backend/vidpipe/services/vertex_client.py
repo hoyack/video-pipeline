@@ -20,7 +20,7 @@ from google.genai import types
 from vidpipe.config import settings
 
 # Load .env for GOOGLE_APPLICATION_CREDENTIALS (ADC)
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
 # Global singleton instance
 _vertex_client = None

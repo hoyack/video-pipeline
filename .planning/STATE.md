@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 2: Generation Pipeline
+**Current focus:** Phase 3: Orchestration & Interfaces
 
 ## Current Position
 
-Phase: 2 of 3 (Generation Pipeline)
-Plan: 4 of 4 in current phase
-Status: Phase Complete
-Last activity: 2026-02-14 — Completed plan 02-04 (Video Stitching)
+Phase: 3 of 3 (Orchestration & Interfaces)
+Plan: 1 of 3 in current phase
+Status: Active
+Last activity: 2026-02-15 — Completed plan 03-01 (Pipeline Orchestrator)
 
-Progress: [██████░░░░] 53%
+Progress: [███████░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
+- Total plans completed: 8
 - Average duration: 2.1 min
-- Total execution time: 0.25 hours
+- Total execution time: 0.29 hours
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [██████░░░░] 53%
 |-------|-------|-------|----------|
 | 01-foundation | 3 | 7.0 min | 2.3 min |
 | 02-generation-pipeline | 4 | 8.0 min | 2.0 min |
+| 03-orchestration-interfaces | 1 | 2.2 min | 2.2 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-01 (3.6min), 02-02 (1.7min), 02-03 (1.3min), 02-04 (1.4min)
-- Trend: Consistent fast execution for pipeline implementation tasks
+- Last 5 plans: 02-02 (1.7min), 02-03 (1.3min), 02-04 (1.4min), 03-01 (2.2min)
+- Trend: Consistent fast execution with orchestration layer now complete
 
 *Updated after each plan completion*
 
@@ -75,6 +76,8 @@ Recent decisions affecting current work:
 - **02-04:** Stream copy (-c copy) for concat demuxer to preserve audio quality without re-encoding
 - **02-04:** Wrapped subprocess.run() in asyncio.to_thread() to prevent event loop blocking
 - **02-04:** Validate ffmpeg at startup rather than during pipeline execution for fail-fast error handling
+- [Phase 03-01]: Use completed_steps dict from database queries for failed state resume logic
+- [Phase 03-01]: Fix status mismatch between generate_keyframes (generating_video) and state machine (video_gen) in orchestrator
 
 ### Pending Todos
 
@@ -95,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-14 (plan execution)
-Stopped at: Completed 02-04-PLAN.md - Video Stitching (Phase 2 Complete)
+Last session: 2026-02-15 (plan execution)
+Stopped at: Completed 03-01-PLAN.md - Pipeline Orchestrator
 Resume file: None

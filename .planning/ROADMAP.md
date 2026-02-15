@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation** - Crash-safe state management, database, config, and artifact storage ✓
 - [x] **Phase 2: Generation Pipeline** - Vertex AI integration and all content generators (storyboard, keyframes, video, stitch) ✓
-- [ ] **Phase 3: Orchestration & Interfaces** - State machine coordinator, resume logic, CLI, and HTTP API
+- [x] **Phase 3: Orchestration & Interfaces** - State machine coordinator, resume logic, CLI, and HTTP API ✓
 
 ## Phase Details
 
@@ -67,9 +67,9 @@ Plans:
 **Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 03-01-PLAN.md — Pipeline orchestrator with state machine, resume logic, and run metadata tracking
-- [ ] 03-02-PLAN.md — Typer CLI interface with generate, resume, status, list, and stitch commands
-- [ ] 03-03-PLAN.md — FastAPI HTTP API with 7 endpoints for async generation, polling, and downloads
+- [x] 03-01-PLAN.md — Pipeline orchestrator with state machine, resume logic, and run metadata tracking
+- [x] 03-02-PLAN.md — Typer CLI interface with generate, resume, status, list, and stitch commands
+- [x] 03-03-PLAN.md — FastAPI HTTP API with 7 endpoints for async generation, polling, and downloads
 
 ## Progress
 
@@ -80,4 +80,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Foundation | 3/3 | ✓ Complete | 2026-02-14 |
 | 2. Generation Pipeline | 4/4 | ✓ Complete | 2026-02-14 |
-| 3. Orchestration & Interfaces | 0/3 | Not started | - |
+| 3. Orchestration & Interfaces | 3/3 | ✓ Complete | 2026-02-14 |

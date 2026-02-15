@@ -186,6 +186,20 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
         </div>
       )}
 
+      {/* Final video player */}
+      {detail.status === "complete" && (
+        <div>
+          <h2 className="mb-3 text-sm font-medium text-gray-400">Final Video</h2>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video
+            src={getDownloadUrl(projectId)}
+            className="w-full rounded-lg border border-gray-800"
+            controls
+            preload="metadata"
+          />
+        </div>
+      )}
+
       {/* Scenes */}
       {detail.scenes.length > 0 && (
         <div>
@@ -194,7 +208,7 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {detail.scenes.map((scene) => (
-              <SceneCard key={scene.scene_index} scene={scene} />
+              <SceneCard key={scene.scene_index} scene={scene} defaultExpanded />
             ))}
           </div>
         </div>

@@ -57,7 +57,13 @@ class SceneSchema(BaseModel):
         description="Sequential scene number starting from 0"
     )
     scene_description: str = Field(
-        description="Brief narrative description of what happens in this scene"
+        description="Narrative description of what happens in this scene. "
+        "Reference specific names, organizations, terms, and concepts from the original script. "
+        "Note any text that should appear on-screen (titles, labels, signage)."
+    )
+    key_details: list[str] = Field(
+        description="3-6 specific names, terms, or concepts from the original script "
+        "that THIS scene must visually convey (e.g., organization names, technical terms, statistics)"
     )
     start_frame_prompt: str = Field(
         description="Detailed image prompt beginning with 'A {style} rendering of...' "

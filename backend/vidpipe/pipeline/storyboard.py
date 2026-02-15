@@ -41,12 +41,27 @@ REQUIREMENTS:
 - Add transition notes to ensure visual continuity between scenes
 - Create a comprehensive style guide aligned with {style}
 
+DETAIL PRESERVATION:
+Before composing scenes, identify ALL specific details from the script:
+- Proper names (people, organizations, products, frameworks, standards)
+- Technical terms, acronyms, and domain jargon
+- Numbers, dates, statistics, and quantitative claims
+- Specific processes, methodologies, or workflows described
+
+Every identified detail MUST appear in at least one scene via visual vehicles:
+- On-screen text overlays, titles, or captions
+- Documents, reports, or slides visible in the scene
+- Whiteboards, screens, monitors showing text
+- Signage, nameplates, logos, or banners
+
+The key_details field for each scene must list 3-6 specific terms the scene conveys.
+
 KEYFRAME PROMPT FORMAT (start_frame_prompt and end_frame_prompt):
 Each prompt MUST follow this exact structure:
 1. MEDIUM DECLARATION (first words): "A {style} rendering of..."
 2. SUBJECT: Detailed character description matching the character bible — same face, hair, clothing, proportions every time
 3. ACTION/POSE: What the character is doing, body position
-4. SETTING: Environment, background elements
+4. SETTING: Environment, background elements, including any visible text/signage/screens from key_details
 5. LIGHTING: Light source direction, quality, mood
 6. CAMERA: Shot type (wide/medium/close-up), angle, lens
 7. STYLE CUES: Rendering technique details specific to {style} (e.g., line weight, color fills, shading approach, texture)
@@ -59,7 +74,7 @@ Focus on: camera movement (pan, dolly, track, crane), subject animation, environ
 Good example: "Slow dolly forward as the subject turns to face the camera, hair gently blowing in the breeze"
 Bad example: "A blonde woman in anime style turns around in a congressional hearing room" (re-describes visuals)
 
-GOAL: Ensure all scenes maintain visual coherence in {style} style while telling a compelling story."""
+GOAL: Ensure all scenes maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 
 
 async def generate_storyboard(session: AsyncSession, project: Project) -> None:

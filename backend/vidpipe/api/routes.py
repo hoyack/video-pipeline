@@ -207,6 +207,13 @@ class SceneDetail(BaseModel):
     has_end_keyframe: bool
     has_clip: bool
     clip_status: Optional[str] = None
+    start_frame_prompt: Optional[str] = None
+    end_frame_prompt: Optional[str] = None
+    video_motion_prompt: Optional[str] = None
+    transition_notes: Optional[str] = None
+    start_keyframe_url: Optional[str] = None
+    end_keyframe_url: Optional[str] = None
+    clip_url: Optional[str] = None
 
 
 class ProjectDetail(BaseModel):
@@ -431,6 +438,9 @@ async def get_project_detail(project_id: uuid.UUID):
             )
             clip = clip_result.scalar_one_or_none()
 
+            start_kf = next((kf for kf in keyframes if kf.position == "start"), None)
+            end_kf = next((kf for kf in keyframes if kf.position == "end"), None)
+
             scene_details.append(SceneDetail(
                 scene_index=scene.scene_index,
                 description=scene.scene_description,
@@ -439,6 +449,13 @@ async def get_project_detail(project_id: uuid.UUID):
                 has_end_keyframe=has_end_keyframe,
                 has_clip=clip is not None,
                 clip_status=clip.status if clip else None,
+                start_frame_prompt=scene.start_frame_prompt,
+                end_frame_prompt=scene.end_frame_prompt,
+                video_motion_prompt=scene.video_motion_prompt,
+                transition_notes=scene.transition_notes,
+                start_keyframe_url=f"/api/keyframes/{start_kf.id}" if start_kf else None,
+                end_keyframe_url=f"/api/keyframes/{end_kf.id}" if end_kf else None,
+                clip_url=f"/api/clips/{clip.id}" if clip and clip.status == "complete" and clip.local_path else None,
             ))
 
         return ProjectDetail(
@@ -595,6 +612,59 @@ async def download_video(project_id: uuid.UUID):
             headers={
                 "Content-Disposition": f'attachment; filename="video_{project_id}.mp4"'
             }
+        )
+
+
+@router.get("/keyframes/{keyframe_id}")
+async def get_keyframe_image(keyframe_id: uuid.UUID):
+    """Serve a keyframe image by its database ID.
+
+    Returns the PNG image file from disk.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(Keyframe).where(Keyframe.id == keyframe_id)
+        )
+        keyframe = result.scalar_one_or_none()
+
+        if not keyframe:
+            raise HTTPException(status_code=404, detail="Keyframe not found")
+
+        file_path = Path(keyframe.file_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Keyframe file not found on disk")
+
+        return FileResponse(
+            path=str(file_path),
+            media_type=keyframe.mime_type,
+        )
+
+
+@router.get("/clips/{clip_id}")
+async def get_clip_video(clip_id: uuid.UUID):
+    """Serve a video clip by its database ID.
+
+    Returns the MP4 video file from disk.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(VideoClip).where(VideoClip.id == clip_id)
+        )
+        clip = result.scalar_one_or_none()
+
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip not found")
+
+        if not clip.local_path:
+            raise HTTPException(status_code=404, detail="Clip file path not set")
+
+        file_path = Path(clip.local_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Clip file not found on disk")
+
+        return FileResponse(
+            path=str(file_path),
+            media_type="video/mp4",
         )
 
 

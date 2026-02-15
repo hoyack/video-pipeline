@@ -36,6 +36,13 @@ export interface SceneDetail {
   has_end_keyframe: boolean;
   has_clip: boolean;
   clip_status: string | null;
+  start_frame_prompt?: string | null;
+  end_frame_prompt?: string | null;
+  video_motion_prompt?: string | null;
+  transition_notes?: string | null;
+  start_keyframe_url?: string | null;
+  end_keyframe_url?: string | null;
+  clip_url?: string | null;
 }
 
 /** Response from GET /api/projects/{id} */

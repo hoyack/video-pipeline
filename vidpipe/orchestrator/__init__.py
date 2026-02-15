@@ -7,5 +7,6 @@ Provides state machine coordination for the video generation pipeline with:
 - Progress callback interface for CLI/API integration
 """
 
-# Import will be added in Task 2 after pipeline.py is created
-__all__ = []
+from vidpipe.orchestrator.pipeline import run_pipeline
+
+__all__ = ["run_pipeline"]

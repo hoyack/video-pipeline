@@ -23,6 +23,16 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE video_clips ADD COLUMN safety_regen_count INTEGER DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN manifest_id TEXT REFERENCES manifests(id)",
         "ALTER TABLE projects ADD COLUMN manifest_version INTEGER",
+        # Phase 5: Manifesting Engine fields
+        "ALTER TABLE assets ADD COLUMN reverse_prompt TEXT",
+        "ALTER TABLE assets ADD COLUMN visual_description TEXT",
+        "ALTER TABLE assets ADD COLUMN detection_class VARCHAR(50)",
+        "ALTER TABLE assets ADD COLUMN detection_confidence REAL",
+        "ALTER TABLE assets ADD COLUMN is_face_crop INTEGER DEFAULT 0",
+        "ALTER TABLE assets ADD COLUMN crop_bbox TEXT",  # JSON stored as TEXT in SQLite
+        "ALTER TABLE assets ADD COLUMN face_embedding BLOB",
+        "ALTER TABLE assets ADD COLUMN quality_score REAL",
+        "ALTER TABLE assets ADD COLUMN source_asset_id TEXT REFERENCES assets(id)",
     ]
     for sql in migrations:
         try:

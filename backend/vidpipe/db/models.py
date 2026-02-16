@@ -67,6 +67,17 @@ class Asset(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
+    # Phase 5: Manifesting Engine fields
+    reverse_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    visual_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    detection_class: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    detection_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    is_face_crop: Mapped[bool] = mapped_column(Boolean, default=False)
+    crop_bbox: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # [x1, y1, x2, y2]
+    face_embedding: Mapped[Optional[bytes]] = mapped_column(nullable=True)  # numpy.tobytes() 512-dim float32
+    quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("assets.id"), nullable=True)  # parent asset if extracted crop
+
 
 class Project(Base):
     """Project model representing a video generation project.

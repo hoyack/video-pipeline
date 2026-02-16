@@ -17,13 +17,14 @@ from vidpipe.db.models import Asset, Manifest, Project
 
 # Valid enum constants
 VALID_CATEGORIES = {"CHARACTERS", "ENVIRONMENT", "FULL_PRODUCTION", "STYLE_KIT", "BRAND_KIT", "CUSTOM"}
-VALID_ASSET_TYPES = {"CHARACTER", "OBJECT", "ENVIRONMENT", "PROP", "STYLE", "OTHER"}
+VALID_ASSET_TYPES = {"CHARACTER", "OBJECT", "ENVIRONMENT", "PROP", "STYLE", "VEHICLE", "OTHER"}
 TAG_PREFIX_MAP = {
     "CHARACTER": "CHAR",
     "OBJECT": "OBJ",
     "ENVIRONMENT": "ENV",
     "PROP": "PROP",
     "STYLE": "STYLE",
+    "VEHICLE": "VEH",
     "OTHER": "OTHER",
 }
 

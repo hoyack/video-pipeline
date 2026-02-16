@@ -85,7 +85,7 @@ function App() {
       {currentView === "manifest-creator" && (
         <ManifestCreator
           manifestId={activeManifestId}
-          onSaved={(id) => {
+          onSaved={() => {
             setActiveManifestId(null);
             navigateTo("manifests");
           }}

@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 6 of 12 (GenerateForm Integration)
-Plan: 2 of 2 in current phase
-Status: Complete
-Last activity: 2026-02-16 — Completed 06-02 (frontend manifest selection UI)
+Phase: 7 of 12 (Manifest-Aware Storyboarding and Audio Manifest)
+Plan: 1 of 2 in current phase
+Status: In Progress
+Last activity: 2026-02-16 — Completed 07-01 (schemas and models for manifest-aware storyboarding)
 
-Progress: [██████░░░░] 50% (6 of 12 phases complete)
+Progress: [██████░░░░] 50% (6 of 12 phases complete, 1 of 2 plans in Phase 7)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 16
-- Average duration: 2.6 min
-- Total execution time: 0.69 hours
+- Total plans completed: 17
+- Average duration: 2.5 min
+- Total execution time: 0.72 hours
 
 **By Phase:**
 
@@ -33,10 +33,11 @@ Progress: [██████░░░░] 50% (6 of 12 phases complete)
 | 04-manifest-system-foundation | 2 | 9.2 min | 4.6 min |
 | 05-manifesting-engine | 2 | 9.1 min | 4.6 min |
 | 06-generateform-integration | 2 | 5.0 min | 2.5 min |
+| 07-manifest-aware-storyboarding | 1 | 2.0 min | 2.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-01 (3.6min), 05-02 (5.5min), 06-01 (2.6min), 06-02 (2.4min)
-- Trend: Phase 6 complete - added manifest selection UI to GenerateForm
+- Last 5 plans: 05-02 (5.5min), 06-01 (2.6min), 06-02 (2.4min), 07-01 (2.0min)
+- Trend: Phase 7 started - data layer for manifest-aware storyboarding
 
 *Updated after each plan completion*
 
@@ -120,6 +121,10 @@ Recent decisions affecting current work:
 - **06-02:** Filter READY manifests client-side until backend status filtering implemented
 - **06-02:** Use ?? undefined (not ?? null) to omit manifest_id from JSON when unset
 - **06-02:** Limit manifest grid to 6 items with max-h-64 to prevent UI bloat
+- **07-01:** EnhancedStoryboardOutput is separate model (not subclass) because scenes field type differs
+- **07-01:** Store full manifests as JSON with denormalized fields for efficient querying
+- **07-01:** Use JSON columns for arrays (asset_tags, speaker_tags) following Manifest.tags pattern
+- **07-01:** Composite PKs (project_id, scene_index) eliminate need for UUID primary keys on scene manifest tables
 
 ### Roadmap Evolution
 
@@ -146,5 +151,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-16 (execution)
-Stopped at: Completed 06-02-PLAN.md (frontend manifest selection UI)
+Stopped at: Completed 07-01-PLAN.md (schemas and models for manifest-aware storyboarding)
 Resume file: None

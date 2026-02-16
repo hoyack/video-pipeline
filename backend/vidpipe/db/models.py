@@ -150,6 +150,43 @@ class Scene(Base):
     status: Mapped[str] = mapped_column(String(50))
 
 
+class SceneManifest(Base):
+    """Per-scene asset placement manifest with composition metadata.
+
+    Spec reference: Phase 7
+    """
+    __tablename__ = "scene_manifests"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    scene_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manifest_json: Mapped[dict] = mapped_column(JSON)
+    composition_shot_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    composition_camera_movement: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    asset_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    new_asset_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class SceneAudioManifest(Base):
+    """Per-scene audio direction manifest with dialogue, SFX, ambient, and music.
+
+    Spec reference: Phase 7
+    """
+    __tablename__ = "scene_audio_manifests"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    scene_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dialogue_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    sfx_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    ambient_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    music_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    audio_continuity_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    speaker_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    has_dialogue: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_music: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class Keyframe(Base):
     """Keyframe model representing start/end frame images for scenes.
 

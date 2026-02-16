@@ -1,22 +1,28 @@
 """API route handlers and Pydantic response schemas."""
 
+import json
 import logging
 import math
 import random
+import shutil
 import uuid
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func as sa_func, select
 from sqlalchemy.orm import selectinload
 
+from google.genai import types
 from vidpipe.db import async_session
 from vidpipe.db.models import Project, Scene, Keyframe, VideoClip
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
+from vidpipe.schemas.storyboard import SceneSchema
+from vidpipe.services.file_manager import FileManager
+from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 
 from collections import Counter
 
@@ -122,15 +128,22 @@ def _estimate_project_cost(
     project: "Project",
     generated_keyframes: int = 0,
     completed_clips: int = 0,
+    generated_clips: int = 0,
     has_storyboard: bool = False,
 ) -> float:
     """Estimate cost based on actual artifacts generated.
 
-    For complete projects, uses the theoretical full cost.
+    For complete projects, uses theoretical cost minus inherited assets.
     For incomplete projects, counts only what was actually generated:
     - text cost if storyboard was produced
     - image cost per generated keyframe
     - video cost per completed clip × clip_duration
+
+    Args:
+        generated_keyframes: Keyframes with source='generated'
+        completed_clips: All completed clips (for backward compat)
+        generated_clips: Clips with source='generated' (excludes inherited)
+        has_storyboard: Whether a storyboard exists
     """
     clip_dur = project.target_clip_duration or 6
     audio = project.audio_enabled and project.video_model in AUDIO_CAPABLE_MODELS
@@ -143,15 +156,19 @@ def _estimate_project_cost(
     text_cost_rate = TEXT_MODEL_COST.get(project.text_model or "", 0.01)
 
     if project.status == "complete":
-        # Full theoretical cost for completed projects
+        # Full theoretical cost minus inherited assets
         scene_count = project.target_scene_count or math.ceil(
             (project.total_duration or 15) / clip_dur
         )
-        return (
+        full_cost = (
             text_cost_rate
             + (scene_count + 1) * img_rate
             + scene_count * clip_dur * vid_rate
         )
+        # Subtract inherited keyframe and clip costs
+        inherited_kf = max(0, (scene_count + 1) - generated_keyframes) if generated_keyframes > 0 else 0
+        inherited_clips = max(0, scene_count - generated_clips) if generated_clips > 0 else 0
+        return full_cost - (inherited_kf * img_rate) - (inherited_clips * clip_dur * vid_rate)
 
     if project.status == "pending":
         return 0.0
@@ -161,7 +178,9 @@ def _estimate_project_cost(
     if has_storyboard:
         cost += text_cost_rate
     cost += generated_keyframes * img_rate
-    cost += completed_clips * clip_dur * vid_rate
+    # Use generated_clips if available, otherwise fall back to completed_clips
+    clip_count = generated_clips if generated_clips > 0 else completed_clips
+    cost += clip_count * clip_dur * vid_rate
     return cost
 
 
@@ -234,6 +253,7 @@ class ProjectDetail(BaseModel):
     image_model: Optional[str] = None
     video_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
+    forked_from: Optional[str] = None
 
 
 class ProjectListItem(BaseModel):
@@ -255,6 +275,32 @@ class ResumeResponse(BaseModel):
     project_id: str
     status: str
     status_url: str
+
+
+class ForkRequest(BaseModel):
+    """Request schema for POST /api/projects/{id}/fork."""
+    prompt: Optional[str] = None
+    style: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    clip_duration: Optional[int] = None
+    total_duration: Optional[int] = None
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    audio_enabled: Optional[bool] = None
+    scene_edits: Optional[dict[int, dict[str, str]]] = None
+    deleted_scenes: Optional[list[int]] = None
+    clear_keyframes: Optional[list[int]] = None
+
+
+class ForkResponse(BaseModel):
+    """Response schema for POST /api/projects/{id}/fork."""
+    project_id: str
+    forked_from: str
+    status: str
+    status_url: str
+    copied_scenes: int
+    resume_from: str
 
 
 class StopResponse(BaseModel):
@@ -475,6 +521,7 @@ async def get_project_detail(project_id: uuid.UUID):
             image_model=project.image_model,
             video_model=project.video_model,
             audio_enabled=project.audio_enabled,
+            forked_from=str(project.forked_from_id) if project.forked_from_id else None,
         )
 
 
@@ -571,6 +618,449 @@ async def stop_project(project_id: uuid.UUID):
         logger.info(f"Project {project_id} marked as stopped")
 
     return StopResponse(project_id=str(project_id), status="stopped")
+
+
+class _ExpansionScenes(BaseModel):
+    """Wrapper schema for Gemini structured output of expansion scenes."""
+    scenes: list[SceneSchema] = Field(description="New scenes to append")
+
+
+async def _generate_expansion_scenes(
+    project: Project,
+    kept_scenes: list[dict],
+    num_new_scenes: int,
+    start_index: int,
+) -> list[dict]:
+    """Generate storyboard entries for new scenes extending an existing storyboard.
+
+    Uses Gemini structured output to create scene entries that continue the
+    narrative from the kept scenes, maintaining style and character consistency.
+
+    Args:
+        project: The new forked project (has prompt, style, etc.)
+        kept_scenes: storyboard_raw["scenes"] entries for kept scenes
+        num_new_scenes: How many new scenes to generate
+        start_index: scene_index for the first new scene
+
+    Returns:
+        List of scene dicts ready for Scene record creation
+    """
+    model_id = project.text_model or "gemini-2.5-flash"
+    client = get_vertex_client(location=location_for_model(model_id))
+    style_label = (project.style or "cinematic").replace("_", " ")
+
+    # Build context from kept scenes
+    kept_summary = json.dumps(kept_scenes, indent=2) if kept_scenes else "[]"
+
+    prompt = f"""You are a storyboard director. You have an existing partial storyboard and need to generate {num_new_scenes} NEW continuation scene(s).
+
+VISUAL STYLE: {style_label}
+ASPECT RATIO: {project.aspect_ratio}
+
+ORIGINAL SCRIPT:
+{project.prompt}
+
+EXISTING SCENES (already in the storyboard — do NOT repeat these):
+{kept_summary}
+
+Generate exactly {num_new_scenes} new scene(s) that continue the narrative from where the existing scenes leave off.
+- Scene indices must start at {start_index} and increment by 1.
+- Maintain visual consistency with the existing scenes (same characters, style, color palette).
+- Follow the same keyframe prompt format: "A {style_label} rendering of..." with subject, action, setting, lighting, camera, style cues, color palette.
+- Motion prompts should describe ONLY motion/camera, not re-describe visuals.
+- Transition notes should connect smoothly from the last existing scene to the first new scene, and between new scenes.
+- Include key_details for each scene (3-6 specific terms from the original script).
+"""
+
+    response = await client.aio.models.generate_content(
+        model=model_id,
+        contents=[prompt],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=_ExpansionScenes,
+            temperature=0.7,
+        ),
+    )
+
+    result = _ExpansionScenes.model_validate_json(response.text)
+
+    # Normalize scene indices to start at start_index
+    scenes_out = []
+    for i, scene in enumerate(result.scenes[:num_new_scenes]):
+        sd = scene.model_dump()
+        sd["scene_index"] = start_index + i
+        scenes_out.append(sd)
+
+    return scenes_out
+
+
+def _compute_invalidation(
+    source: Project,
+    overrides: dict,
+    scene_edits: Optional[dict[int, dict[str, str]]],
+    deleted_scenes: Optional[list[int]] = None,
+    clear_keyframes: Optional[list[int]] = None,
+) -> tuple[str, int]:
+    """Compute the pipeline resume point and scene copy boundary for a fork.
+
+    Returns (resume_stage, scene_copy_boundary) where:
+    - resume_stage: the pipeline status to start from
+    - scene_copy_boundary: scenes with index < boundary are fully copied,
+      scenes at/after boundary get partial or no copying depending on stage
+
+    Scene boundary uses *new* (post-deletion) numbering when deleted_scenes
+    are present.
+    """
+    scene_count = source.target_scene_count or 3
+
+    # Compute deletion info early — needed for scene count logic
+    deleted_set = set(deleted_scenes) if deleted_scenes else set()
+    deleted_count = len(deleted_set)
+    kept_count = scene_count - deleted_count
+
+    # Check if total_duration or clip_duration changes cause scene count change
+    new_total = overrides.get("total_duration", source.total_duration) or source.total_duration or 15
+    new_clip = overrides.get("clip_duration", source.target_clip_duration) or source.target_clip_duration or 6
+    new_scene_count = math.ceil(new_total / new_clip)
+
+    # Scene count change with no deletions
+    if new_scene_count != scene_count and deleted_count == 0:
+        if new_scene_count > scene_count:
+            # Pure expansion: keep all existing scenes, only generate new ones
+            return "keyframing", scene_count
+        else:
+            # Scene count decreased: full re-run
+            return "pending", 0
+
+    # Edits that force full re-run
+    if any(k in overrides for k in ("prompt", "style", "text_model")):
+        return "pending", 0
+
+    # Edits that force keyframing restart
+    if any(k in overrides for k in ("image_model", "aspect_ratio")):
+        return "keyframing", 0
+
+    # Edits that force video_gen restart (keep all keyframes)
+    if any(k in overrides for k in ("video_model", "audio_enabled", "clip_duration")):
+        if new_scene_count > kept_count:
+            # Expansion needs keyframes for new scenes
+            return "keyframing", kept_count
+        return "video_gen", new_scene_count
+
+    # Expansion after deletion: new scenes need storyboard+keyframes+video
+    if new_scene_count > kept_count:
+        return "keyframing", kept_count
+
+    def _old_to_new(old_idx: int) -> int:
+        """Map an original scene index to its post-deletion index."""
+        return old_idx - sum(1 for d in deleted_set if d < old_idx)
+
+    # Collect all keyframe-level and video-level invalidation candidates
+    min_keyframe_boundary = new_scene_count
+    min_video_boundary = new_scene_count
+
+    # Scene deletions → keyframe invalidation at the deletion point (new numbering)
+    if deleted_scenes:
+        for d in deleted_scenes:
+            if 0 <= d < scene_count:
+                new_idx = _old_to_new(d)
+                min_keyframe_boundary = min(min_keyframe_boundary, new_idx)
+
+    # Cleared keyframes → keyframe invalidation (using original indices)
+    if clear_keyframes:
+        for idx in clear_keyframes:
+            if 0 <= idx < scene_count and idx not in deleted_set:
+                new_idx = _old_to_new(idx)
+                min_keyframe_boundary = min(min_keyframe_boundary, new_idx)
+
+    # Scene-level edits
+    if scene_edits:
+        for idx, edits in scene_edits.items():
+            if idx in deleted_set:
+                continue
+            for field in edits:
+                if field in ("start_frame_prompt", "end_frame_prompt"):
+                    new_idx = _old_to_new(idx)
+                    min_keyframe_boundary = min(min_keyframe_boundary, new_idx)
+                elif field == "video_motion_prompt":
+                    new_idx = _old_to_new(idx)
+                    min_video_boundary = min(min_video_boundary, new_idx)
+
+    if min_keyframe_boundary < new_scene_count:
+        return "keyframing", min_keyframe_boundary
+    if min_video_boundary < new_scene_count:
+        return "video_gen", min_video_boundary
+
+    # No invalidation — just re-stitch
+    return "stitching", new_scene_count
+
+
+@router.post("/projects/{project_id}/fork", status_code=202, response_model=ForkResponse)
+async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_tasks: BackgroundTasks):
+    """Fork a project with optional edits and resume from the appropriate pipeline stage.
+
+    Creates a new project that copies existing assets up to the edit point, then
+    resumes the pipeline from there. Copied assets are marked as 'inherited'.
+    """
+    async with async_session() as session:
+        # Load source project
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        source = result.scalar_one_or_none()
+        if not source:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Must be terminal
+        if source.status not in ("complete", "failed", "stopped"):
+            raise HTTPException(status_code=409, detail=f"Can only fork terminal projects, got '{source.status}'")
+
+        # Collect overrides (only explicitly provided fields)
+        overrides: dict = {}
+        for field in ("prompt", "style", "aspect_ratio", "clip_duration", "total_duration",
+                       "text_model", "image_model", "video_model", "audio_enabled"):
+            val = getattr(request, field if field != "clip_duration" else field)
+            if val is not None:
+                overrides[field] = val
+
+        # Validate overrides
+        ar = overrides.get("aspect_ratio", source.aspect_ratio)
+        if ar not in ("16:9", "9:16"):
+            raise HTTPException(status_code=422, detail=f"aspect_ratio must be 16:9 or 9:16, got {ar}")
+
+        vm = overrides.get("video_model", source.video_model)
+        if vm and vm not in ALLOWED_VIDEO_MODELS:
+            raise HTTPException(status_code=422, detail=f"Invalid video_model: {vm}")
+        im = overrides.get("image_model", source.image_model)
+        if im and im not in ALLOWED_IMAGE_MODELS:
+            raise HTTPException(status_code=422, detail=f"Invalid image_model: {im}")
+        tm = overrides.get("text_model", source.text_model)
+        if tm and tm not in ALLOWED_TEXT_MODELS:
+            raise HTTPException(status_code=422, detail=f"Invalid text_model: {tm}")
+
+        cd = overrides.get("clip_duration", source.target_clip_duration)
+        allowed = ALLOWED_DURATIONS.get(vm or "", [5, 6, 7, 8])
+        if cd not in allowed:
+            raise HTTPException(status_code=422, detail=f"clip_duration {cd} not supported for {vm}. Allowed: {allowed}")
+
+        ae = overrides.get("audio_enabled", source.audio_enabled)
+        if ae and vm not in AUDIO_CAPABLE_MODELS:
+            raise HTTPException(status_code=422, detail=f"Audio not supported for {vm}")
+
+        # Validate deleted_scenes — must leave at least 1 scene
+        deleted_set = set(request.deleted_scenes) if request.deleted_scenes else set()
+        src_scene_count = source.target_scene_count or 3
+        if deleted_set and len(deleted_set) >= src_scene_count:
+            raise HTTPException(status_code=422, detail="Cannot delete all scenes; at least 1 must remain")
+
+        # Compute invalidation point
+        resume_from, scene_boundary = _compute_invalidation(
+            source, overrides, request.scene_edits,
+            deleted_scenes=request.deleted_scenes,
+            clear_keyframes=request.clear_keyframes,
+        )
+
+        # Merge settings
+        new_total = overrides.get("total_duration", source.total_duration)
+        new_clip = overrides.get("clip_duration", source.target_clip_duration)
+        new_scene_count = math.ceil((new_total or 15) / (new_clip or 6))
+
+        # Adjust scene count and total duration for deletions — but only when
+        # the frontend did NOT explicitly send total_duration. When total_duration
+        # is explicit, new_scene_count already reflects the user's desired count
+        # (including any expansion after deletion).
+        if deleted_set and "total_duration" not in overrides:
+            new_scene_count = max(1, new_scene_count - len(deleted_set))
+            new_total = new_scene_count * (new_clip or 6)
+
+        # Create new project
+        new_project = Project(
+            prompt=overrides.get("prompt", source.prompt),
+            style=overrides.get("style", source.style),
+            aspect_ratio=ar,
+            target_clip_duration=new_clip,
+            target_scene_count=new_scene_count,
+            total_duration=new_total,
+            text_model=tm,
+            image_model=im,
+            video_model=vm,
+            audio_enabled=ae,
+            seed=random.randint(0, 2**32 - 1),
+            forked_from_id=source.id,
+            status=resume_from,
+        )
+
+        # Copy storyboard data if not starting from pending
+        if resume_from != "pending":
+            new_project.storyboard_raw = source.storyboard_raw
+            new_project.style_guide = source.style_guide
+
+        session.add(new_project)
+        await session.commit()
+        await session.refresh(new_project)
+
+        new_id = new_project.id
+        file_mgr = FileManager()
+        file_mgr.get_project_dir(new_id)  # ensure dirs exist
+
+        # Build set of scenes whose keyframes should be cleared
+        clear_kf_set = set(request.clear_keyframes) if request.clear_keyframes else set()
+
+        # Load source scenes
+        src_scenes_result = await session.execute(
+            select(Scene).where(Scene.project_id == source.id).order_by(Scene.scene_index)
+        )
+        src_scenes = src_scenes_result.scalars().all()
+
+        copied_scenes = 0
+        new_idx = 0  # renumbered index for non-deleted scenes
+
+        if resume_from != "pending":
+            for src_scene in src_scenes:
+                idx = src_scene.scene_index
+
+                # Skip deleted scenes
+                if idx in deleted_set:
+                    continue
+
+                # Apply scene-level edits
+                scene_desc = src_scene.scene_description
+                start_fp = src_scene.start_frame_prompt
+                end_fp = src_scene.end_frame_prompt
+                motion = src_scene.video_motion_prompt
+                transition = src_scene.transition_notes
+
+                if request.scene_edits and idx in request.scene_edits:
+                    edits = request.scene_edits[idx]
+                    scene_desc = edits.get("scene_description", scene_desc)
+                    start_fp = edits.get("start_frame_prompt", start_fp)
+                    end_fp = edits.get("end_frame_prompt", end_fp)
+                    motion = edits.get("video_motion_prompt", motion)
+                    transition = edits.get("transition_notes", transition)
+
+                # Determine what to copy for this scene (using new_idx for boundary checks)
+                if resume_from == "stitching":
+                    new_scene_status = "video_done"
+                    copy_keyframes = True
+                    copy_clip = True
+                elif resume_from == "video_gen":
+                    if new_idx < scene_boundary:
+                        new_scene_status = "video_done"
+                        copy_keyframes = True
+                        copy_clip = True
+                    else:
+                        new_scene_status = "keyframes_done"
+                        copy_keyframes = True
+                        copy_clip = False
+                elif resume_from == "keyframing":
+                    if new_idx < scene_boundary:
+                        new_scene_status = "video_done"
+                        copy_keyframes = True
+                        copy_clip = True
+                    else:
+                        new_scene_status = "pending"
+                        copy_keyframes = False
+                        copy_clip = False
+                else:
+                    new_scene_status = "pending"
+                    copy_keyframes = False
+                    copy_clip = False
+
+                # If keyframes are explicitly cleared for this scene, don't copy them
+                if idx in clear_kf_set:
+                    copy_keyframes = False
+                    copy_clip = False
+                    if new_scene_status not in ("pending",):
+                        new_scene_status = "pending"
+
+                new_scene = Scene(
+                    project_id=new_id,
+                    scene_index=new_idx,
+                    scene_description=scene_desc,
+                    start_frame_prompt=start_fp,
+                    end_frame_prompt=end_fp,
+                    video_motion_prompt=motion,
+                    transition_notes=transition,
+                    status=new_scene_status,
+                )
+                session.add(new_scene)
+                await session.flush()  # get new_scene.id
+
+                # Copy keyframes
+                if copy_keyframes:
+                    kf_result = await session.execute(
+                        select(Keyframe).where(Keyframe.scene_id == src_scene.id)
+                    )
+                    for kf in kf_result.scalars().all():
+                        src_path = Path(kf.file_path)
+                        if src_path.exists():
+                            dst_path = file_mgr.get_project_dir(new_id) / "keyframes" / src_path.name
+                            shutil.copy2(str(src_path), str(dst_path))
+                            new_kf = Keyframe(
+                                scene_id=new_scene.id,
+                                position=kf.position,
+                                prompt_used=kf.prompt_used,
+                                file_path=str(dst_path),
+                                mime_type=kf.mime_type,
+                                source="inherited",
+                            )
+                            session.add(new_kf)
+
+                # Copy clip
+                if copy_clip:
+                    clip_result = await session.execute(
+                        select(VideoClip).where(VideoClip.scene_id == src_scene.id)
+                    )
+                    clip = clip_result.scalar_one_or_none()
+                    if clip and clip.local_path:
+                        src_clip_path = Path(clip.local_path)
+                        if src_clip_path.exists():
+                            dst_clip_path = file_mgr.get_project_dir(new_id) / "clips" / src_clip_path.name
+                            shutil.copy2(str(src_clip_path), str(dst_clip_path))
+                            new_clip = VideoClip(
+                                scene_id=new_scene.id,
+                                source="inherited",
+                                status="complete",
+                                local_path=str(dst_clip_path),
+                                gcs_uri=clip.gcs_uri,
+                                duration_seconds=clip.duration_seconds,
+                            )
+                            session.add(new_clip)
+
+                if new_scene_status != "pending":
+                    copied_scenes += 1
+
+                new_idx += 1
+
+            # Update storyboard_raw: apply edits, prune deleted scenes, renumber
+            if new_project.storyboard_raw:
+                sb = dict(new_project.storyboard_raw)
+                if "scenes" in sb:
+                    # Apply scene edits first (on original indices)
+                    if request.scene_edits:
+                        for idx_str, edits in request.scene_edits.items():
+                            edit_idx = int(idx_str)
+                            if edit_idx < len(sb["scenes"]):
+                                for field, value in edits.items():
+                                    sb["scenes"][edit_idx][field] = value
+                    # Remove deleted scenes (iterate in reverse to preserve indices)
+                    if deleted_set:
+                        sb["scenes"] = [
+                            s for i, s in enumerate(sb["scenes"]) if i not in deleted_set
+                        ]
+                    new_project.storyboard_raw = sb
+
+        await session.commit()
+
+    # Start pipeline in background
+    background_tasks.add_task(run_pipeline_background, new_id)
+
+    return ForkResponse(
+        project_id=str(new_id),
+        forked_from=str(project_id),
+        status=resume_from,
+        status_url=f"/api/projects/{new_id}/status",
+        copied_scenes=copied_scenes,
+        resume_from=resume_from,
+    )
 
 
 @router.get("/projects/{project_id}/download")
@@ -693,7 +1183,7 @@ async def get_metrics():
         )
         kf_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in kf_q}
 
-        # completed video clips per project
+        # completed video clips per project (only source='generated')
         vc_q = await session.execute(
             select(
                 Scene.project_id,
@@ -701,6 +1191,7 @@ async def get_metrics():
             )
             .join(Scene, VideoClip.scene_id == Scene.id)
             .where(VideoClip.status == "complete")
+            .where(VideoClip.source == "generated")
             .group_by(Scene.project_id)
         )
         vc_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in vc_q}
@@ -749,6 +1240,7 @@ async def get_metrics():
             p,
             generated_keyframes=kf_counts.get(p.id, 0),
             completed_clips=vc_counts.get(p.id, 0),
+            generated_clips=vc_counts.get(p.id, 0),
             has_storyboard=p.storyboard_raw is not None,
         )
 

@@ -5,6 +5,7 @@ import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, estimateCos
 import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
+import { EditForkPanel } from "./EditForkPanel.tsx";
 
 function modelLabel(
   catalogs: { id: string; label: string }[][],
@@ -21,13 +22,16 @@ function modelLabel(
 interface ProjectDetailProps {
   projectId: string;
   onViewProgress: (projectId: string) => void;
+  onForked?: (newProjectId: string) => void;
+  onViewProject?: (projectId: string) => void;
 }
 
-export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps) {
+export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProject }: ProjectDetailProps) {
   const [detail, setDetail] = useState<ProjectDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +80,23 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
 
   const isTerminal = TERMINAL_STATUSES.has(detail.status);
   const canResume = detail.status === "failed" || detail.status === "stopped";
+  const canFork = isTerminal;
   const isRunning = !isTerminal;
+
+  if (editing && detail) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-6">
+        <EditForkPanel
+          detail={detail}
+          onForked={(newId) => {
+            setEditing(false);
+            if (onForked) onForked(newId);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      </div>
+    );
+  }
 
   const costEstimate = detail.total_duration && detail.clip_duration && detail.text_model && detail.image_model && detail.video_model
     ? estimateCost(detail.total_duration, detail.clip_duration, detail.text_model, detail.image_model, detail.video_model, detail.audio_enabled ?? false)
@@ -88,6 +108,17 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
       <div>
         <h1 className="mb-1 text-2xl font-bold text-white">Project Detail</h1>
         <p className="text-sm text-gray-500 font-mono">{detail.project_id}</p>
+        {detail.forked_from && (
+          <p className="mt-1 text-xs text-gray-500">
+            Forked from{" "}
+            <button
+              onClick={() => onViewProject?.(detail.forked_from!)}
+              className="font-mono text-blue-400 hover:text-blue-300 underline"
+            >
+              {detail.forked_from.slice(0, 8)}...
+            </button>
+          </p>
+        )}
       </div>
 
       {/* Meta */}
@@ -237,6 +268,14 @@ export function ProjectDetail({ projectId, onViewProgress }: ProjectDetailProps)
             className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 transition-colors disabled:opacity-50"
           >
             {resuming ? "Resuming..." : "Resume Pipeline"}
+          </button>
+        )}
+        {canFork && (
+          <button
+            onClick={() => setEditing(true)}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 transition-colors"
+          >
+            Edit & Fork
           </button>
         )}
         {isRunning && (

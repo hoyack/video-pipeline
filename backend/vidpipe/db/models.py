@@ -32,6 +32,9 @@ class Project(Base):
     video_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     audio_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     seed: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    forked_from_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -89,6 +92,7 @@ class VideoClip(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     operation_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    source: Mapped[str] = mapped_column(String(20), default="generated")
     status: Mapped[str] = mapped_column(String(50))
     gcs_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     local_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

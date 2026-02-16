@@ -6,6 +6,8 @@ import type {
   ProjectListItem,
   ResumeResponse,
   StopResponse,
+  ForkRequest,
+  ForkResponse,
   MetricsResponse,
 } from "./types.ts";
 
@@ -63,6 +65,15 @@ export function resumeProject(projectId: string): Promise<ResumeResponse> {
 export function stopProject(projectId: string): Promise<StopResponse> {
   return request<StopResponse>(`/api/projects/${projectId}/stop`, {
     method: "POST",
+  });
+}
+
+/** POST /api/projects/{id}/fork — fork a project with optional edits */
+export function forkProject(projectId: string, body: ForkRequest): Promise<ForkResponse> {
+  return request<ForkResponse>(`/api/projects/${projectId}/fork`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 

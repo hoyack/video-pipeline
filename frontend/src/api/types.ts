@@ -63,6 +63,7 @@ export interface ProjectDetail {
   image_model?: string | null;
   video_model?: string | null;
   audio_enabled?: boolean | null;
+  forked_from?: string | null;
 }
 
 /** Item in GET /api/projects list */
@@ -90,6 +91,32 @@ export interface ResumeResponse {
 export interface StopResponse {
   project_id: string;
   status: string;
+}
+
+/** Request body for POST /api/projects/{id}/fork */
+export interface ForkRequest {
+  prompt?: string;
+  style?: string;
+  aspect_ratio?: string;
+  clip_duration?: number;
+  total_duration?: number;
+  text_model?: string;
+  image_model?: string;
+  video_model?: string;
+  audio_enabled?: boolean;
+  scene_edits?: Record<number, Record<string, string>>;
+  deleted_scenes?: number[];
+  clear_keyframes?: number[];
+}
+
+/** Response from POST /api/projects/{id}/fork */
+export interface ForkResponse {
+  project_id: string;
+  forked_from: string;
+  status: string;
+  status_url: string;
+  copied_scenes: number;
+  resume_from: string;
 }
 
 /** Response from GET /api/metrics */

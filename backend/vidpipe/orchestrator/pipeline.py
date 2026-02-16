@@ -31,6 +31,66 @@ class PipelineStopped(Exception):
     """Raised when the user requests a pipeline stop."""
 
 
+async def _generate_expansion_if_needed(session: AsyncSession, project: Project) -> None:
+    """Generate storyboard entries for expansion scenes if needed.
+
+    After a fork with delete-then-expand, the project may have fewer Scene
+    records than target_scene_count. This generates the missing scenes using
+    the existing storyboard as context, creating Scene records and updating
+    storyboard_raw before keyframing begins.
+    """
+    target = project.target_scene_count or 0
+    if target <= 0:
+        return
+
+    # Count existing scenes
+    result = await session.execute(
+        select(func.count(Scene.id)).where(Scene.project_id == project.id)
+    )
+    existing_count = result.scalar() or 0
+
+    if existing_count >= target:
+        return
+
+    num_new = target - existing_count
+    logger.info(
+        f"Project {project.id}: expanding storyboard — "
+        f"{existing_count} scenes exist, {target} needed, generating {num_new}"
+    )
+
+    from vidpipe.api.routes import _generate_expansion_scenes
+
+    kept_sb_scenes = []
+    if project.storyboard_raw and "scenes" in project.storyboard_raw:
+        kept_sb_scenes = project.storyboard_raw["scenes"]
+
+    new_scene_data = await _generate_expansion_scenes(
+        project, kept_sb_scenes, num_new, start_index=existing_count,
+    )
+
+    for sd in new_scene_data:
+        scene = Scene(
+            project_id=project.id,
+            scene_index=sd.get("scene_index", existing_count),
+            scene_description=sd.get("scene_description", ""),
+            start_frame_prompt=sd.get("start_frame_prompt", ""),
+            end_frame_prompt=sd.get("end_frame_prompt", ""),
+            video_motion_prompt=sd.get("video_motion_prompt", ""),
+            transition_notes=sd.get("transition_notes", ""),
+            status="pending",
+        )
+        session.add(scene)
+
+    # Update storyboard_raw with the new scenes
+    if project.storyboard_raw:
+        sb = dict(project.storyboard_raw)
+        sb.setdefault("scenes", []).extend(new_scene_data)
+        project.storyboard_raw = sb
+
+    await session.commit()
+    logger.info(f"Project {project.id}: expansion complete, {num_new} scenes added")
+
+
 async def _check_stopped(session: AsyncSession, project_id: uuid.UUID) -> None:
     """Re-read project status from DB; raise PipelineStopped if stopped."""
     result = await session.execute(select(Project.status).where(Project.id == project_id))
@@ -115,6 +175,9 @@ async def run_pipeline(
 
         # Step 2: Keyframe generation
         if project.status == "keyframing":
+            # Check if expansion scenes are needed (fork delete-then-expand)
+            await _generate_expansion_if_needed(session, project)
+
             step_start = time.monotonic()
             logger.info("Starting keyframes step")
             if progress_callback:

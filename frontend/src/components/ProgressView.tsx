@@ -6,6 +6,24 @@ import { TERMINAL_STATUSES } from "../lib/constants.ts";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
 
+interface LatestActivity {
+  type: "clip" | "keyframe" | "storyboard";
+  scene: number;
+  url?: string;
+  desc: string;
+}
+
+function getLatestActivity(detail: ProjectDetail): LatestActivity | null {
+  for (let i = detail.scenes.length - 1; i >= 0; i--) {
+    const s = detail.scenes[i];
+    if (s.clip_url) return { type: "clip", scene: i, url: s.clip_url, desc: s.description };
+    if (s.end_keyframe_url) return { type: "keyframe", scene: i, url: s.end_keyframe_url, desc: s.description };
+    if (s.start_keyframe_url) return { type: "keyframe", scene: i, url: s.start_keyframe_url, desc: s.description };
+  }
+  if (detail.scenes.length > 0) return { type: "storyboard", scene: 0, desc: detail.scenes[0].description };
+  return null;
+}
+
 interface ProgressViewProps {
   projectId: string;
   onViewDetail: (projectId: string) => void;
@@ -107,6 +125,43 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
           Polling error: {pollError}
         </div>
       )}
+
+      {/* Latest Activity */}
+      {detail && detail.scenes.length > 0 && (() => {
+        const activity = getLatestActivity(detail);
+        if (!activity) return null;
+        return (
+          <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-4">
+            <h3 className="mb-2 text-sm font-medium text-blue-300">Latest Activity</h3>
+            <p className="mb-1 text-xs text-gray-500">
+              Scene {activity.scene + 1} &mdash; {activity.type}
+            </p>
+            <p className="mb-2 text-sm text-gray-300 line-clamp-2">{activity.desc}</p>
+            {activity.type === "clip" && activity.url && (
+              /* eslint-disable-next-line jsx-a11y/media-has-caption */
+              <video
+                src={activity.url}
+                className="w-full rounded border border-gray-700"
+                controls
+                preload="metadata"
+              />
+            )}
+            {activity.type === "keyframe" && activity.url && (
+              <img
+                src={activity.url}
+                alt={`Latest keyframe — Scene ${activity.scene + 1}`}
+                className="w-full rounded border border-gray-700"
+                loading="lazy"
+              />
+            )}
+            {activity.type === "storyboard" && (
+              <p className="text-xs text-gray-500">
+                {detail.scenes.length} scenes planned
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Scenes grid */}
       {detail && detail.scenes.length > 0 && (

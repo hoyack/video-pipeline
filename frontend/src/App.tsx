@@ -52,6 +52,8 @@ function App() {
         <ProjectDetail
           projectId={activeProjectId}
           onViewProgress={handleViewProgress}
+          onForked={(newId) => navigateTo("progress", newId)}
+          onViewProject={(id) => navigateTo("detail", id)}
         />
       )}
       {currentView === "dashboard" && <Dashboard />}

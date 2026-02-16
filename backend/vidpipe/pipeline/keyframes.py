@@ -245,6 +245,22 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
             from vidpipe.orchestrator.pipeline import PipelineStopped
             raise PipelineStopped("Pipeline stopped by user")
 
+        # Skip scenes that already have both keyframes (fork copied them)
+        existing_kfs_result = await session.execute(
+            select(Keyframe).where(Keyframe.scene_id == scene.id)
+        )
+        existing_kfs = existing_kfs_result.scalars().all()
+        if len(existing_kfs) >= 2:
+            end_kf = next((k for k in existing_kfs if k.position == "end"), None)
+            if end_kf:
+                from pathlib import Path as _Path
+                previous_end_frame_bytes = _Path(end_kf.file_path).read_bytes()
+            # Don't downgrade scenes that already have completed clips
+            if scene.status != "video_done":
+                scene.status = "keyframes_done"
+            await session.commit()
+            continue
+
         # Generate or inherit START frame
         if scene.scene_index == 0:
             # Scene 0: Generate from text prompt (KEYF-01)
@@ -279,15 +295,18 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
         # Generate END frame with image conditioning (KEYF-02)
         style_label = project.style.replace("_", " ")
         conditioning_prompt = (
-            f"You are looking at a keyframe from a {style_label} production. "
-            f"Generate the next keyframe showing the same scene "
-            f"{project.target_clip_duration} seconds later. "
+            f"Generate the NEXT keyframe for this {style_label} scene, "
+            f"showing clear visual progression {project.target_clip_duration} seconds later.\n\n"
+            f"TARGET END STATE (this is what the new image must depict):\n"
+            f"{scene.end_frame_prompt}\n\n"
+            f"The new image MUST show VISIBLE CHANGES from the reference image — "
+            f"different pose, expression, body position, or camera framing. "
+            f"If the reference is a close-up, the new image should show "
+            f"a noticeably different expression, head angle, or gesture.\n\n"
+            f"CONSISTENCY CONSTRAINTS:\n"
+            f"- Same character appearance (face, hair, clothing, proportions)\n"
+            f"- Same {style_label} rendering style\n"
             f"{character_prefix}"
-            f"CRITICAL: Every character must have IDENTICAL appearance — same face, "
-            f"hair, clothing, and proportions as the reference image. "
-            f"CRITICAL: Maintain the {style_label} rendering — same line quality, "
-            f"color saturation, and shading. Do NOT shift toward photorealism. "
-            f"Scene progression: {scene.end_frame_prompt}"
         )
         end_frame_bytes = await _generate_image_conditioned(
             conditioned_client, start_frame_bytes, conditioning_prompt, project.aspect_ratio,

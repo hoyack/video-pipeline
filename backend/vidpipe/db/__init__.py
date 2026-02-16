@@ -19,6 +19,8 @@ async def _run_migrations(conn) -> None:
     migrations = [
         "ALTER TABLE projects ADD COLUMN forked_from_id TEXT REFERENCES projects(id)",
         "ALTER TABLE video_clips ADD COLUMN source VARCHAR(20) DEFAULT 'generated'",
+        "ALTER TABLE video_clips ADD COLUMN veo_submission_count INTEGER DEFAULT 0",
+        "ALTER TABLE video_clips ADD COLUMN safety_regen_count INTEGER DEFAULT 0",
     ]
     for sql in migrations:
         try:

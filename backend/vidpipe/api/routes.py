@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func as sa_func, select
+from sqlalchemy import case, func as sa_func, select
 from sqlalchemy.orm import selectinload
 
 from google.genai import types
@@ -130,20 +130,24 @@ def _estimate_project_cost(
     completed_clips: int = 0,
     generated_clips: int = 0,
     has_storyboard: bool = False,
+    billed_veo_submissions: int = 0,
+    extra_image_regens: int = 0,
 ) -> float:
     """Estimate cost based on actual artifacts generated.
 
-    For complete projects, uses theoretical cost minus inherited assets.
-    For incomplete projects, counts only what was actually generated:
-    - text cost if storyboard was produced
-    - image cost per generated keyframe
-    - video cost per completed clip × clip_duration
+    For complete projects, uses theoretical cost minus inherited assets,
+    plus extra costs from escalation retries and safety regens.
+    For incomplete projects, uses billed_veo_submissions (all Veo ops
+    that Google charged for, including failed/polling clips and retries).
 
     Args:
         generated_keyframes: Keyframes with source='generated'
         completed_clips: All completed clips (for backward compat)
         generated_clips: Clips with source='generated' (excludes inherited)
         has_storyboard: Whether a storyboard exists
+        billed_veo_submissions: Total Veo submissions billed by Google
+            (includes failed clips + escalation retries)
+        extra_image_regens: Safety-regen image calls (from safety_regen_count)
     """
     clip_dur = project.target_clip_duration or 6
     audio = project.audio_enabled and project.video_model in AUDIO_CAPABLE_MODELS
@@ -168,19 +172,29 @@ def _estimate_project_cost(
         # Subtract inherited keyframe and clip costs
         inherited_kf = max(0, (scene_count + 1) - generated_keyframes) if generated_keyframes > 0 else 0
         inherited_clips = max(0, scene_count - generated_clips) if generated_clips > 0 else 0
-        return full_cost - (inherited_kf * img_rate) - (inherited_clips * clip_dur * vid_rate)
+        cost = full_cost - (inherited_kf * img_rate) - (inherited_clips * clip_dur * vid_rate)
+        # Add extra costs from escalation retries beyond the base count
+        extra_submissions = max(0, billed_veo_submissions - generated_clips)
+        cost += extra_submissions * clip_dur * vid_rate
+        # Add safety regen image costs
+        cost += extra_image_regens * img_rate
+        return cost
 
     if project.status == "pending":
         return 0.0
 
-    # Partial cost based on actual artifacts
+    # Partial cost based on actual billed artifacts
     cost = 0.0
     if has_storyboard:
         cost += text_cost_rate
     cost += generated_keyframes * img_rate
-    # Use generated_clips if available, otherwise fall back to completed_clips
-    clip_count = generated_clips if generated_clips > 0 else completed_clips
-    cost += clip_count * clip_dur * vid_rate
+    # Use billed_veo_submissions to capture failed/polling clips + retries
+    veo_count = billed_veo_submissions if billed_veo_submissions > 0 else (
+        generated_clips if generated_clips > 0 else completed_clips
+    )
+    cost += veo_count * clip_dur * vid_rate
+    # Add safety regen image costs
+    cost += extra_image_regens * img_rate
     return cost
 
 
@@ -1196,6 +1210,36 @@ async def get_metrics():
         )
         vc_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in vc_q}
 
+        # Billed Veo submissions per project: all clips with operation_name
+        # (Google charges even for failed/filtered operations)
+        submission_expr = case(
+            (VideoClip.veo_submission_count > 0, VideoClip.veo_submission_count),
+            else_=1,  # backward compat: old rows with operation_name but count=0
+        )
+        billed_q = await session.execute(
+            select(
+                Scene.project_id,
+                sa_func.sum(submission_expr),
+            )
+            .join(Scene, VideoClip.scene_id == Scene.id)
+            .where(VideoClip.operation_name.isnot(None))
+            .where(VideoClip.source == "generated")
+            .group_by(Scene.project_id)
+        )
+        billed_counts: dict[uuid.UUID, int] = {row[0]: int(row[1]) for row in billed_q}
+
+        # Safety regen image calls per project
+        regen_q = await session.execute(
+            select(
+                Scene.project_id,
+                sa_func.sum(VideoClip.safety_regen_count),
+            )
+            .join(Scene, VideoClip.scene_id == Scene.id)
+            .where(VideoClip.safety_regen_count > 0)
+            .group_by(Scene.project_id)
+        )
+        regen_counts: dict[uuid.UUID, int] = {row[0]: int(row[1]) for row in regen_q}
+
         # actual scene counts per project
         sc_q = await session.execute(
             select(
@@ -1242,6 +1286,8 @@ async def get_metrics():
             completed_clips=vc_counts.get(p.id, 0),
             generated_clips=vc_counts.get(p.id, 0),
             has_storyboard=p.storyboard_raw is not None,
+            billed_veo_submissions=billed_counts.get(p.id, 0),
+            extra_image_regens=regen_counts.get(p.id, 0),
         )
 
     avg_clip = sum(clip_durations) / len(clip_durations) if clip_durations else None

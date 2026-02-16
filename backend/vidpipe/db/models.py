@@ -101,6 +101,8 @@ class VideoClip(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    veo_submission_count: Mapped[int] = mapped_column(Integer, default=0)
+    safety_regen_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class PipelineRun(Base):

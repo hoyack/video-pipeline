@@ -417,6 +417,7 @@ async def _generate_video_for_scene(
 
     # ---- Escalating content-policy remediation loop ----
     max_levels = len(_VIDEO_SAFETY_PREFIXES)
+    _pending_safety_regens = 0
 
     for safety_level in range(max_levels):
         if safety_level > 0:
@@ -432,6 +433,9 @@ async def _generate_video_for_scene(
             )
             if new_bytes:
                 end_frame_bytes = new_bytes
+                _pending_safety_regens += 1
+                if clip is not None:
+                    clip.safety_regen_count = (clip.safety_regen_count or 0) + 1
 
         # Build video prompt with escalating safety prefix
         video_prompt = (
@@ -483,6 +487,8 @@ async def _generate_video_for_scene(
                 status="polling",
                 poll_count=0,
                 source="generated",
+                veo_submission_count=1,
+                safety_regen_count=_pending_safety_regens,
             )
             session.add(clip)
         else:
@@ -490,6 +496,7 @@ async def _generate_video_for_scene(
             clip.status = "polling"
             clip.poll_count = 0
             clip.error_message = None
+            clip.veo_submission_count = (clip.veo_submission_count or 0) + 1
         await session.commit()
 
         # Poll operation

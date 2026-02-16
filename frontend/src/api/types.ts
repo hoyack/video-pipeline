@@ -9,6 +9,7 @@ export interface GenerateRequest {
   image_model: string;
   video_model: string;
   enable_audio: boolean;
+  manifest_id?: string;
 }
 
 /** Response from POST /api/generate */

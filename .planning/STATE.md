@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 3: Orchestration & Interfaces
+**Current focus:** Phase 4: Manifest System Foundation (V2 pipeline evolution)
 
 ## Current Position
 
-Phase: 3 of 3 (Orchestration & Interfaces)
-Plan: 3 of 3 in current phase
-Status: Complete
-Last activity: 2026-02-15 — Completed plan 03-03 (HTTP API Implementation)
+Phase: 4 of 12 (Manifest System Foundation)
+Plan: 1 of ? in current phase
+Status: In progress
+Last activity: 2026-02-16 — Completed 04-01: Manifest System Backend Foundation
 
-Progress: [██████████] 100%
+Progress: [███░░░░░░░] 25% (3 of 12 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
-- Average duration: 2.0 min
-- Total execution time: 0.35 hours
+- Total plans completed: 11
+- Average duration: 2.3 min
+- Total execution time: 0.44 hours
 
 **By Phase:**
 
@@ -30,10 +30,11 @@ Progress: [██████████] 100%
 | 01-foundation | 3 | 7.0 min | 2.3 min |
 | 02-generation-pipeline | 4 | 8.0 min | 2.0 min |
 | 03-orchestration-interfaces | 3 | 6.0 min | 2.0 min |
+| 04-manifest-system-foundation | 1 | 5.4 min | 5.4 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-04 (1.4min), 03-01 (2.2min), 03-02 (1.9min), 03-03 (1.9min)
-- Trend: All phases complete - project ready for deployment
+- Last 5 plans: 03-01 (2.2min), 03-02 (1.9min), 03-03 (1.9min), 04-01 (5.4min)
+- Trend: Phase 4 in progress - building V2 manifest system
 
 *Updated after each plan completion*
 
@@ -87,6 +88,17 @@ Recent decisions affecting current work:
 - [Phase 03-03]: Exclude output_path from response schemas for security
 - [Phase 03-03]: FileResponse with Content-Disposition attachment header for MP4 downloads
 - [Phase 03-03]: Generic exception handler returns 500 with detail (prevents stack trace leakage)
+- **04-01:** Assets belong to manifests only (no project_id column) per V2 architecture
+- **04-01:** Soft delete for manifests (deleted_at column) prevents data loss
+- **04-01:** Auto-generate manifest_tag on asset creation (CHAR_01, CHAR_02, OBJ_01)
+- **04-01:** Explicit index on Asset.manifest_id for query performance on SQLite
+- **04-01:** Image upload saves to tmp/manifests/{manifest_id}/uploads/ directory structure
+- **04-01:** Return 409 Conflict when deleting manifest referenced by projects
+
+### Roadmap Evolution
+
+- Phases 4-12 added: V2 studio-grade pipeline (manifest system, manifesting engine, CV analysis, adaptive prompts, multi-candidate scoring, fork integration)
+- Reference docs: `docs/v2-manifest.md`, `docs/v2-pipe-optimization.md`
 
 ### Pending Todos
 
@@ -107,6 +119,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-15 (plan execution)
-Stopped at: Completed 03-03-PLAN.md - HTTP API Implementation
+Last session: 2026-02-16 (plan execution)
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None

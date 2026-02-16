@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 5 of 12 (Manifesting Engine)
-Plan: 2 of 3 in current phase
-Status: In Progress
-Last activity: 2026-02-16 — Completed 05-02 (manifesting engine orchestrator)
+Phase: 6 of 12 (GenerateForm Integration)
+Plan: 1 of 1 in current phase
+Status: Complete
+Last activity: 2026-02-16 — Completed 06-01 (backend manifest integration)
 
-Progress: [████░░░░░░] 33% (4 of 12 phases complete)
+Progress: [█████░░░░░] 42% (5 of 12 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 14
+- Total plans completed: 15
 - Average duration: 2.6 min
-- Total execution time: 0.61 hours
+- Total execution time: 0.65 hours
 
 **By Phase:**
 
@@ -32,10 +32,11 @@ Progress: [████░░░░░░] 33% (4 of 12 phases complete)
 | 03-orchestration-interfaces | 3 | 6.0 min | 2.0 min |
 | 04-manifest-system-foundation | 2 | 9.2 min | 4.6 min |
 | 05-manifesting-engine | 2 | 9.1 min | 4.6 min |
+| 06-generateform-integration | 1 | 2.6 min | 2.6 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-01 (5.4min), 04-02 (3.8min), 05-01 (3.6min), 05-02 (5.5min)
-- Trend: Phase 5 progressing - built manifesting engine orchestrator with background task runner
+- Last 5 plans: 04-02 (3.8min), 05-01 (3.6min), 05-02 (5.5min), 06-01 (2.6min)
+- Trend: Phase 6 complete - added manifest snapshot and generation integration
 
 *Updated after each plan completion*
 
@@ -111,6 +112,10 @@ Recent decisions affecting current work:
 - **05-02:** Sequential tag reassignment ordered by sort_order then detection_confidence
 - **05-02:** reprocess_asset updates 7 fields: reverse_prompt, visual_description, quality_score, detection_class, detection_confidence, is_face_crop, crop_bbox
 - **05-02:** Stage 3 inline editing: UpdateAssetRequest accepts reverse_prompt and visual_description, manifest_service.update_asset allowed_fields includes both
+- **06-01:** ManifestSnapshot model serializes full manifest + assets to JSON for immutable state capture
+- **06-01:** Usage tracking increments times_used and sets last_used_at with UTC timezone
+- **06-01:** Optional manifest_id in GenerateRequest maintains backward compatibility
+- **06-01:** Pipeline manifesting skip documented for Phase 7+ integration (implicit in Phase 6)
 
 ### Roadmap Evolution
 
@@ -137,5 +142,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-16 (execution)
-Stopped at: Completed 05-02-PLAN.md (manifesting engine orchestrator)
+Stopped at: Completed 06-01-PLAN.md (backend manifest integration)
 Resume file: None

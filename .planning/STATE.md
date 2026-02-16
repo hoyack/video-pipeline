@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 6 of 12 (GenerateForm Integration)
-Plan: 1 of 1 in current phase
+Plan: 2 of 2 in current phase
 Status: Complete
-Last activity: 2026-02-16 — Completed 06-01 (backend manifest integration)
+Last activity: 2026-02-16 — Completed 06-02 (frontend manifest selection UI)
 
-Progress: [█████░░░░░] 42% (5 of 12 phases complete)
+Progress: [██████░░░░] 50% (6 of 12 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
+- Total plans completed: 16
 - Average duration: 2.6 min
-- Total execution time: 0.65 hours
+- Total execution time: 0.69 hours
 
 **By Phase:**
 
@@ -32,11 +32,11 @@ Progress: [█████░░░░░] 42% (5 of 12 phases complete)
 | 03-orchestration-interfaces | 3 | 6.0 min | 2.0 min |
 | 04-manifest-system-foundation | 2 | 9.2 min | 4.6 min |
 | 05-manifesting-engine | 2 | 9.1 min | 4.6 min |
-| 06-generateform-integration | 1 | 2.6 min | 2.6 min |
+| 06-generateform-integration | 2 | 5.0 min | 2.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-02 (3.8min), 05-01 (3.6min), 05-02 (5.5min), 06-01 (2.6min)
-- Trend: Phase 6 complete - added manifest snapshot and generation integration
+- Last 5 plans: 05-01 (3.6min), 05-02 (5.5min), 06-01 (2.6min), 06-02 (2.4min)
+- Trend: Phase 6 complete - added manifest selection UI to GenerateForm
 
 *Updated after each plan completion*
 
@@ -116,6 +116,10 @@ Recent decisions affecting current work:
 - **06-01:** Usage tracking increments times_used and sets last_used_at with UTC timezone
 - **06-01:** Optional manifest_id in GenerateRequest maintains backward compatibility
 - **06-01:** Pipeline manifesting skip documented for Phase 7+ integration (implicit in Phase 6)
+- **06-02:** ManifestCard compact mode reuses component pattern (smaller text, hidden actions)
+- **06-02:** Filter READY manifests client-side until backend status filtering implemented
+- **06-02:** Use ?? undefined (not ?? null) to omit manifest_id from JSON when unset
+- **06-02:** Limit manifest grid to 6 items with max-h-64 to prevent UI bloat
 
 ### Roadmap Evolution
 
@@ -142,5 +146,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-16 (execution)
-Stopped at: Completed 06-01-PLAN.md (backend manifest integration)
+Stopped at: Completed 06-02-PLAN.md (frontend manifest selection UI)
 Resume file: None

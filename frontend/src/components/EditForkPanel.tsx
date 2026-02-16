@@ -50,7 +50,6 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
   const allowedDurations = selectedVideoModel.allowedDurations;
   const sceneCount = Math.round(totalDuration / clipDuration);
   const audioActive = enableAudio && selectedVideoModel.supportsAudio;
-  const cost = estimateCost(totalDuration, clipDuration, textModel, imageModel, videoModel, audioActive);
 
   function handleClipDurationChange(newClip: number) {
     setClipDuration(newClip);

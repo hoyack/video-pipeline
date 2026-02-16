@@ -88,7 +88,7 @@ export function EditableSceneCard({
   const getValue = (field: string, original: string | null | undefined) =>
     edits[field] ?? original ?? "";
 
-  const getOriginal = (field: string, original: string | null | undefined) =>
+  const getOriginal = (_field: string, original: string | null | undefined) =>
     original ?? "";
 
   // Collapsed deleted state

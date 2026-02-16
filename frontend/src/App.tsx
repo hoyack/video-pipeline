@@ -6,10 +6,13 @@ import { ProgressView } from "./components/ProgressView.tsx";
 import { ProjectList } from "./components/ProjectList.tsx";
 import { ProjectDetail } from "./components/ProjectDetail.tsx";
 import { Dashboard } from "./components/Dashboard.tsx";
+import { ManifestLibrary } from "./components/ManifestLibrary.tsx";
+import { ManifestCreator } from "./components/ManifestCreator.tsx";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("generate");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeManifestId, setActiveManifestId] = useState<string | null>(null);
 
   function navigateTo(view: View, projectId?: string) {
     setCurrentView(view);
@@ -32,6 +35,21 @@ function App() {
 
   function handleViewDetail(projectId: string) {
     navigateTo("detail", projectId);
+  }
+
+  function handleCreateManifest() {
+    setActiveManifestId(null);
+    navigateTo("manifest-creator");
+  }
+
+  function handleEditManifest(manifestId: string) {
+    setActiveManifestId(manifestId);
+    navigateTo("manifest-creator");
+  }
+
+  function handleViewManifest(manifestId: string) {
+    setActiveManifestId(manifestId);
+    navigateTo("manifest-creator"); // View opens creator in read mode for now
   }
 
   return (
@@ -57,6 +75,26 @@ function App() {
         />
       )}
       {currentView === "dashboard" && <Dashboard />}
+      {currentView === "manifests" && (
+        <ManifestLibrary
+          onCreateNew={handleCreateManifest}
+          onEditManifest={handleEditManifest}
+          onViewManifest={handleViewManifest}
+        />
+      )}
+      {currentView === "manifest-creator" && (
+        <ManifestCreator
+          manifestId={activeManifestId}
+          onSaved={(id) => {
+            setActiveManifestId(null);
+            navigateTo("manifests");
+          }}
+          onCancel={() => {
+            setActiveManifestId(null);
+            navigateTo("manifests");
+          }}
+        />
+      )}
     </Layout>
   );
 }

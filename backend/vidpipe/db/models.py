@@ -79,6 +79,21 @@ class Asset(Base):
     source_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("assets.id"), nullable=True)  # parent asset if extracted crop
 
 
+class ManifestSnapshot(Base):
+    """ManifestSnapshot model capturing immutable state of a manifest at generation time.
+
+    Spec reference: Phase 6 - GenerateForm Integration
+    """
+    __tablename__ = "manifest_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    manifest_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("manifests.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    version_at_snapshot: Mapped[int] = mapped_column(Integer)
+    snapshot_data: Mapped[dict] = mapped_column(JSON)  # Full manifest + assets serialized
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class Project(Base):
     """Project model representing a video generation project.
 

@@ -6,14 +6,14 @@ deletion, duplication, and asset tagging. All functions accept an AsyncSession
 parameter for transaction management by the caller.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Manifest, Project
+from vidpipe.db.models import Asset, Manifest, ManifestSnapshot, Project
 
 # Valid enum constants
 VALID_CATEGORIES = {"CHARACTERS", "ENVIRONMENT", "FULL_PRODUCTION", "STYLE_KIT", "BRAND_KIT", "CUSTOM"}
@@ -461,3 +461,104 @@ def save_asset_image(
     filepath.write_bytes(file_content)
 
     return str(filepath)
+
+
+async def create_snapshot(
+    session: AsyncSession,
+    manifest_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> ManifestSnapshot:
+    """Create a snapshot of manifest state at generation time.
+
+    Args:
+        session: Active database session
+        manifest_id: Manifest UUID to snapshot
+        project_id: Project UUID this snapshot belongs to
+
+    Returns:
+        Created ManifestSnapshot instance
+
+    Raises:
+        ValueError: If manifest not found or is deleted
+    """
+    # Query manifest
+    manifest = await get_manifest(session, manifest_id)
+    if not manifest:
+        raise ValueError(f"Manifest {manifest_id} not found")
+
+    # Query all assets for this manifest
+    assets = await list_assets(session, manifest_id)
+
+    # Serialize manifest fields into snapshot_data
+    snapshot_data = {
+        "manifest": {
+            "id": str(manifest.id),
+            "name": manifest.name,
+            "description": manifest.description,
+            "category": manifest.category,
+            "tags": manifest.tags,
+            "contact_sheet_url": manifest.contact_sheet_url,
+            "version": manifest.version,
+            "status": manifest.status,
+            "asset_count": manifest.asset_count,
+            "total_processing_cost": manifest.total_processing_cost,
+        },
+        "assets": [],
+    }
+
+    # Serialize each asset
+    for asset in assets:
+        asset_data = {
+            "id": str(asset.id),
+            "asset_type": asset.asset_type,
+            "name": asset.name,
+            "manifest_tag": asset.manifest_tag,
+            "user_tags": asset.user_tags,
+            "reference_image_url": asset.reference_image_url,
+            "thumbnail_url": asset.thumbnail_url,
+            "description": asset.description,
+            "source": asset.source,
+            "sort_order": asset.sort_order,
+            "reverse_prompt": asset.reverse_prompt,
+            "visual_description": asset.visual_description,
+            "detection_class": asset.detection_class,
+            "detection_confidence": asset.detection_confidence,
+            "is_face_crop": asset.is_face_crop,
+            "crop_bbox": asset.crop_bbox,
+            "quality_score": asset.quality_score,
+        }
+        snapshot_data["assets"].append(asset_data)
+
+    # Create snapshot
+    snapshot = ManifestSnapshot(
+        manifest_id=manifest_id,
+        project_id=project_id,
+        version_at_snapshot=manifest.version,
+        snapshot_data=snapshot_data,
+    )
+    session.add(snapshot)
+    await session.flush()
+
+    return snapshot
+
+
+async def increment_usage(
+    session: AsyncSession,
+    manifest_id: uuid.UUID,
+) -> None:
+    """Increment manifest usage tracking.
+
+    Args:
+        session: Active database session
+        manifest_id: Manifest UUID to update
+
+    Raises:
+        ValueError: If manifest not found
+    """
+    manifest = await get_manifest(session, manifest_id)
+    if not manifest:
+        raise ValueError(f"Manifest {manifest_id} not found")
+
+    manifest.times_used += 1
+    manifest.last_used_at = datetime.now(timezone.utc)
+    await session.flush()

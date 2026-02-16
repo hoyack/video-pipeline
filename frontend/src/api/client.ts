@@ -9,6 +9,10 @@ import type {
   ForkRequest,
   ForkResponse,
   MetricsResponse,
+  ManifestListItem,
+  ManifestDetail,
+  CreateManifestRequest,
+  UpdateManifestRequest,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -85,6 +89,58 @@ export function getDownloadUrl(projectId: string): string {
 /** GET /api/metrics — aggregate metrics across all projects */
 export function getMetrics(): Promise<MetricsResponse> {
   return request<MetricsResponse>("/api/metrics");
+}
+
+/** GET /api/manifests — list manifests with optional filters */
+export function listManifests(params?: {
+  category?: string;
+  sort_by?: string;
+  sort_order?: string;
+}): Promise<ManifestListItem[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.category) searchParams.set("category", params.category);
+  if (params?.sort_by) searchParams.set("sort_by", params.sort_by);
+  if (params?.sort_order) searchParams.set("sort_order", params.sort_order);
+  const qs = searchParams.toString();
+  return request<ManifestListItem[]>(`/api/manifests${qs ? `?${qs}` : ""}`);
+}
+
+/** POST /api/manifests — create new manifest */
+export function createManifest(body: CreateManifestRequest): Promise<ManifestListItem> {
+  return request<ManifestListItem>("/api/manifests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** GET /api/manifests/{id} — get manifest with assets */
+export function getManifestDetail(manifestId: string): Promise<ManifestDetail> {
+  return request<ManifestDetail>(`/api/manifests/${manifestId}`);
+}
+
+/** PUT /api/manifests/{id} — update manifest */
+export function updateManifest(manifestId: string, body: UpdateManifestRequest): Promise<ManifestListItem> {
+  return request<ManifestListItem>(`/api/manifests/${manifestId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE /api/manifests/{id} — soft delete manifest */
+export function deleteManifest(manifestId: string): Promise<{ status: string; manifest_id: string }> {
+  return request<{ status: string; manifest_id: string }>(`/api/manifests/${manifestId}`, {
+    method: "DELETE",
+  });
+}
+
+/** POST /api/manifests/{id}/duplicate — duplicate manifest */
+export function duplicateManifest(manifestId: string, name?: string): Promise<ManifestListItem> {
+  const qs = name ? `?name=${encodeURIComponent(name)}` : "";
+  return request<ManifestListItem>(`/api/manifests/${manifestId}/duplicate${qs}`, {
+    method: "POST",
+  });
 }
 
 export { ApiError };

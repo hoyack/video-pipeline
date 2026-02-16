@@ -134,3 +134,91 @@ export interface MetricsResponse {
   total_video_seconds: number;
   avg_clip_duration: number | null;
 }
+
+/** Item in GET /api/manifests list */
+export interface ManifestListItem {
+  manifest_id: string;
+  name: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  category: string;
+  tags: string[] | null;
+  status: string;
+  asset_count: number;
+  times_used: number;
+  last_used_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response from GET /api/manifests/{id} */
+export interface ManifestDetail {
+  manifest_id: string;
+  name: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  category: string;
+  tags: string[] | null;
+  status: string;
+  processing_progress: Record<string, unknown> | null;
+  contact_sheet_url: string | null;
+  asset_count: number;
+  total_processing_cost: number;
+  times_used: number;
+  last_used_at: string | null;
+  version: number;
+  parent_manifest_id: string | null;
+  created_at: string;
+  updated_at: string;
+  assets: AssetResponse[];
+}
+
+/** Asset within a manifest */
+export interface AssetResponse {
+  asset_id: string;
+  manifest_id: string;
+  asset_type: string;
+  name: string;
+  manifest_tag: string;
+  user_tags: string[] | null;
+  reference_image_url: string | null;
+  thumbnail_url: string | null;
+  description: string | null;
+  source: string;
+  sort_order: number;
+  created_at: string;
+}
+
+/** Request body for POST /api/manifests */
+export interface CreateManifestRequest {
+  name: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+}
+
+/** Request body for PUT /api/manifests/{id} */
+export interface UpdateManifestRequest {
+  name?: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+}
+
+/** Request body for POST /api/manifests/{id}/assets */
+export interface CreateAssetRequest {
+  name: string;
+  asset_type: string;
+  description?: string;
+  user_tags?: string[];
+}
+
+/** Request body for PUT /api/assets/{id} */
+export interface UpdateAssetRequest {
+  name?: string;
+  description?: string;
+  asset_type?: string;
+  user_tags?: string[];
+  sort_order?: number;
+}

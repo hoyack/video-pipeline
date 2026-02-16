@@ -95,7 +95,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 4. Manifest System Foundation | 3/3 | ✓ Complete | 2026-02-16 |
 | 5. Manifesting Engine | 0/3 | ○ Planned | — |
 | 6. GenerateForm Integration | 0/2 | ○ Planned | — |
-| 7. Manifest-Aware Storyboarding | 0/? | ○ Not planned | — |
+| 7. Manifest-Aware Storyboarding | 0/2 | ○ Planned | — |
 | 8. Veo Reference Passthrough | 0/? | ○ Not planned | — |
 | 9. CV Analysis Pipeline | 0/? | ○ Not planned | — |
 | 10. Adaptive Prompt Rewriting | 0/? | ○ Not planned | — |
@@ -164,10 +164,11 @@ Plans:
   5. Per-scene `SceneAudioManifest` generated with dialogue lines mapped to character tags, SFX with timing, ambient layers, and music direction
   6. `scene_audio_manifests` table stores audio manifest per scene
   7. LLM can declare NEW assets not in registry (described textually, generated during keyframe phase)
-**Plans:** 0 plans
+**Plans:** 2 plans in 2 waves
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 7 to break down)
+- [ ] 07-01-PLAN.md — Enhanced Pydantic schemas and SceneManifest/SceneAudioManifest database models
+- [ ] 07-02-PLAN.md — Enhanced storyboard pipeline with manifest context injection and manifest persistence
 
 ### Phase 8: Veo Reference Passthrough and Clean Sheets
 **Goal**: Video generation passes up to 3 asset reference images per scene to Veo 3.1 for identity consistency, with optional clean sheet generation to optimize reference quality

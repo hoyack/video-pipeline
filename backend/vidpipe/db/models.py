@@ -13,6 +13,61 @@ class Base(DeclarativeBase):
     pass
 
 
+class Manifest(Base):
+    """Manifest model representing a standalone, reusable asset collection.
+
+    Spec reference: V2 Manifest System
+    """
+    __tablename__ = "manifests"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    category: Mapped[str] = mapped_column(String(50), default="CUSTOM")
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="DRAFT")
+    processing_progress: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    contact_sheet_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    asset_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_processing_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    times_used: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    parent_manifest_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("manifests.id"), nullable=True, index=True
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class Asset(Base):
+    """Asset model representing tagged visual elements within a manifest.
+
+    Spec reference: V2 Manifest System
+    """
+    __tablename__ = "assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    manifest_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("manifests.id"), index=True
+    )
+    asset_type: Mapped[str] = mapped_column(String(50))
+    name: Mapped[str] = mapped_column(Text)
+    manifest_tag: Mapped[str] = mapped_column(String(50))
+    user_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    reference_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(50), default="uploaded")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class Project(Base):
     """Project model representing a video generation project.
 
@@ -35,6 +90,10 @@ class Project(Base):
     forked_from_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("projects.id"), nullable=True
     )
+    manifest_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("manifests.id"), nullable=True, index=True
+    )
+    manifest_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

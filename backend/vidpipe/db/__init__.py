@@ -21,6 +21,8 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE video_clips ADD COLUMN source VARCHAR(20) DEFAULT 'generated'",
         "ALTER TABLE video_clips ADD COLUMN veo_submission_count INTEGER DEFAULT 0",
         "ALTER TABLE video_clips ADD COLUMN safety_regen_count INTEGER DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN manifest_id TEXT REFERENCES manifests(id)",
+        "ALTER TABLE projects ADD COLUMN manifest_version INTEGER",
     ]
     for sql in migrations:
         try:

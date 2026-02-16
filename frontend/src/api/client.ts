@@ -13,6 +13,9 @@ import type {
   ManifestDetail,
   CreateManifestRequest,
   UpdateManifestRequest,
+  CreateAssetRequest,
+  UpdateAssetRequest,
+  AssetResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -141,6 +144,46 @@ export function duplicateManifest(manifestId: string, name?: string): Promise<Ma
   return request<ManifestListItem>(`/api/manifests/${manifestId}/duplicate${qs}`, {
     method: "POST",
   });
+}
+
+/** POST /api/manifests/{id}/assets — create asset in manifest */
+export function createAsset(manifestId: string, body: CreateAssetRequest): Promise<AssetResponse> {
+  return request<AssetResponse>(`/api/manifests/${manifestId}/assets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** PUT /api/assets/{id} — update asset metadata */
+export function updateAsset(assetId: string, body: UpdateAssetRequest): Promise<AssetResponse> {
+  return request<AssetResponse>(`/api/assets/${assetId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE /api/assets/{id} — delete asset */
+export function deleteAsset(assetId: string): Promise<{ status: string; asset_id: string }> {
+  return request<{ status: string; asset_id: string }>(`/api/assets/${assetId}`, {
+    method: "DELETE",
+  });
+}
+
+/** POST /api/assets/{id}/upload — upload image for asset */
+export async function uploadAssetImage(assetId: string, file: File): Promise<AssetResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/assets/${assetId}/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<AssetResponse>;
 }
 
 export { ApiError };

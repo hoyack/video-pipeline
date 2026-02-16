@@ -25,6 +25,7 @@ from vidpipe.schemas.storyboard import SceneSchema
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services import manifest_service
+from vidpipe.workers.processing_tasks import process_manifest_task, TASK_STATUS
 
 from collections import Counter
 
@@ -413,6 +414,8 @@ class UpdateAssetRequest(BaseModel):
     asset_type: Optional[str] = None
     user_tags: Optional[list[str]] = None
     sort_order: Optional[int] = None
+    reverse_prompt: Optional[str] = None        # Phase 5: Stage 3 inline editing
+    visual_description: Optional[str] = None     # Phase 5: Stage 3 inline editing
 
 
 class AssetResponse(BaseModel):
@@ -429,6 +432,21 @@ class AssetResponse(BaseModel):
     source: str
     sort_order: int
     created_at: str
+    # Phase 5 fields
+    reverse_prompt: Optional[str] = None
+    visual_description: Optional[str] = None
+    detection_class: Optional[str] = None
+    detection_confidence: Optional[float] = None
+    is_face_crop: bool = False
+    quality_score: Optional[float] = None
+
+
+class ProcessingProgressResponse(BaseModel):
+    """Response schema for manifest processing progress."""
+    status: str  # processing, complete, error, not_started
+    current_step: Optional[str] = None
+    progress: Optional[dict] = None
+    error: Optional[str] = None
 
 
 # ============================================================================
@@ -1447,6 +1465,13 @@ def _asset_to_response(a: Asset) -> AssetResponse:
         source=a.source,
         sort_order=a.sort_order,
         created_at=a.created_at.isoformat(),
+        # Phase 5 fields
+        reverse_prompt=a.reverse_prompt,
+        visual_description=a.visual_description,
+        detection_class=a.detection_class,
+        detection_confidence=a.detection_confidence,
+        is_face_crop=a.is_face_crop,
+        quality_score=a.quality_score,
     )
 
 
@@ -1697,3 +1722,91 @@ async def get_asset_image(asset_id: uuid.UUID):
         media_type = media_types.get(suffix, "image/png")
 
         return FileResponse(path=str(file_path), media_type=media_type)
+
+
+# ============================================================================
+# Phase 5: Manifesting Engine Endpoints
+# ============================================================================
+
+@router.post("/manifests/{manifest_id}/process", status_code=202)
+async def process_manifest(manifest_id: uuid.UUID):
+    """Trigger manifesting pipeline for a manifest.
+
+    Returns 202 Accepted immediately and runs processing in background.
+    """
+    async with async_session() as session:
+        manifest = await manifest_service.get_manifest(session, manifest_id)
+        if not manifest:
+            raise HTTPException(status_code=404, detail="Manifest not found")
+
+        # Verify status allows processing (DRAFT or READY for reprocess)
+        if manifest.status not in ("DRAFT", "READY"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot process manifest in status {manifest.status}. Must be DRAFT or READY."
+            )
+
+        # Set status to PROCESSING
+        manifest.status = "PROCESSING"
+        await session.commit()
+
+    # Start background task
+    asyncio.create_task(process_manifest_task(str(manifest_id)))
+
+    return {
+        "task_id": f"manifest_{manifest_id}",
+        "status": "started",
+        "manifest_id": str(manifest_id),
+    }
+
+
+@router.get("/manifests/{manifest_id}/progress", response_model=ProcessingProgressResponse)
+async def get_manifest_progress(manifest_id: uuid.UUID):
+    """Get processing progress for a manifest."""
+    task_id = f"manifest_{manifest_id}"
+
+    # Check in-memory task status
+    if task_id in TASK_STATUS:
+        return ProcessingProgressResponse(**TASK_STATUS[task_id])
+
+    # If not in memory, check database status
+    async with async_session() as session:
+        manifest = await manifest_service.get_manifest(session, manifest_id)
+        if not manifest:
+            raise HTTPException(status_code=404, detail="Manifest not found")
+
+        if manifest.status == "READY":
+            return ProcessingProgressResponse(
+                status="complete",
+                current_step="complete",
+                progress={},
+            )
+        elif manifest.status == "ERROR":
+            return ProcessingProgressResponse(
+                status="error",
+                current_step="unknown",
+                error="Processing failed (see server logs)",
+            )
+        else:
+            return ProcessingProgressResponse(
+                status="not_started",
+                current_step=None,
+                progress={},
+            )
+
+
+@router.post("/assets/{asset_id}/reprocess", response_model=AssetResponse)
+async def reprocess_asset(asset_id: uuid.UUID):
+    """Reprocess a single asset (re-run YOLO detection and reverse-prompting)."""
+    from vidpipe.services.manifesting_engine import ManifestingEngine
+
+    async with async_session() as session:
+        asset = await manifest_service.get_asset(session, asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        # Create engine with fresh session and reprocess
+        engine = ManifestingEngine(session)
+        updated = await engine.reprocess_asset(asset_id)
+
+        return _asset_to_response(updated)

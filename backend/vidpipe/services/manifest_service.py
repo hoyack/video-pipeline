@@ -394,7 +394,7 @@ async def update_asset(
             asset.asset_type = new_type
 
     # Update allowed fields
-    allowed_fields = {"name", "description", "user_tags", "sort_order"}
+    allowed_fields = {"name", "description", "user_tags", "sort_order", "reverse_prompt", "visual_description"}
     for field in allowed_fields:
         if field in kwargs:
             setattr(asset, field, kwargs[field])

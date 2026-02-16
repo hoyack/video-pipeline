@@ -92,7 +92,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 1. Foundation | 3/3 | ✓ Complete | 2026-02-14 |
 | 2. Generation Pipeline | 4/4 | ✓ Complete | 2026-02-14 |
 | 3. Orchestration & Interfaces | 3/3 | ✓ Complete | 2026-02-14 |
-| 4. Manifest System Foundation | 0/3 | ○ Planned | — |
+| 4. Manifest System Foundation | 3/3 | ✓ Complete | 2026-02-16 |
 | 5. Manifesting Engine | 0/3 | ○ Planned | — |
 | 6. GenerateForm Integration | 0/? | ○ Not planned | — |
 | 7. Manifest-Aware Storyboarding | 0/? | ○ Not planned | — |
@@ -115,9 +115,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 **Plans:** 3 plans in 2 waves
 
 Plans:
-- [ ] 04-01-PLAN.md — Database models (Manifest, Asset, Project additions) and CRUD API with service layer
-- [ ] 04-02-PLAN.md — Manifest Library frontend with card grid, filters, sort, and navigation
-- [ ] 04-03-PLAN.md — Manifest Creator Stage 1 with drag-drop upload and asset tagging
+- [x] 04-01-PLAN.md — Database models (Manifest, Asset, Project additions) and CRUD API with service layer
+- [x] 04-02-PLAN.md — Manifest Library frontend with card grid, filters, sort, and navigation
+- [x] 04-03-PLAN.md — Manifest Creator Stage 1 with drag-drop upload and asset tagging
 
 ### Phase 5: Manifesting Engine
 **Goal**: Manifest Creator processes uploaded images through YOLO object/face detection, ArcFace face embedding and cross-matching, Gemini vision reverse-prompting, contact sheet assembly, and tag assignment — populating the Asset Registry automatically

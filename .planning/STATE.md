@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 7 of 12 (Manifest-Aware Storyboarding and Audio Manifest)
-Plan: 1 of 2 in current phase
-Status: In Progress
-Last activity: 2026-02-16 — Completed 07-01 (schemas and models for manifest-aware storyboarding)
+Plan: 2 of 2 in current phase
+Status: Complete
+Last activity: 2026-02-16 — Completed 07-02 (enhanced storyboard pipeline with manifest-aware context)
 
-Progress: [██████░░░░] 50% (6 of 12 phases complete, 1 of 2 plans in Phase 7)
+Progress: [███████░░░] 58% (7 of 12 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 17
-- Average duration: 2.5 min
-- Total execution time: 0.72 hours
+- Total plans completed: 18
+- Average duration: 2.6 min
+- Total execution time: 0.78 hours
 
 **By Phase:**
 
@@ -33,11 +33,11 @@ Progress: [██████░░░░] 50% (6 of 12 phases complete, 1 of 2 
 | 04-manifest-system-foundation | 2 | 9.2 min | 4.6 min |
 | 05-manifesting-engine | 2 | 9.1 min | 4.6 min |
 | 06-generateform-integration | 2 | 5.0 min | 2.5 min |
-| 07-manifest-aware-storyboarding | 1 | 2.0 min | 2.0 min |
+| 07-manifest-aware-storyboarding | 2 | 5.1 min | 2.6 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-02 (5.5min), 06-01 (2.6min), 06-02 (2.4min), 07-01 (2.0min)
-- Trend: Phase 7 started - data layer for manifest-aware storyboarding
+- Last 5 plans: 06-01 (2.6min), 06-02 (2.4min), 07-01 (2.0min), 07-02 (3.1min)
+- Trend: Phase 7 complete - manifest-aware storyboarding with asset registry context
 
 *Updated after each plan completion*
 
@@ -125,6 +125,10 @@ Recent decisions affecting current work:
 - **07-01:** Store full manifests as JSON with denormalized fields for efficient querying
 - **07-01:** Use JSON columns for arrays (asset_tags, speaker_tags) following Manifest.tags pattern
 - **07-01:** Composite PKs (project_id, scene_index) eliminate need for UUID primary keys on scene manifest tables
+- **07-02:** load_manifest_assets orders by quality_score desc (not sort_order) for LLM attention prioritization
+- **07-02:** Production notes only included for quality >= 7.0 to manage context window size
+- **07-02:** Asset tags validated post-generation with warnings (not errors) to allow new asset declarations
+- **07-02:** use_manifests flag determines schema, prompt, and persistence path in single function
 
 ### Roadmap Evolution
 
@@ -151,5 +155,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-16 (execution)
-Stopped at: Completed 07-01-PLAN.md (schemas and models for manifest-aware storyboarding)
+Stopped at: Completed 07-02-PLAN.md (enhanced storyboard pipeline with manifest-aware context)
 Resume file: None

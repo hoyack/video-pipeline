@@ -109,6 +109,11 @@ async def run_pipeline(
     Runs all 4 pipeline steps (storyboard, keyframes, video_gen, stitcher) with
     state machine transitions, failure recovery, and PipelineRun metadata tracking.
 
+    Phase 6: If project.manifest_id is set, manifesting is skipped
+    (assets already processed via ManifestSnapshot). When a manifesting
+    pipeline step is added (Phase 7+), check project.manifest_id here
+    and skip the manifesting step if present.
+
     Args:
         session: Async database session for all operations
         project_id: UUID of project to execute

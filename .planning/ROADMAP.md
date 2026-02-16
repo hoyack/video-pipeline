@@ -94,7 +94,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 3. Orchestration & Interfaces | 3/3 | ✓ Complete | 2026-02-14 |
 | 4. Manifest System Foundation | 3/3 | ✓ Complete | 2026-02-16 |
 | 5. Manifesting Engine | 0/3 | ○ Planned | — |
-| 6. GenerateForm Integration | 0/? | ○ Not planned | — |
+| 6. GenerateForm Integration | 0/2 | ○ Planned | — |
 | 7. Manifest-Aware Storyboarding | 0/? | ○ Not planned | — |
 | 8. Veo Reference Passthrough | 0/? | ○ Not planned | — |
 | 9. CV Analysis Pipeline | 0/? | ○ Not planned | — |
@@ -147,10 +147,11 @@ Plans:
   4. `manifest_snapshots` table freezes manifest state at generation start; completed projects reference exact snapshot used
   5. Pipeline conditionally skips Phase 0 (manifesting) when a pre-built manifest is selected
   6. Usage tracking: `times_used` and `last_used_at` updated on manifest when selected for a project
-**Plans:** 0 plans
+**Plans:** 2 plans in 2 waves
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 6 to break down)
+- [ ] 06-01-PLAN.md — ManifestSnapshot model, snapshot service, usage tracking, enhanced generate endpoint
+- [ ] 06-02-PLAN.md — ManifestSelector component, compact ManifestCard, GenerateForm integration
 
 ### Phase 7: Manifest-Aware Storyboarding and Audio Manifest
 **Goal**: Storyboard LLM receives full Asset Registry context and produces scene manifests with manifest-tagged asset placements, plus per-scene audio manifests with dialogue, SFX, ambient, and music direction

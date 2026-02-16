@@ -562,3 +562,73 @@ async def increment_usage(
     manifest.times_used += 1
     manifest.last_used_at = datetime.now(timezone.utc)
     await session.flush()
+
+
+async def load_manifest_assets(
+    session: AsyncSession,
+    manifest_id: uuid.UUID,
+) -> list[Asset]:
+    """Load all assets for a manifest, ordered by quality score descending.
+
+    Used for LLM context injection where highest-quality assets should
+    appear first in the system prompt for better attention distribution.
+
+    Args:
+        session: Active database session
+        manifest_id: Manifest UUID
+
+    Returns:
+        List of Asset instances ordered by quality_score desc (nulls last)
+    """
+    result = await session.execute(
+        select(Asset)
+        .where(Asset.manifest_id == manifest_id)
+        .order_by(Asset.quality_score.desc().nullslast())
+    )
+    return list(result.scalars().all())
+
+
+def format_asset_registry(assets: list[Asset]) -> str:
+    """Format asset list as structured text block for LLM system prompt injection.
+
+    For each asset, includes:
+    - Header: [TAG] "Name" (type, quality: X/10)
+    - Reverse prompt: Truncated to 200 chars
+    - Production notes (visual_description): Only for quality >= 7.0, truncated to 150 chars
+
+    Args:
+        assets: List of Asset instances to format
+
+    Returns:
+        Formatted text block for LLM context injection
+    """
+    if not assets:
+        return "No assets registered. Describe all visual elements in scenes."
+
+    lines = ["AVAILABLE ASSETS FOR THIS PROJECT:", "━" * 40]
+
+    for asset in assets:
+        # Header line with quality score
+        quality_str = f"{asset.quality_score:.1f}/10" if asset.quality_score is not None else "N/A"
+        lines.append(f"[{asset.manifest_tag}] \"{asset.name}\" ({asset.asset_type}, quality: {quality_str})")
+
+        # Reverse prompt (truncated to 200 chars)
+        if asset.reverse_prompt:
+            reverse_prompt = asset.reverse_prompt
+            if len(reverse_prompt) > 200:
+                reverse_prompt = reverse_prompt[:200] + "..."
+            lines.append(f"  {reverse_prompt}")
+
+        # Production notes only for high-quality assets (>= 7.0)
+        if asset.visual_description and asset.quality_score is not None and asset.quality_score >= 7.0:
+            visual_desc = asset.visual_description
+            if len(visual_desc) > 150:
+                visual_desc = visual_desc[:150] + "..."
+            lines.append(f"  Production notes: {visual_desc}")
+
+        lines.append("")  # Blank line between assets
+
+    lines.append("━" * 40)
+    lines.append("Reference assets by [TAG]. You may declare NEW assets not in the registry.")
+
+    return "\n".join(lines)

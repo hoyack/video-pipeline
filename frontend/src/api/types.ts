@@ -188,6 +188,13 @@ export interface AssetResponse {
   source: string;
   sort_order: number;
   created_at: string;
+  // Phase 5 fields
+  reverse_prompt: string | null;
+  visual_description: string | null;
+  detection_class: string | null;
+  detection_confidence: number | null;
+  is_face_crop: boolean;
+  quality_score: number | null;
 }
 
 /** Request body for POST /api/manifests */
@@ -221,4 +228,20 @@ export interface UpdateAssetRequest {
   asset_type?: string;
   user_tags?: string[];
   sort_order?: number;
+  reverse_prompt?: string;
+  visual_description?: string;
+}
+
+/** Processing progress response */
+export interface ProcessingProgress {
+  status: "processing" | "complete" | "error" | "not_started";
+  current_step: string | null;
+  progress: {
+    uploads_total?: number;
+    uploads_processed?: number;
+    crops_total?: number;
+    crops_reverse_prompted?: number;
+    face_merges?: number;
+  } | null;
+  error: string | null;
 }

@@ -16,6 +16,7 @@ import type {
   CreateAssetRequest,
   UpdateAssetRequest,
   AssetResponse,
+  ProcessingProgress,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -184,6 +185,25 @@ export async function uploadAssetImage(assetId: string, file: File): Promise<Ass
     throw new ApiError(res.status, body.detail ?? res.statusText);
   }
   return res.json() as Promise<AssetResponse>;
+}
+
+/** POST /api/manifests/{id}/process — trigger background processing */
+export function processManifest(manifestId: string): Promise<{ task_id: string; status: string }> {
+  return request<{ task_id: string; status: string }>(`/api/manifests/${manifestId}/process`, {
+    method: "POST",
+  });
+}
+
+/** GET /api/manifests/{id}/progress — poll processing progress */
+export function getProcessingProgress(manifestId: string): Promise<ProcessingProgress> {
+  return request<ProcessingProgress>(`/api/manifests/${manifestId}/progress`);
+}
+
+/** POST /api/assets/{id}/reprocess — re-run detection + reverse-prompting for single asset */
+export function reprocessAsset(assetId: string): Promise<AssetResponse> {
+  return request<AssetResponse>(`/api/assets/${assetId}/reprocess`, {
+    method: "POST",
+  });
 }
 
 export { ApiError };

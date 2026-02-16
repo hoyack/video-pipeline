@@ -1,5 +1,6 @@
 """API route handlers and Pydantic response schemas."""
 
+import asyncio
 import json
 import logging
 import math
@@ -9,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func as sa_func, select
@@ -17,12 +18,13 @@ from sqlalchemy.orm import selectinload
 
 from google.genai import types
 from vidpipe.db import async_session
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip
+from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import SceneSchema
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+from vidpipe.services import manifest_service
 
 from collections import Counter
 
@@ -337,6 +339,96 @@ class MetricsResponse(BaseModel):
     total_estimated_cost: float
     total_video_seconds: int
     avg_clip_duration: Optional[float] = None
+
+
+# Manifest System Schemas
+
+class CreateManifestRequest(BaseModel):
+    """Request schema for POST /api/manifests."""
+    name: str
+    description: Optional[str] = None
+    category: str = "CUSTOM"
+    tags: Optional[list[str]] = Field(default=None)
+
+
+class UpdateManifestRequest(BaseModel):
+    """Request schema for PUT /api/manifests/{id}."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class ManifestListItem(BaseModel):
+    """Item in list response for GET /api/manifests."""
+    manifest_id: str
+    name: str
+    description: Optional[str]
+    thumbnail_url: Optional[str]
+    category: str
+    tags: Optional[list[str]]
+    status: str
+    asset_count: int
+    times_used: int
+    last_used_at: Optional[str]
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class ManifestDetailResponse(BaseModel):
+    """Response schema for GET /api/manifests/{id}."""
+    manifest_id: str
+    name: str
+    description: Optional[str]
+    thumbnail_url: Optional[str]
+    category: str
+    tags: Optional[list[str]]
+    status: str
+    processing_progress: Optional[dict]
+    contact_sheet_url: Optional[str]
+    asset_count: int
+    total_processing_cost: float
+    times_used: int
+    last_used_at: Optional[str]
+    version: int
+    parent_manifest_id: Optional[str]
+    created_at: str
+    updated_at: str
+    assets: list["AssetResponse"]
+
+
+class CreateAssetRequest(BaseModel):
+    """Request schema for POST /api/manifests/{id}/assets."""
+    name: str
+    asset_type: str
+    description: Optional[str] = None
+    user_tags: Optional[list[str]] = Field(default=None)
+
+
+class UpdateAssetRequest(BaseModel):
+    """Request schema for PUT /api/assets/{id}."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    asset_type: Optional[str] = None
+    user_tags: Optional[list[str]] = None
+    sort_order: Optional[int] = None
+
+
+class AssetResponse(BaseModel):
+    """Response schema for asset operations."""
+    asset_id: str
+    manifest_id: str
+    asset_type: str
+    name: str
+    manifest_tag: str
+    user_tags: Optional[list[str]]
+    reference_image_url: Optional[str]
+    thumbnail_url: Optional[str]
+    description: Optional[str]
+    source: str
+    sort_order: int
+    created_at: str
 
 
 # ============================================================================
@@ -1315,3 +1407,271 @@ async def health_check():
         "status": "ok",
         "version": "0.1.0"
     }
+
+
+# ============================================================================
+# Manifest API Endpoints
+# ============================================================================
+
+def _manifest_to_list_item(m: Manifest) -> ManifestListItem:
+    """Convert Manifest ORM model to ManifestListItem response."""
+    return ManifestListItem(
+        manifest_id=str(m.id),
+        name=m.name,
+        description=m.description,
+        thumbnail_url=m.thumbnail_url,
+        category=m.category,
+        tags=m.tags,
+        status=m.status,
+        asset_count=m.asset_count,
+        times_used=m.times_used,
+        last_used_at=m.last_used_at.isoformat() if m.last_used_at else None,
+        version=m.version,
+        created_at=m.created_at.isoformat(),
+        updated_at=m.updated_at.isoformat(),
+    )
+
+
+def _asset_to_response(a: Asset) -> AssetResponse:
+    """Convert Asset ORM model to AssetResponse."""
+    return AssetResponse(
+        asset_id=str(a.id),
+        manifest_id=str(a.manifest_id),
+        asset_type=a.asset_type,
+        name=a.name,
+        manifest_tag=a.manifest_tag,
+        user_tags=a.user_tags,
+        reference_image_url=a.reference_image_url,
+        thumbnail_url=a.thumbnail_url,
+        description=a.description,
+        source=a.source,
+        sort_order=a.sort_order,
+        created_at=a.created_at.isoformat(),
+    )
+
+
+@router.post("/manifests", status_code=201, response_model=ManifestListItem)
+async def create_manifest(request: CreateManifestRequest):
+    """Create a new manifest in DRAFT status."""
+    async with async_session() as session:
+        try:
+            manifest = await manifest_service.create_manifest(
+                session,
+                name=request.name,
+                description=request.description,
+                category=request.category,
+                tags=request.tags,
+            )
+            await session.commit()
+            await session.refresh(manifest)
+            return _manifest_to_list_item(manifest)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/manifests", response_model=list[ManifestListItem])
+async def list_manifests(
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    sort_by: str = "updated_at",
+    sort_order: str = "desc",
+):
+    """List manifests with optional filters and sorting."""
+    async with async_session() as session:
+        manifests = await manifest_service.list_manifests(
+            session,
+            category=category,
+            status=status,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        return [_manifest_to_list_item(m) for m in manifests]
+
+
+@router.get("/manifests/{manifest_id}", response_model=ManifestDetailResponse)
+async def get_manifest_detail(manifest_id: uuid.UUID):
+    """Get manifest detail with assets."""
+    async with async_session() as session:
+        manifest = await manifest_service.get_manifest(session, manifest_id)
+        if not manifest:
+            raise HTTPException(status_code=404, detail="Manifest not found")
+
+        assets = await manifest_service.list_assets(session, manifest_id)
+
+        return ManifestDetailResponse(
+            manifest_id=str(manifest.id),
+            name=manifest.name,
+            description=manifest.description,
+            thumbnail_url=manifest.thumbnail_url,
+            category=manifest.category,
+            tags=manifest.tags,
+            status=manifest.status,
+            processing_progress=manifest.processing_progress,
+            contact_sheet_url=manifest.contact_sheet_url,
+            asset_count=manifest.asset_count,
+            total_processing_cost=manifest.total_processing_cost,
+            times_used=manifest.times_used,
+            last_used_at=manifest.last_used_at.isoformat() if manifest.last_used_at else None,
+            version=manifest.version,
+            parent_manifest_id=str(manifest.parent_manifest_id) if manifest.parent_manifest_id else None,
+            created_at=manifest.created_at.isoformat(),
+            updated_at=manifest.updated_at.isoformat(),
+            assets=[_asset_to_response(a) for a in assets],
+        )
+
+
+@router.put("/manifests/{manifest_id}", response_model=ManifestListItem)
+async def update_manifest(manifest_id: uuid.UUID, request: UpdateManifestRequest):
+    """Update manifest fields."""
+    async with async_session() as session:
+        try:
+            # Build kwargs from non-None fields
+            kwargs = {k: v for k, v in request.model_dump().items() if v is not None}
+            manifest = await manifest_service.update_manifest(
+                session,
+                manifest_id,
+                **kwargs,
+            )
+            await session.commit()
+            await session.refresh(manifest)
+            return _manifest_to_list_item(manifest)
+        except ValueError as e:
+            if "not found" in str(e):
+                raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.delete("/manifests/{manifest_id}")
+async def delete_manifest(manifest_id: uuid.UUID):
+    """Soft delete manifest. Returns 409 if referenced by projects."""
+    async with async_session() as session:
+        try:
+            await manifest_service.delete_manifest(session, manifest_id)
+            await session.commit()
+            return {"status": "deleted", "manifest_id": str(manifest_id)}
+        except ValueError as e:
+            error_msg = str(e)
+            if "not found" in error_msg:
+                raise HTTPException(status_code=404, detail=error_msg)
+            if "referenced by" in error_msg:
+                raise HTTPException(status_code=409, detail=error_msg)
+            raise HTTPException(status_code=422, detail=error_msg)
+
+
+@router.post("/manifests/{manifest_id}/duplicate", status_code=201, response_model=ManifestListItem)
+async def duplicate_manifest(manifest_id: uuid.UUID, name: Optional[str] = None):
+    """Duplicate manifest with all assets."""
+    async with async_session() as session:
+        try:
+            new_manifest = await manifest_service.duplicate_manifest(
+                session,
+                manifest_id,
+                new_name=name,
+            )
+            await session.commit()
+            await session.refresh(new_manifest)
+            return _manifest_to_list_item(new_manifest)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/manifests/{manifest_id}/assets", status_code=201, response_model=AssetResponse)
+async def create_asset(manifest_id: uuid.UUID, request: CreateAssetRequest):
+    """Create asset within manifest."""
+    async with async_session() as session:
+        try:
+            asset = await manifest_service.create_asset(
+                session,
+                manifest_id=manifest_id,
+                name=request.name,
+                asset_type=request.asset_type,
+                description=request.description,
+                user_tags=request.user_tags,
+            )
+            await session.commit()
+            await session.refresh(asset)
+            return _asset_to_response(asset)
+        except ValueError as e:
+            if "not found" in str(e):
+                raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/manifests/{manifest_id}/assets", response_model=list[AssetResponse])
+async def list_assets(manifest_id: uuid.UUID):
+    """List assets for manifest."""
+    async with async_session() as session:
+        assets = await manifest_service.list_assets(session, manifest_id)
+        return [_asset_to_response(a) for a in assets]
+
+
+@router.put("/assets/{asset_id}", response_model=AssetResponse)
+async def update_asset(asset_id: uuid.UUID, request: UpdateAssetRequest):
+    """Update asset fields."""
+    async with async_session() as session:
+        try:
+            kwargs = {k: v for k, v in request.model_dump().items() if v is not None}
+            asset = await manifest_service.update_asset(
+                session,
+                asset_id,
+                **kwargs,
+            )
+            await session.commit()
+            await session.refresh(asset)
+            return _asset_to_response(asset)
+        except ValueError as e:
+            if "not found" in str(e):
+                raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.delete("/assets/{asset_id}")
+async def delete_asset(asset_id: uuid.UUID):
+    """Delete asset."""
+    async with async_session() as session:
+        try:
+            await manifest_service.delete_asset(session, asset_id)
+            await session.commit()
+            return {"status": "deleted", "asset_id": str(asset_id)}
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/assets/{asset_id}/upload", response_model=AssetResponse)
+async def upload_asset_image(asset_id: uuid.UUID, file: UploadFile = File(...)):
+    """Upload image file for an asset."""
+    # Validate content type
+    if file.content_type not in ("image/png", "image/jpeg", "image/webp"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid content type {file.content_type}. Must be image/png, image/jpeg, or image/webp",
+        )
+
+    # Read file content
+    content = await file.read()
+
+    # Validate file size (max 10MB)
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="File too large. Maximum size is 10MB")
+
+    async with async_session() as session:
+        # Get asset to retrieve manifest_id
+        asset = await manifest_service.get_asset(session, asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        # Save file (wrap in asyncio.to_thread since save_asset_image is sync)
+        file_path = await asyncio.to_thread(
+            manifest_service.save_asset_image,
+            asset.manifest_id,
+            asset_id,
+            content,
+            file.filename or "upload.png",
+        )
+
+        # Update asset reference_image_url
+        asset.reference_image_url = file_path
+        await session.commit()
+        await session.refresh(asset)
+
+        return _asset_to_response(asset)

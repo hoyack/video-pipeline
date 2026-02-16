@@ -88,9 +88,11 @@ export function AssetEditor({
             className="w-full h-full object-cover"
           />
         ) : asset.reference_image_url ? (
-          <div className="w-full h-full flex items-center justify-center text-gray-600">
-            <span className="text-4xl">🖼️</span>
-          </div>
+          <img
+            src={asset.reference_image_url}
+            alt={asset.name}
+            className="w-full h-full object-cover"
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-600">
             <span className="text-4xl">📷</span>

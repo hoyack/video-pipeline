@@ -1669,9 +1669,31 @@ async def upload_asset_image(asset_id: uuid.UUID, file: UploadFile = File(...)):
             file.filename or "upload.png",
         )
 
-        # Update asset reference_image_url
-        asset.reference_image_url = file_path
+        # Update asset reference_image_url to HTTP-serveable path
+        asset.reference_image_url = f"/api/assets/{asset_id}/image"
         await session.commit()
         await session.refresh(asset)
 
         return _asset_to_response(asset)
+
+
+@router.get("/assets/{asset_id}/image")
+async def get_asset_image(asset_id: uuid.UUID):
+    """Serve an asset's uploaded image by asset ID."""
+    async with async_session() as session:
+        asset = await manifest_service.get_asset(session, asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        # Find uploaded file in the uploads directory
+        upload_dir = Path("tmp/manifests") / str(asset.manifest_id) / "uploads"
+        matches = list(upload_dir.glob(f"{asset_id}_*")) if upload_dir.exists() else []
+        if not matches:
+            raise HTTPException(status_code=404, detail="Asset image not found on disk")
+
+        file_path = matches[0]
+        suffix = file_path.suffix.lower()
+        media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+        media_type = media_types.get(suffix, "image/png")
+
+        return FileResponse(path=str(file_path), media_type=media_type)

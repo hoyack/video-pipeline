@@ -127,6 +127,8 @@ class ManifestingEngine:
                     img_path = asset.reference_image_url
 
                 img = Image.open(img_path)
+                if img.mode == "RGBA":
+                    img = img.convert("RGB")
                 img.thumbnail((thumb_size, thumb_size))
 
                 # Center thumbnail in cell
@@ -225,8 +227,14 @@ class ManifestingEngine:
                 self.cv_detector.detect_objects_and_faces, img_path
             )
 
-            # Create asset for each detection
-            for det in detections:
+            # Create asset for each detection (objects + faces)
+            all_detections = [
+                {**d, "is_face": False} for d in detections["objects"]
+            ] + [
+                {**d, "is_face": True} for d in detections["faces"]
+            ]
+
+            for det in all_detections:
                 crop_filename = f"{uuid.uuid4()}.jpg"
                 crop_path = crops_dir / crop_filename
 
@@ -285,10 +293,14 @@ class ManifestingEngine:
                     continue
 
                 crop_path = matches[0]
-                embedding = await asyncio.to_thread(
-                    self.face_matcher.generate_embedding, crop_path
-                )
-                face_asset.face_embedding = embedding.tobytes()
+                try:
+                    embedding = await asyncio.to_thread(
+                        self.face_matcher.generate_embedding, crop_path
+                    )
+                    face_asset.face_embedding = embedding.tobytes()
+                except ValueError:
+                    logger.warning(f"No face detected in crop {face_asset.id}, skipping embedding")
+                    face_asset.is_face_crop = False  # Reclassify — not actually a usable face crop
 
             await self.session.flush()
 
@@ -444,9 +456,10 @@ class ManifestingEngine:
             self.cv_detector.detect_objects_and_faces, img_path
         )
 
-        if detections:
-            # Take first detection (or highest confidence)
-            det = max(detections, key=lambda d: d["confidence"])
+        all_dets = detections.get("objects", []) + detections.get("faces", [])
+        if all_dets:
+            # Take highest confidence detection
+            det = max(all_dets, key=lambda d: d["confidence"])
 
             # Update detection fields
             asset.detection_class = det["class"]
@@ -479,6 +492,8 @@ class ManifestingEngine:
         """
         img = Image.open(source_path)
         crop = img.crop(bbox)
+        if crop.mode == "RGBA":
+            crop = crop.convert("RGB")
         crop.save(output_path, format="JPEG", quality=90)
 
 

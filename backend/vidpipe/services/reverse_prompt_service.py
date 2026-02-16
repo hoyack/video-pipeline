@@ -36,7 +36,13 @@ class ReversePromptService:
             self._client = get_vertex_client()
         return self._client
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Reverse-prompt retry {retry_state.attempt_number}/3: {retry_state.outcome.exception()}"
+        ),
+    )
     async def reverse_prompt_asset(
         self, image_path: str, asset_type: str, user_name: str = ""
     ) -> dict:
@@ -55,8 +61,12 @@ class ReversePromptService:
                 "suggested_name": str  # If user_name empty
             }
         """
-        # Read image
-        image_bytes = Path(image_path).read_bytes()
+        # Read image and detect mime type
+        img_path = Path(image_path)
+        image_bytes = img_path.read_bytes()
+        suffix = img_path.suffix.lower()
+        mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+        mime_type = mime_map.get(suffix, "image/jpeg")
 
         # Get type-specific system prompt
         system_prompt = self._get_system_prompt(asset_type)
@@ -68,9 +78,9 @@ class ReversePromptService:
 
         # Call Gemini vision API
         response = await self.client.aio.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash",
             contents=[
-                Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                Part.from_bytes(data=image_bytes, mime_type=mime_type),
                 f"{system_prompt}\n\n{user_context}",
             ],
             config=GenerateContentConfig(

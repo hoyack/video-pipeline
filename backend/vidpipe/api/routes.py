@@ -1710,9 +1710,15 @@ async def get_asset_image(asset_id: uuid.UUID):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-        # Find uploaded file in the uploads directory
-        upload_dir = Path("tmp/manifests") / str(asset.manifest_id) / "uploads"
-        matches = list(upload_dir.glob(f"{asset_id}_*")) if upload_dir.exists() else []
+        # Find file in uploads or crops directory
+        manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+        matches = []
+        for subdir in ("uploads", "crops"):
+            d = manifest_dir / subdir
+            if d.exists():
+                matches = list(d.glob(f"{asset_id}_*"))
+                if matches:
+                    break
         if not matches:
             raise HTTPException(status_code=404, detail="Asset image not found on disk")
 
@@ -1739,11 +1745,11 @@ async def process_manifest(manifest_id: uuid.UUID):
         if not manifest:
             raise HTTPException(status_code=404, detail="Manifest not found")
 
-        # Verify status allows processing (DRAFT or READY for reprocess)
-        if manifest.status not in ("DRAFT", "READY"):
+        # Verify status allows processing (DRAFT, READY, or ERROR for retry)
+        if manifest.status not in ("DRAFT", "READY", "ERROR"):
             raise HTTPException(
                 status_code=422,
-                detail=f"Cannot process manifest in status {manifest.status}. Must be DRAFT or READY."
+                detail=f"Cannot process manifest in status {manifest.status}. Must be DRAFT, READY, or ERROR."
             )
 
         # Set status to PROCESSING

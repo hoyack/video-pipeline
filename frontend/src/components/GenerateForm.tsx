@@ -1,6 +1,7 @@
 import { useState } from "react";
 import clsx from "clsx";
 import { generateVideo } from "../api/client.ts";
+import { ManifestSelector } from "./ManifestSelector.tsx";
 import {
   STYLE_OPTIONS,
   ASPECT_RATIOS,
@@ -29,6 +30,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   const [imageModel, setImageModel] = useState(IMAGE_MODELS[0].id);
   const [videoModel, setVideoModel] = useState(VIDEO_MODELS[0].id);
   const [enableAudio, setEnableAudio] = useState(true);
+  const [selectedManifestId, setSelectedManifestId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +72,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         image_model: imageModel,
         video_model: videoModel,
         enable_audio: audioActive,
+        manifest_id: selectedManifestId ?? undefined,
       });
       onGenerated(res.project_id);
     } catch (err) {
@@ -300,6 +303,20 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
             </span>
           </div>
         )}
+      </div>
+
+      {/* Asset Manifest */}
+      <div>
+        <label className="mb-2 block text-sm font-medium text-gray-300">
+          Asset Manifest
+        </label>
+        <p className="mb-3 text-xs text-gray-500">
+          Choose reference assets from a pre-built manifest or upload inline.
+        </p>
+        <ManifestSelector
+          selectedManifestId={selectedManifestId}
+          onManifestSelect={setSelectedManifestId}
+        />
       </div>
 
       {/* Cost Estimate */}

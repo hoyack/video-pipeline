@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 5 of 12 (Manifesting Engine)
-Plan: 0 of 3 in current phase
-Status: Planned (ready for execution)
-Last activity: 2026-02-16 — Completed Phase 4, planned Phase 5
+Plan: 1 of 3 in current phase
+Status: In Progress
+Last activity: 2026-02-16 — Completed 05-01 (core services)
 
 Progress: [████░░░░░░] 33% (4 of 12 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
+- Total plans completed: 13
 - Average duration: 2.4 min
-- Total execution time: 0.49 hours
+- Total execution time: 0.55 hours
 
 **By Phase:**
 
@@ -31,10 +31,11 @@ Progress: [████░░░░░░] 33% (4 of 12 phases complete)
 | 02-generation-pipeline | 4 | 8.0 min | 2.0 min |
 | 03-orchestration-interfaces | 3 | 6.0 min | 2.0 min |
 | 04-manifest-system-foundation | 2 | 9.2 min | 4.6 min |
+| 05-manifesting-engine | 1 | 3.6 min | 3.6 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (1.9min), 03-03 (1.9min), 04-01 (5.4min), 04-02 (3.8min)
-- Trend: Phase 4 complete, Phase 5 planned - manifesting engine with CV/AI services
+- Last 5 plans: 03-03 (1.9min), 04-01 (5.4min), 04-02 (3.8min), 05-01 (3.6min)
+- Trend: Phase 5 started - building CV/AI services foundation for manifesting engine
 
 *Updated after each plan completion*
 
@@ -98,6 +99,12 @@ Recent decisions affecting current work:
 - **04-02:** Category filter as pills rather than dropdown for better visibility
 - **04-02:** Delete confirmation modal with "can be undone" messaging (soft delete on backend)
 - **04-02:** Duplicate prepends to list for immediate visibility of new manifest
+- **05-01:** Store face embeddings as bytes (numpy.tobytes()) not JSON for 10x storage reduction
+- **05-01:** Use yolov8m.pt (medium model) for balance of speed and accuracy
+- **05-01:** Extract faces from person detections (upper 40% of bbox) until dedicated face model added
+- **05-01:** Use gemini-2.0-flash-exp for reverse-prompting (speed over accuracy for 20+ crops)
+- **05-01:** Lazy-load all CV models to avoid import-time overhead and allow graceful failure
+- **05-01:** Add VEHICLE asset type with VEH prefix for automotive content
 
 ### Roadmap Evolution
 
@@ -123,6 +130,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-16 (planning)
-Stopped at: Phase 5 plans created and verified (3 plans, 3 waves)
+Last session: 2026-02-16 (execution)
+Stopped at: Completed 05-01-PLAN.md (core services foundation)
 Resume file: None

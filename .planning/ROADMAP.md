@@ -93,7 +93,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 2. Generation Pipeline | 4/4 | ✓ Complete | 2026-02-14 |
 | 3. Orchestration & Interfaces | 3/3 | ✓ Complete | 2026-02-14 |
 | 4. Manifest System Foundation | 0/3 | ○ Planned | — |
-| 5. Manifesting Engine | 0/? | ○ Not planned | — |
+| 5. Manifesting Engine | 0/3 | ○ Planned | — |
 | 6. GenerateForm Integration | 0/? | ○ Not planned | — |
 | 7. Manifest-Aware Storyboarding | 0/? | ○ Not planned | — |
 | 8. Veo Reference Passthrough | 0/? | ○ Not planned | — |
@@ -129,11 +129,13 @@ Plans:
   4. Contact sheet assembled via Pillow with numbered grid layout and labels
   5. Manifest tags auto-assigned (CHAR_01, ENV_01, PROP_01, etc.) and Asset Registry populated with all fields
   6. Manifest Creator supports Stages 2 (processing with live progress) and 3 (review and refine: edit prompts, swap images, re-process, remove assets)
-  7. Processing progress tracked with status transitions: DRAFT → PROCESSING → READY
-**Plans:** 0 plans
+  7. Processing progress tracked with status transitions: DRAFT -> PROCESSING -> READY
+**Plans:** 3 plans in 3 waves
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 5 to break down)
+- [ ] 05-01-PLAN.md — Asset model migration + CV detection, face matching, and reverse-prompt services
+- [ ] 05-02-PLAN.md — ManifestingEngine orchestrator, background task runner, and processing API endpoints
+- [ ] 05-03-PLAN.md — Frontend Stages 2 (processing progress) and 3 (review/refine) in ManifestCreator
 
 ### Phase 6: GenerateForm Integration
 **Goal**: Users can select an existing manifest from the library or quick-upload inline when generating a video; projects reference manifests with snapshot isolation so in-progress projects are unaffected by manifest edits

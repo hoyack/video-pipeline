@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import clsx from "clsx";
-import { forkProject } from "../api/client.ts";
+import { forkProject, fetchManifestAssets } from "../api/client.ts";
 import type { ProjectDetail } from "../api/types.ts";
-import type { ForkRequest } from "../api/types.ts";
+import type { ForkRequest, AssetResponse, AssetChanges, ModifiedAsset, NewForkUpload } from "../api/types.ts";
 import {
   STYLE_OPTIONS,
   ASPECT_RATIOS,
@@ -45,6 +45,22 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Asset management state (Phase 12)
+  const [assets, setAssets] = useState<AssetResponse[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(false);
+  const [modifiedAssets, setModifiedAssets] = useState<Record<string, ModifiedAsset>>({});
+  const [removedAssetIds, setRemovedAssetIds] = useState<Set<string>>(new Set());
+  const [newUploads, setNewUploads] = useState<NewForkUpload[]>([]);
+
+  useEffect(() => {
+    if (!detail.manifest_id) return;
+    setAssetsLoading(true);
+    fetchManifestAssets(detail.manifest_id)
+      .then(setAssets)
+      .catch(() => {}) // Silent fail — asset section just won't show
+      .finally(() => setAssetsLoading(false));
+  }, [detail.manifest_id]);
 
   const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel) ?? VIDEO_MODELS[0];
   const allowedDurations = selectedVideoModel.allowedDurations;
@@ -128,6 +144,74 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     });
   }
 
+  // Asset management helpers (Phase 12)
+  function getAssetStatus(assetId: string): "locked" | "modified" | "removed" {
+    if (removedAssetIds.has(assetId)) return "removed";
+    if (modifiedAssets[assetId]) return "modified";
+    return "locked";
+  }
+
+  function handleRemoveAsset(assetId: string) {
+    setRemovedAssetIds((prev) => new Set(prev).add(assetId));
+  }
+
+  function handleRestoreAsset(assetId: string) {
+    setRemovedAssetIds((prev) => {
+      const next = new Set(prev);
+      next.delete(assetId);
+      return next;
+    });
+    // Also clear any modifications
+    setModifiedAssets((prev) => {
+      const next = { ...prev };
+      delete next[assetId];
+      return next;
+    });
+  }
+
+  function handleEditAssetField(assetId: string, field: string, value: string) {
+    const asset = assets.find((a) => a.asset_id === assetId);
+    if (!asset) return;
+    const original = field === "reverse_prompt" ? asset.reverse_prompt ?? "" : asset.name;
+    setModifiedAssets((prev) => {
+      const existing = prev[assetId]?.changes || {};
+      const updated = { ...existing, [field]: value };
+      // Remove field if back to original
+      if (value === original) delete updated[field];
+      if (Object.keys(updated).length === 0) {
+        const next = { ...prev };
+        delete next[assetId];
+        return next;
+      }
+      return { ...prev, [assetId]: { changes: updated } };
+    });
+  }
+
+  function handleAddUpload(files: FileList | null) {
+    if (!files) return;
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(",")[1]; // strip data:...;base64, prefix
+        setNewUploads((prev) => [
+          ...prev,
+          {
+            image_data: base64,
+            name: file.name.replace(/\.[^.]+$/, ""),
+            asset_type: "CHARACTER",
+            description: undefined,
+            tags: undefined,
+          },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function handleRemoveUpload(index: number) {
+    setNewUploads((prev) => prev.filter((_, i) => i !== index));
+  }
+
   function buildForkRequest(): ForkRequest {
     const req: ForkRequest = {};
 
@@ -157,6 +241,14 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
       if (filtered.length > 0) {
         req.clear_keyframes = filtered;
       }
+    }
+
+    if (detail.manifest_id && (Object.keys(modifiedAssets).length > 0 || removedAssetIds.size > 0 || newUploads.length > 0)) {
+      req.asset_changes = {
+        modified_assets: Object.keys(modifiedAssets).length > 0 ? modifiedAssets : undefined,
+        removed_asset_ids: removedAssetIds.size > 0 ? [...removedAssetIds] : undefined,
+        new_uploads: newUploads.length > 0 ? newUploads : undefined,
+      };
     }
 
     return req;
@@ -400,6 +492,142 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
           {sceneCount} scene{sceneCount !== 1 ? "s" : ""} &middot; Full regeneration cost shown (inherited assets reduce actual cost)
         </div>
       </div>
+
+      {/* Asset Registry (Phase 12) */}
+      {detail.manifest_id && (
+        <div>
+          <h3 className="mb-3 text-sm font-medium text-gray-400">
+            Asset Registry
+            {assets.length > 0 && (
+              <span className="ml-2 text-gray-500">
+                ({assets.length - removedAssetIds.size} active
+                {removedAssetIds.size > 0 && `, ${removedAssetIds.size} removed`}
+                {newUploads.length > 0 && `, ${newUploads.length} new`})
+              </span>
+            )}
+          </h3>
+
+          {assetsLoading ? (
+            <div className="text-sm text-gray-500">Loading assets...</div>
+          ) : assets.length === 0 ? (
+            <div className="text-sm text-gray-500">No assets in manifest</div>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {assets.map((asset) => {
+                const status = getAssetStatus(asset.asset_id);
+                return (
+                  <div
+                    key={asset.asset_id}
+                    className={clsx(
+                      "flex items-center gap-3 rounded-lg border px-3 py-2",
+                      status === "removed"
+                        ? "border-red-800/50 bg-red-900/20 opacity-60"
+                        : status === "modified"
+                        ? "border-amber-700 bg-amber-900/20"
+                        : "border-gray-700 bg-gray-900",
+                    )}
+                  >
+                    {/* Thumbnail */}
+                    {asset.thumbnail_url || asset.reference_image_url ? (
+                      <img
+                        src={asset.thumbnail_url || asset.reference_image_url || ""}
+                        alt={asset.name}
+                        className="h-10 w-10 rounded object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded bg-gray-800 text-xs text-gray-500">
+                        {asset.manifest_tag}
+                      </div>
+                    )}
+
+                    {/* Info */}
+                    <div className="min-w-0 flex-1">
+                      <div className={clsx("text-sm font-medium", status === "removed" ? "text-gray-500 line-through" : "text-gray-200")}>
+                        {asset.manifest_tag} — {asset.name}
+                      </div>
+                      {status !== "removed" && (
+                        <input
+                          type="text"
+                          value={modifiedAssets[asset.asset_id]?.changes?.reverse_prompt ?? asset.reverse_prompt ?? ""}
+                          onChange={(e) => handleEditAssetField(asset.asset_id, "reverse_prompt", e.target.value)}
+                          placeholder="Reverse prompt..."
+                          className={clsx(
+                            "mt-1 w-full rounded border bg-transparent px-2 py-0.5 text-xs text-gray-400 focus:outline-none focus:ring-1",
+                            status === "modified" ? "border-amber-700 focus:ring-amber-500" : "border-gray-700 focus:ring-blue-500",
+                          )}
+                        />
+                      )}
+                    </div>
+
+                    {/* Status badge */}
+                    <span className={clsx(
+                      "shrink-0 rounded px-1.5 py-0.5 text-xs font-medium",
+                      status === "locked" && "bg-gray-800 text-gray-400",
+                      status === "modified" && "bg-amber-900/50 text-amber-300",
+                      status === "removed" && "bg-red-900/50 text-red-400",
+                    )}>
+                      {status === "locked" ? "Inherited" : status === "modified" ? "Edited" : "Removed"}
+                    </span>
+
+                    {/* Actions */}
+                    <div className="flex shrink-0 gap-1">
+                      {status === "removed" ? (
+                        <button
+                          onClick={() => handleRestoreAsset(asset.asset_id)}
+                          className="rounded px-2 py-1 text-xs text-blue-400 hover:bg-blue-900/30"
+                          title="Restore"
+                        >
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleRemoveAsset(asset.asset_id)}
+                          className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-900/30"
+                          title="Remove from fork"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* New Uploads */}
+          {newUploads.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <div className="text-xs font-medium text-green-400">New Uploads</div>
+              {newUploads.map((upload, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-lg border border-green-800/50 bg-green-900/20 px-3 py-2">
+                  <div className="text-sm text-gray-300">{upload.name}</div>
+                  <span className="text-xs text-gray-500">{upload.asset_type}</span>
+                  <div className="flex-1" />
+                  <button
+                    onClick={() => handleRemoveUpload(i)}
+                    className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-900/30"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add New button */}
+          <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-gray-700 px-3 py-2 text-sm text-gray-400 hover:border-gray-600 hover:text-gray-300 transition-colors">
+            <span>+ Add New Reference Images</span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => handleAddUpload(e.target.files)}
+            />
+          </label>
+        </div>
+      )}
 
       {/* Scene Edits */}
       {detail.scenes.length > 0 && (

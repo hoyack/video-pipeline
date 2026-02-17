@@ -81,6 +81,7 @@ async def _generate_image_from_text(
         )
         if seed is not None:
             imagen_config.seed = seed
+            imagen_config.add_watermark = False
         response = await client.aio.models.generate_images(
             model=image_model,
             prompt=prompt,

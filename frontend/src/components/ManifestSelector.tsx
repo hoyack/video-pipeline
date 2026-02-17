@@ -158,6 +158,7 @@ export function ManifestSelector({
                 {manifests.slice(0, 6).map((m) => (
                   <button
                     key={m.manifest_id}
+                    type="button"
                     onClick={() => onManifestSelect(m.manifest_id)}
                     className="text-left"
                   >

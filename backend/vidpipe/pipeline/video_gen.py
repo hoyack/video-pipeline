@@ -166,17 +166,10 @@ async def _submit_video_job(
     Content-policy errors (400/INVALID_ARGUMENT) are NOT retried here;
     they propagate to the caller for escalation.
     """
-    # Determine duration: 8 seconds if references attached, else project setting
-    duration_seconds = project.target_clip_duration
-    if reference_images:
-        duration_seconds = 8
-        logger.info(f"Duration overridden to 8s (reference images attached)")
-
     video_config = types.GenerateVideosConfig(
         aspect_ratio=project.aspect_ratio,
-        duration_seconds=duration_seconds,
+        duration_seconds=project.target_clip_duration,
         number_of_videos=candidate_count,
-        last_frame=types.Image(image_bytes=end_frame_bytes, mime_type="image/png"),
         negative_prompt=(
             "photorealistic, photo, photograph, hyperrealistic, "
             "text overlay, watermark, logo, blurry, deformed"
@@ -195,10 +188,20 @@ async def _submit_video_job(
     if video_model == "veo-2.0-generate-001":
         video_config.enhance_prompt = False
 
-    # Phase 8: Pass reference images if provided (identity preservation)
+    # Veo API constraint: `image` + `last_frame` (frame interpolation) and
+    # `reference_images` are mutually exclusive.  Keyframe-based frame
+    # interpolation is essential for scene composition control, so we always
+    # prefer it.  Reference images (identity preservation) are logged as
+    # skipped — the rewritten prompt already describes the characters/assets.
     if reference_images:
-        video_config.reference_images = reference_images
+        logger.info(
+            f"Dropping {len(reference_images)} reference image(s) — "
+            "frame interpolation (keyframes) takes priority over identity refs"
+        )
 
+    video_config.last_frame = types.Image(
+        image_bytes=end_frame_bytes, mime_type="image/png"
+    )
     return await client.aio.models.generate_videos(
         model=video_model,
         prompt=video_prompt,
@@ -334,7 +337,7 @@ async def _poll_video_operation(
                 )
                 clip.local_path = str(file_path)
                 clip.status = "complete"
-                clip.duration_seconds = 8 if selected_refs else project.target_clip_duration
+                clip.duration_seconds = project.target_clip_duration
                 clip.source = "generated"
                 scene.status = "video_done"
                 await session.commit()
@@ -593,7 +596,7 @@ async def _handle_quality_mode_candidates(
 
     # Step 7: Update VideoClip.local_path to point to selected candidate
     clip.local_path = candidate_records[winner_idx].local_path
-    clip.duration_seconds = 8 if has_refs else project.target_clip_duration
+    clip.duration_seconds = project.target_clip_duration
     clip.source = "generated"
     scene.status = "video_done"
 
@@ -651,42 +654,48 @@ async def _run_post_generation_analysis(
             if kf.file_path and Path(kf.file_path).exists()
         ]
 
-        # Step 5: Run full CV analysis (frame sampling, YOLO, face match, CLIP, Gemini)
-        analysis_result = await cv_service.analyze_generated_content(
-            scene_index=scene.scene_index,
-            keyframe_paths=keyframe_paths,
-            clip_path=clip.local_path,
-            scene_manifest_json=(
-                scene_manifest_row.manifest_json if scene_manifest_row else None
-            ),
-            existing_assets=all_assets,
-        )
-
-        # Step 6: Track appearances — persist AssetAppearance records
-        await cv_service.track_appearances(
-            session, project.id, scene.scene_index, analysis_result
-        )
-
-        # Step 7: Extract and register new entities into Asset Registry
-        new_entities = identify_new_entities(analysis_result, all_assets)
-        if new_entities:
-            await extract_and_register_new_entities(
-                session,
-                project.id,
-                project.manifest_id,
-                scene.scene_index,
-                new_entities,
-                source="CLIP_EXTRACT",
+        # Use a savepoint so that if CV analysis fails partway through
+        # (after adding appearances/entities to the session), only the
+        # savepoint is rolled back — not the outer transaction.  A full
+        # session.rollback() would expire every ORM object in the session
+        # (regardless of expire_on_commit) and break the caller's scene loop.
+        async with session.begin_nested():
+            # Step 5: Run full CV analysis (frame sampling, YOLO, face match, CLIP, Gemini)
+            analysis_result = await cv_service.analyze_generated_content(
+                scene_index=scene.scene_index,
+                keyframe_paths=keyframe_paths,
+                clip_path=clip.local_path,
+                scene_manifest_json=(
+                    scene_manifest_row.manifest_json if scene_manifest_row else None
+                ),
+                existing_assets=all_assets,
             )
 
-        # Step 8: Persist analysis results to SceneManifest (exclude raw embeddings)
-        if scene_manifest_row is not None:
-            scene_manifest_row.cv_analysis_json = analysis_result.model_dump(
-                exclude={"clip_embeddings"}
+            # Step 6: Track appearances — persist AssetAppearance records
+            await cv_service.track_appearances(
+                session, project.id, scene.scene_index, analysis_result
             )
-            scene_manifest_row.continuity_score = analysis_result.continuity_score
 
-        # Commit all analysis results (appearances, new assets, scene manifest update)
+            # Step 7: Extract and register new entities into Asset Registry
+            new_entities = identify_new_entities(analysis_result, all_assets)
+            if new_entities:
+                await extract_and_register_new_entities(
+                    session,
+                    project.id,
+                    project.manifest_id,
+                    scene.scene_index,
+                    new_entities,
+                    source="CLIP_EXTRACT",
+                )
+
+            # Step 8: Persist analysis results to SceneManifest (exclude raw embeddings)
+            if scene_manifest_row is not None:
+                scene_manifest_row.cv_analysis_json = analysis_result.model_dump(
+                    exclude={"clip_embeddings"}
+                )
+                scene_manifest_row.continuity_score = analysis_result.continuity_score
+
+        # Savepoint released — now commit to persist the analysis results
         await session.commit()
 
         logger.info(
@@ -955,11 +964,27 @@ async def _generate_video_for_scene(
             img_url = clean_ref.clean_image_url if clean_ref else asset.reference_image_url
 
             if img_url:
-                # Read image bytes (local file paths)
-                ref_bytes = Path(img_url).read_bytes()
+                # Resolve API URLs to local file paths
+                if img_url.startswith("/api/assets/"):
+                    # Pattern: /api/assets/{asset_id}/image → search uploads/ and crops/
+                    manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+                    resolved = None
+                    for subdir in ("uploads", "crops"):
+                        d = manifest_dir / subdir
+                        if d.exists():
+                            matches = list(d.glob(f"{asset.id}_*"))
+                            if matches:
+                                resolved = matches[0]
+                                break
+                    if not resolved:
+                        logger.warning(f"Reference image not found on disk for asset {asset.id}")
+                        continue
+                    ref_bytes = resolved.read_bytes()
+                else:
+                    ref_bytes = Path(img_url).read_bytes()
                 veo_ref_images.append(
                     types.VideoGenerationReferenceImage(
-                        reference_image=types.Image(
+                        image=types.Image(
                             image_bytes=ref_bytes,
                             mime_type="image/png"
                         ),

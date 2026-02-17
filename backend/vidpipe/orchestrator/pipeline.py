@@ -152,8 +152,8 @@ async def run_pipeline(
     resume_step = get_resume_step(project.status, completed_steps)
     logger.info(f"Resume point: {resume_step}, completed_steps: {completed_steps}")
 
-    # Reset failed status to resume step
-    if project.status == "failed":
+    # Reset failed/stopped status to resume step
+    if project.status in ("failed", "stopped"):
         project.status = resume_step
         await session.commit()
 

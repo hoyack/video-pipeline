@@ -261,11 +261,76 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
             await session.commit()
             continue
 
+        # Phase 10: Adaptive Prompt Rewriting for manifest projects
+        rewritten_start_prompt = None
+        if project.manifest_id:
+            try:
+                from vidpipe.services.prompt_rewriter import PromptRewriterService
+                from vidpipe.db.models import SceneManifest as SceneManifestModel
+
+                # Load scene manifest
+                sm_result = await session.execute(
+                    select(SceneManifestModel).where(
+                        SceneManifestModel.project_id == project.id,
+                        SceneManifestModel.scene_index == scene.scene_index
+                    )
+                )
+                scene_manifest_row = sm_result.scalar_one_or_none()
+
+                if scene_manifest_row and scene_manifest_row.manifest_json:
+                    # Load assets
+                    from vidpipe.services import manifest_service
+                    all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
+
+                    # Load previous scene CV analysis for continuity
+                    previous_cv = None
+                    if scene.scene_index > 0:
+                        prev_sm_result = await session.execute(
+                            select(SceneManifestModel).where(
+                                SceneManifestModel.project_id == project.id,
+                                SceneManifestModel.scene_index == scene.scene_index - 1
+                            )
+                        )
+                        prev_sm = prev_sm_result.scalar_one_or_none()
+                        if prev_sm:
+                            previous_cv = prev_sm.cv_analysis_json
+
+                    rewriter = PromptRewriterService()
+                    result = await rewriter.rewrite_keyframe_prompt(
+                        scene=scene,
+                        scene_manifest_json=scene_manifest_row.manifest_json,
+                        placed_assets=all_assets,  # rewriter filters to placed internally
+                        previous_cv_analysis=previous_cv,
+                        all_assets=all_assets,
+                    )
+
+                    rewritten_start_prompt = result.rewritten_prompt
+
+                    # Persist rewritten prompt
+                    scene_manifest_row.rewritten_keyframe_prompt = result.rewritten_prompt
+                    await session.commit()
+
+                    logger.info(
+                        f"Scene {scene.scene_index}: keyframe prompt rewritten "
+                        f"(refs: {result.selected_reference_tags})"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Scene {scene.scene_index}: keyframe rewriter failed (non-fatal): {e}"
+                )
+                rewritten_start_prompt = None  # Fall back to original
+
         # Generate or inherit START frame
         if scene.scene_index == 0:
             # Scene 0: Generate from text prompt (KEYF-01)
             # Prepend style guide + character bible for maximum fidelity
-            enriched_prompt = f"{style_prefix}{character_prefix}{scene.start_frame_prompt}"
+            # Phase 10: Use rewritten prompt when available (already includes asset details)
+            if rewritten_start_prompt:
+                # Rewriter already injected asset reverse_prompts; omit character_prefix
+                # to avoid double-injection. Keep style_prefix for model-level consistency.
+                enriched_prompt = f"{style_prefix}{rewritten_start_prompt}"
+            else:
+                enriched_prompt = f"{style_prefix}{character_prefix}{scene.start_frame_prompt}"
             start_frame_bytes = await _generate_image_from_text(
                 image_client, enriched_prompt, project.aspect_ratio, image_model,
                 seed=project.seed,

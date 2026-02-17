@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown
-from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest
+from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference
 
 logger = logging.getLogger(__name__)
 

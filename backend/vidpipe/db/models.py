@@ -79,6 +79,28 @@ class Asset(Base):
     source_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("assets.id"), nullable=True)  # parent asset if extracted crop
 
 
+class AssetCleanReference(Base):
+    """Clean reference image generated for an asset at a specific quality tier.
+
+    Stores preprocessed reference images separately from originals.
+    Never overwrites Asset.reference_image_url.
+
+    Spec reference: Phase 8 - Clean Sheets
+    """
+    __tablename__ = "asset_clean_references"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assets.id"), index=True)
+    tier: Mapped[str] = mapped_column(String(20))  # 'tier2_rembg', 'tier3_gemini'
+    clean_image_url: Mapped[str] = mapped_column(String(500))
+    generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    face_similarity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    generation_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class ManifestSnapshot(Base):
     """ManifestSnapshot model capturing immutable state of a manifest at generation time.
 
@@ -164,6 +186,7 @@ class SceneManifest(Base):
     composition_camera_movement: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     asset_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     new_asset_count: Mapped[int] = mapped_column(Integer, default=0)
+    selected_reference_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

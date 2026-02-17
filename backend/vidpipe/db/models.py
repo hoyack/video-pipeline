@@ -75,6 +75,7 @@ class Asset(Base):
     is_face_crop: Mapped[bool] = mapped_column(Boolean, default=False)
     crop_bbox: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # [x1, y1, x2, y2]
     face_embedding: Mapped[Optional[bytes]] = mapped_column(nullable=True)  # numpy.tobytes() 512-dim float32
+    clip_embedding: Mapped[Optional[bytes]] = mapped_column(nullable=True)  # numpy.tobytes() 512-dim float32
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     source_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("assets.id"), nullable=True)  # parent asset if extracted crop
 
@@ -98,6 +99,30 @@ class AssetCleanReference(Base):
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     generation_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class AssetAppearance(Base):
+    """Track where each asset appears across scenes in generated content.
+
+    Enables:
+    - UI timeline view (show which assets appear in which scenes)
+    - Debugging queries (find all scenes containing CHAR_01)
+    - Continuity validation (did expected asset appear?)
+
+    Spec reference: Phase 9 - CV Analysis Pipeline
+    """
+    __tablename__ = "asset_appearances"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assets.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_index: Mapped[int] = mapped_column(Integer)
+    frame_index: Mapped[int] = mapped_column(Integer)  # Which sampled frame (0-7)
+    timestamp_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bbox: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # [x1, y1, x2, y2]
+    confidence: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(20))  # "yolo", "face_match", "clip_match"
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
@@ -187,6 +212,8 @@ class SceneManifest(Base):
     asset_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     new_asset_count: Mapped[int] = mapped_column(Integer, default=0)
     selected_reference_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    cv_analysis_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    continuity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

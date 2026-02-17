@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown
-from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference
+from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference, AssetAppearance
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,10 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE assets ADD COLUMN face_embedding BLOB",
         "ALTER TABLE assets ADD COLUMN quality_score REAL",
         "ALTER TABLE assets ADD COLUMN source_asset_id TEXT REFERENCES assets(id)",
+        # Phase 9: CV Analysis Pipeline fields
+        "ALTER TABLE assets ADD COLUMN clip_embedding BLOB",
+        "ALTER TABLE scene_manifests ADD COLUMN cv_analysis_json TEXT",
+        "ALTER TABLE scene_manifests ADD COLUMN continuity_score REAL",
     ]
     for sql in migrations:
         try:
@@ -56,4 +60,5 @@ __all__ = [
     "get_session",
     "shutdown",
     "init_database",
+    "AssetAppearance",
 ]

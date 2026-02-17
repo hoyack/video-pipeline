@@ -92,6 +92,16 @@ class ServerConfig(BaseModel):
     port: int
 
 
+class CVAnalysisConfig(BaseModel):
+    """CV analysis pipeline configuration."""
+
+    clip_similarity_threshold: float = 0.65
+    motion_delta_threshold: float = 0.15
+    max_frames_per_clip: int = 8
+    quality_gate_threshold: float = 5.0
+    face_match_threshold: float = 0.6
+
+
 class Settings(BaseSettings):
     """Main application settings with YAML and environment variable support.
 
@@ -114,6 +124,7 @@ class Settings(BaseSettings):
     pipeline: PipelineConfig
     storage: StorageConfig
     server: ServerConfig
+    cv_analysis: CVAnalysisConfig = Field(default_factory=CVAnalysisConfig)
 
     @classmethod
     def settings_customise_sources(

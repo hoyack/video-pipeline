@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 12 of 12 (Fork System Integration with Manifests) — IN PROGRESS
-Plan: 1 of 3 complete
-Status: 12-01 complete — DB migration and Asset inheritance schema foundation
-Last activity: 2026-02-17 — Completed 12-01 (Asset inheritance columns + AssetChanges Pydantic models + manifest_id in ProjectDetail)
+Plan: 2 of 3 complete
+Status: 12-02 complete — Fork endpoint asset copy, scene manifest inheritance, asset invalidation, process_new_uploads
+Last activity: 2026-02-17 — Completed 12-02 (fork_project extended + ManifestingEngine.process_new_uploads)
 
-Progress: [████████░░] 97% (11 of 12 phases complete, 32 of 34 plans complete)
+Progress: [████████░░] 98% (11 of 12 phases complete, 33 of 34 plans complete)
 
 ## Performance Metrics
 
@@ -38,11 +38,11 @@ Progress: [████████░░] 97% (11 of 12 phases complete, 32 of 
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
 | 11-multi-candidate-quality-mode | 3/3 | 14.0 min | 4.7 min |
-| 12-fork-system-integration-with-manifests | 1/3 | 2.0 min | 2.0 min |
+| 12-fork-system-integration-with-manifests | 2/3 | 5.0 min | 2.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 11-01 (3.0min), 11-02 (3.0min), 11-03 (8.0min), 12-01 (2.0min)
-- Trend: Phase 12 started — 12-01 schema foundation very fast (pure DB + Pydantic, no logic)
+- Last 5 plans: 11-02 (3.0min), 11-03 (8.0min), 12-01 (2.0min), 12-02 (3.0min)
+- Trend: Phase 12 core logic fast — 12-02 asset inheritance + incremental manifesting in 3min
 
 *Updated after each plan completion*
 
@@ -180,6 +180,12 @@ Recent decisions affecting current work:
 - **12-01:** Asset inheritance columns use TEXT in SQL migration (SQLite UUID-as-TEXT) but Mapped[Optional[uuid.UUID]] with ForeignKey in ORM — consistent with source_asset_id pattern
 - **12-01:** manifest_id in ProjectDetail is Optional[str] (not UUID) for JSON API consistency with all other ID fields
 - **12-01:** 422 validation for asset_changes without manifest placed before _compute_invalidation to fail fast
+- **12-02:** _copy_assets_for_fork returns modified_asset_tags (tag strings not UUIDs) because SceneManifest.asset_tags stores tags
+- **12-02:** Modified assets get is_inherited=False — they diverge from parent, inheritance implies exact copy
+- **12-02:** process_new_uploads does NOT update manifest status — manifest stays READY, new uploads just expand asset pool
+- **12-02:** Asset modification invalidation only tightens scene_boundary, never loosens it
+- **12-02:** process_new_uploads uses List[dict] format for cross_match_faces (correct interface); existing process_manifest uses tuple format (pre-existing inconsistency, not introduced here)
+- **12-02:** New uploads continue tag numbering from inherited max per asset_type to avoid collisions
 
 ### Roadmap Evolution
 
@@ -206,5 +212,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17 (execution)
-Stopped at: Completed 12-01-PLAN.md (Asset inheritance schema + AssetChanges Pydantic models + manifest_id in ProjectDetail)
+Stopped at: Completed 12-02-PLAN.md (fork_project extended with asset copy, scene manifest inheritance, asset invalidation + ManifestingEngine.process_new_uploads)
 Resume file: None

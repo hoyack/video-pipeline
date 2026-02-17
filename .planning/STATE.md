@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 10 of 12 (Adaptive Prompt Rewriting)
-Plan: 1 of 2 in current phase
-Status: In Progress — 10-01 complete (schemas and service), 10-02 pending (pipeline integration)
-Last activity: 2026-02-17 — Completed 10-01 (PromptRewriterService, pydantic schemas, SceneManifest columns)
+Phase: 10 of 12 (Adaptive Prompt Rewriting) — COMPLETE
+Plan: 2 of 2 — phase complete, next: Phase 11
+Status: Phase 10 complete — PromptRewriterService wired into keyframes.py and video_gen.py
+Last activity: 2026-02-17 — Completed 10-02 (pipeline integration, LLM reference override, safety prefix coordination)
 
-Progress: [████████░░] 82% (9+ of 12 phases, 24 of 29 plans complete)
+Progress: [████████░░] 86% (10 of 12 phases complete, 26 of 29 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 23
-- Average duration: 2.6 min
-- Total execution time: 0.97 hours
+- Total plans completed: 26
+- Average duration: 2.5 min
+- Total execution time: 1.08 hours
 
 **By Phase:**
 
@@ -36,11 +36,11 @@ Progress: [████████░░] 82% (9+ of 12 phases, 24 of 29 plans 
 | 07-manifest-aware-storyboarding | 2 | 5.1 min | 2.6 min |
 | 08-veo-reference-passthrough | 2 | 7.1 min | 3.6 min |
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
-| 10-adaptive-prompt-rewriting | 1 (so far) | 2.0 min | 2.0 min |
+| 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 09-01 (2.0min), 09-02 (6.0min), 09-03 (2.0min), 10-01 (2.0min)
-- Trend: Phase 10 started — rewriter service and schemas complete in 2 min
+- Last 5 plans: 09-02 (6.0min), 09-03 (2.0min), 10-01 (2.0min), 10-02 (2.0min)
+- Trend: Phase 10 complete — adaptive prompt rewriting fully wired into pipeline in 4 min total
 
 *Updated after each plan completion*
 
@@ -155,6 +155,10 @@ Recent decisions affecting current work:
 - **10-01:** Module-level helper functions (_format_placed_assets, _build_continuity_patch, etc.) not static methods — simplifies testing, follows Python conventions
 - **10-01:** _list_available_references shows only assets WITH reference_image_url — LLM cannot select what Veo cannot receive
 - **10-01:** Rewriter does not persist results itself — caller (Plan 02: keyframes.py/video_gen.py) stores rewritten prompts in SceneManifest columns
+- **10-02:** veo_ref_images built after LLM override — no separate rebuild needed (correct ordering: Phase 8 selection → Phase 10 rewriter → veo_ref_images construction)
+- **10-02:** style_prefix kept with rewritten keyframe prompt; character_prefix dropped (rewriter already injects asset reverse_prompts, avoids double-injection)
+- **10-02:** Re-raise PipelineStopped inside except Exception block in video rewriter — inherits from Exception so must be caught and re-raised explicitly
+- **10-02:** base_video_prompt = None pattern in escalation loop — rewriter sets it, loop checks it, fallback to original scene.video_motion_prompt with style suffix
 
 ### Roadmap Evolution
 
@@ -181,5 +185,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17 (execution)
-Stopped at: Completed 10-01-PLAN.md (PromptRewriterService, pydantic schemas, SceneManifest columns, SQL migration)
+Stopped at: Completed 10-02-PLAN.md (PromptRewriterService wired into keyframes.py and video_gen.py, LLM reference override, safety prefix coordination)
 Resume file: None

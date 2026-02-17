@@ -17,7 +17,7 @@ from typing import Callable, Dict, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Project, PipelineRun, Scene, Keyframe, VideoClip
+from vidpipe.db.models import Project, PipelineRun, Scene, Keyframe, VideoClip, AssetAppearance
 from vidpipe.orchestrator.state import get_resume_step
 from vidpipe.pipeline.storyboard import generate_storyboard
 from vidpipe.pipeline.keyframes import generate_keyframes
@@ -209,7 +209,7 @@ async def run_pipeline(
             step_start = time.monotonic()
             logger.info("Starting video generation step")
             if progress_callback:
-                progress_callback("Generating video clips...")
+                progress_callback("Generating video clips (with CV analysis)...")
 
             await generate_videos(session, project)
             await session.refresh(project)
@@ -218,6 +218,7 @@ async def run_pipeline(
             await session.commit()
 
             step_duration = time.monotonic() - step_start
+            # Note: video_gen duration includes per-scene CV analysis (Phase 9)
             step_log["video_gen"] = step_duration
             logger.info(f"Video generation step completed in {step_duration:.2f}s")
 
@@ -287,6 +288,10 @@ async def run_pipeline(
 
 async def _check_completed_steps(session: AsyncSession, project: Project) -> Dict[str, bool]:
     """Query database to determine which pipeline steps are complete.
+
+    Note: Video generation (Phase 9+) includes per-scene CV analysis
+    for progressive asset enrichment. Analysis results are stored in
+    scene_manifests.cv_analysis_json.
 
     Args:
         session: Database session

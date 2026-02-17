@@ -963,6 +963,167 @@ Generate exactly {num_new_scenes} new scene(s) that continue the narrative from 
     return scenes_out
 
 
+async def _copy_assets_for_fork(
+    session,
+    source_manifest_id,
+    source_project_id,
+    new_project_id,
+    asset_changes,  # Optional[AssetChanges]
+) -> tuple[list, list[str]]:
+    """Copy parent manifest assets to forked project with inheritance tracking.
+
+    Returns:
+        (list_of_new_assets, list_of_modified_asset_tags)
+    """
+    # Load all parent assets for this manifest
+    result = await session.execute(
+        select(Asset).where(Asset.manifest_id == source_manifest_id)
+    )
+    parent_assets = list(result.scalars().all())
+
+    # Build removed set and modified map from asset_changes
+    removed_set: set[str] = set()
+    modified_map: dict = {}
+    if asset_changes is not None:
+        removed_set = set(asset_changes.removed_asset_ids)
+        modified_map = asset_changes.modified_assets  # dict[str, ModifiedAsset]
+
+    new_assets = []
+    modified_asset_tags: list[str] = []
+
+    for asset in parent_assets:
+        asset_id_str = str(asset.id)
+
+        # Skip removed assets
+        if asset_id_str in removed_set:
+            continue
+
+        # Determine modification state
+        is_modified = asset_id_str in modified_map
+
+        # Create new Asset row with all fields copied
+        new_asset = Asset(
+            manifest_id=source_manifest_id,  # shared manifest
+            asset_type=asset.asset_type,
+            name=asset.name,
+            manifest_tag=asset.manifest_tag,
+            user_tags=asset.user_tags,
+            reference_image_url=asset.reference_image_url,
+            thumbnail_url=asset.thumbnail_url,
+            description=asset.description,
+            source=asset.source,
+            sort_order=asset.sort_order,
+            reverse_prompt=asset.reverse_prompt,
+            visual_description=asset.visual_description,
+            detection_class=asset.detection_class,
+            detection_confidence=asset.detection_confidence,
+            is_face_crop=asset.is_face_crop,
+            crop_bbox=asset.crop_bbox,
+            face_embedding=asset.face_embedding,
+            clip_embedding=asset.clip_embedding,
+            quality_score=asset.quality_score,
+            source_asset_id=asset.source_asset_id,
+            # Inheritance tracking
+            is_inherited=not is_modified,
+            inherited_from_asset=asset.id,
+            inherited_from_project=source_project_id,
+        )
+
+        # Apply modifications if present
+        if is_modified:
+            mod = modified_map[asset_id_str]
+            changes = mod.changes
+            if "reverse_prompt" in changes:
+                new_asset.reverse_prompt = changes["reverse_prompt"]
+            if "name" in changes:
+                new_asset.name = changes["name"]
+            if "visual_description" in changes:
+                new_asset.visual_description = changes["visual_description"]
+            # Collect the original asset's tag for invalidation computation
+            modified_asset_tags.append(asset.manifest_tag)
+
+        session.add(new_asset)
+
+    new_assets_result = await session.execute(
+        select(Asset).where(Asset.inherited_from_project == new_project_id)
+    )
+
+    return new_assets, modified_asset_tags
+
+
+async def _copy_scene_manifests(
+    session,
+    source_project_id,
+    new_project_id,
+    scene_boundary: int,
+    deleted_set: set,
+):
+    """Copy scene manifests for unchanged scenes (below invalidation boundary).
+
+    Uses post-deletion scene index mapping.
+    """
+    # Load source scene manifests
+    result = await session.execute(
+        select(SceneManifestModel).where(
+            SceneManifestModel.project_id == source_project_id
+        )
+    )
+    source_sms = list(result.scalars().all())
+
+    def _old_to_new(old_idx: int) -> int:
+        """Map original scene index to post-deletion index."""
+        return old_idx - sum(1 for d in deleted_set if d < old_idx)
+
+    for sm in source_sms:
+        # Skip scenes that were deleted
+        if sm.scene_index in deleted_set:
+            continue
+
+        new_idx = _old_to_new(sm.scene_index)
+
+        # Only copy scenes below the invalidation boundary
+        if new_idx >= scene_boundary:
+            continue
+
+        new_sm = SceneManifestModel(
+            project_id=new_project_id,
+            scene_index=new_idx,
+            manifest_json=sm.manifest_json,
+            composition_shot_type=sm.composition_shot_type,
+            composition_camera_movement=sm.composition_camera_movement,
+            asset_tags=sm.asset_tags,
+            new_asset_count=sm.new_asset_count,
+            selected_reference_tags=sm.selected_reference_tags,
+            cv_analysis_json=sm.cv_analysis_json,
+            continuity_score=sm.continuity_score,
+            rewritten_keyframe_prompt=sm.rewritten_keyframe_prompt,
+            rewritten_video_prompt=sm.rewritten_video_prompt,
+        )
+        session.add(new_sm)
+
+
+def _compute_asset_invalidation_point(
+    scene_manifests: list,  # SceneManifest rows
+    modified_asset_tags: set,
+    deleted_set: set,
+) -> int:
+    """Find earliest scene using any modified asset.
+
+    Returns:
+        Scene index of first affected scene, or -1 if no match.
+    """
+    earliest = float("inf")
+    for sm in scene_manifests:
+        if sm.scene_index in deleted_set:
+            continue
+        if sm.asset_tags:
+            for tag in sm.asset_tags:
+                if tag in modified_asset_tags:
+                    earliest = min(earliest, sm.scene_index)
+                    break
+    return int(earliest) if earliest != float("inf") else -1
+
+
 def _compute_invalidation(
     source: Project,
     overrides: dict,
@@ -1131,6 +1292,43 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
             clear_keyframes=request.clear_keyframes,
         )
 
+        # Phase 12: Asset modification invalidation
+        # If asset_changes has modified assets, check which scenes use them
+        # and potentially tighten the invalidation boundary.
+        if request.asset_changes is not None and source.manifest_id is not None:
+            modified_asset_ids = list((request.asset_changes.modified_assets or {}).keys())
+            if modified_asset_ids:
+                # Load parent assets to find their manifest_tags
+                parent_assets_result = await session.execute(
+                    select(Asset).where(Asset.manifest_id == source.manifest_id)
+                )
+                parent_assets_map = {
+                    str(a.id): a.manifest_tag for a in parent_assets_result.scalars().all()
+                }
+                mod_tags = {
+                    parent_assets_map[aid] for aid in modified_asset_ids if aid in parent_assets_map
+                }
+
+                if mod_tags:
+                    # Load source scene manifests for asset invalidation check
+                    src_sm_result = await session.execute(
+                        select(SceneManifestModel).where(
+                            SceneManifestModel.project_id == source.id
+                        )
+                    )
+                    src_scene_manifests = list(src_sm_result.scalars().all())
+
+                    asset_inv_point = _compute_asset_invalidation_point(
+                        src_scene_manifests, mod_tags, deleted_set
+                    )
+
+                    if asset_inv_point >= 0 and asset_inv_point < scene_boundary:
+                        # Asset modification affects scenes before current boundary —
+                        # tighten to asset invalidation point (keyframe re-run needed)
+                        scene_boundary = asset_inv_point
+                        if resume_from == "stitching" or resume_from == "video_gen":
+                            resume_from = "keyframing"
+
         # Merge settings
         new_total = overrides.get("total_duration", source.total_duration)
         new_clip = overrides.get("clip_duration", source.target_clip_duration)
@@ -1165,6 +1363,11 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
         if resume_from != "pending":
             new_project.storyboard_raw = source.storyboard_raw
             new_project.style_guide = source.style_guide
+
+        # Phase 12: Inherit manifest_id and manifest_version from source
+        if source.manifest_id is not None:
+            new_project.manifest_id = source.manifest_id
+            new_project.manifest_version = source.manifest_version
 
         session.add(new_project)
         await session.commit()
@@ -1320,6 +1523,54 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                             s for i, s in enumerate(sb["scenes"]) if i not in deleted_set
                         ]
                     new_project.storyboard_raw = sb
+
+        # Phase 12: Copy manifest assets and scene manifests for forked project
+        if source.manifest_id is not None:
+            # Copy assets with inheritance tracking
+            _, modified_asset_tags = await _copy_assets_for_fork(
+                session,
+                source.manifest_id,
+                source.id,
+                new_id,
+                request.asset_changes,
+            )
+
+            # Copy scene manifests for unchanged scenes (below invalidation boundary)
+            await _copy_scene_manifests(
+                session,
+                source.id,
+                new_id,
+                scene_boundary,
+                deleted_set,
+            )
+
+            # Process new uploads if any
+            if (
+                request.asset_changes is not None
+                and request.asset_changes.new_uploads
+            ):
+                from vidpipe.services.manifesting_engine import ManifestingEngine
+
+                # Collect existing face embeddings from inherited assets for cross-matching
+                inherited_result = await session.execute(
+                    select(Asset).where(
+                        Asset.inherited_from_project == new_id,
+                        Asset.face_embedding.isnot(None),
+                    )
+                )
+                inherited_face_assets = list(inherited_result.scalars().all())
+                existing_face_embeddings = [
+                    (a.id, a.face_embedding)
+                    for a in inherited_face_assets
+                    if a.face_embedding
+                ]
+
+                engine = ManifestingEngine(session)
+                await engine.process_new_uploads(
+                    manifest_id=source.manifest_id,
+                    new_uploads=request.asset_changes.new_uploads,
+                    existing_face_embeddings=existing_face_embeddings,
+                )
 
         await session.commit()
 

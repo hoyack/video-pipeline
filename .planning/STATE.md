@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 10 of 12 (Adaptive Prompt Rewriting) — COMPLETE
-Plan: 2 of 2 — phase complete, next: Phase 11
-Status: Phase 10 complete — PromptRewriterService wired into keyframes.py and video_gen.py
-Last activity: 2026-02-17 — Completed 10-02 (pipeline integration, LLM reference override, safety prefix coordination)
+Phase: 11 of 12 (Multi-Candidate Quality Mode) — IN PROGRESS
+Plan: 1 of 3 complete
+Status: 11-01 complete — GenerationCandidate model, CandidateScoringService, Project quality columns
+Last activity: 2026-02-16 — Completed 11-01 (data layer and scoring engine)
 
-Progress: [████████░░] 86% (10 of 12 phases complete, 26 of 29 plans complete)
+Progress: [████████░░] 89% (10 of 12 phases complete, 27 of 29 plans complete)
 
 ## Performance Metrics
 
@@ -37,10 +37,11 @@ Progress: [████████░░] 86% (10 of 12 phases complete, 26 of 
 | 08-veo-reference-passthrough | 2 | 7.1 min | 3.6 min |
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
+| 11-multi-candidate-quality-mode | 1/3 | 3.0 min | 3.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 09-02 (6.0min), 09-03 (2.0min), 10-01 (2.0min), 10-02 (2.0min)
-- Trend: Phase 10 complete — adaptive prompt rewriting fully wired into pipeline in 4 min total
+- Last 5 plans: 09-03 (2.0min), 10-01 (2.0min), 10-02 (2.0min), 11-01 (3.0min)
+- Trend: Phase 11 started — data layer (GenerationCandidate model + CandidateScoringService) complete in 3 min
 
 *Updated after each plan completion*
 
@@ -159,6 +160,13 @@ Recent decisions affecting current work:
 - **10-02:** style_prefix kept with rewritten keyframe prompt; character_prefix dropped (rewriter already injects asset reverse_prompts, avoids double-injection)
 - **10-02:** Re-raise PipelineStopped inside except Exception block in video rewriter — inherits from Exception so must be caught and re-raised explicitly
 - **10-02:** base_video_prompt = None pattern in escalation loop — rewriter sets it, loop checks it, fallback to original scene.video_motion_prompt with style suffix
+- **11-01:** GenerationCandidate placed after VideoClip in models.py — logically related video output artifacts
+- **11-01:** Composite index idx_candidates_project_scene on (project_id, scene_index) for efficient per-scene queries
+- **11-01:** quality_mode and candidate_count have default values (False/1) so existing projects load correctly without migration
+- **11-01:** Gemini visual_quality and prompt_adherence batched into single Flash call to minimize cost and latency
+- **11-01:** Scene 0 continuity auto-scores 10.0 — no prior scene to compare against
+- **11-01:** Scoring failures use neutral 5.0 fallback — never escalate to pipeline failure (graceful degradation)
+- **11-01:** candidate_count forced to 1 when quality_mode=False to prevent accidental multi-generation
 
 ### Roadmap Evolution
 
@@ -184,6 +192,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-17 (execution)
-Stopped at: Completed 10-02-PLAN.md (PromptRewriterService wired into keyframes.py and video_gen.py, LLM reference override, safety prefix coordination)
+Last session: 2026-02-16 (execution)
+Stopped at: Completed 11-01-PLAN.md (GenerationCandidate model, CandidateScoringService, Project quality columns)
 Resume file: None

@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 11 of 12 (Multi-Candidate Quality Mode) — IN PROGRESS
-Plan: 1 of 3 complete
-Status: 11-01 complete — GenerationCandidate model, CandidateScoringService, Project quality columns
-Last activity: 2026-02-16 — Completed 11-01 (data layer and scoring engine)
+Plan: 2 of 3 complete
+Status: 11-02 complete — Multi-candidate pipeline integration in video_gen.py
+Last activity: 2026-02-17 — Completed 11-02 (pipeline integration: _poll_and_collect_candidates, _handle_quality_mode_candidates)
 
-Progress: [████████░░] 89% (10 of 12 phases complete, 27 of 29 plans complete)
+Progress: [████████░░] 91% (10 of 12 phases complete, 28 of 31 plans complete)
 
 ## Performance Metrics
 
@@ -37,11 +37,11 @@ Progress: [████████░░] 89% (10 of 12 phases complete, 27 of 
 | 08-veo-reference-passthrough | 2 | 7.1 min | 3.6 min |
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
-| 11-multi-candidate-quality-mode | 1/3 | 3.0 min | 3.0 min |
+| 11-multi-candidate-quality-mode | 2/3 | 6.0 min | 3.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 09-03 (2.0min), 10-01 (2.0min), 10-02 (2.0min), 11-01 (3.0min)
-- Trend: Phase 11 started — data layer (GenerationCandidate model + CandidateScoringService) complete in 3 min
+- Last 5 plans: 10-01 (2.0min), 10-02 (2.0min), 11-01 (3.0min), 11-02 (3.0min)
+- Trend: Phase 11 core complete — data layer + pipeline integration both done in ~3 min each
 
 *Updated after each plan completion*
 
@@ -167,6 +167,11 @@ Recent decisions affecting current work:
 - **11-01:** Scene 0 continuity auto-scores 10.0 — no prior scene to compare against
 - **11-01:** Scoring failures use neutral 5.0 fallback — never escalate to pipeline failure (graceful degradation)
 - **11-01:** candidate_count forced to 1 when quality_mode=False to prevent accidental multi-generation
+- **11-02:** _poll_and_collect_candidates is a NEW function (not modifying _poll_video_operation) — minimizes standard mode regression risk
+- **11-02:** Partial RAI filter (some candidates survive) treated as success — only zero-survivor case escalates
+- **11-02:** session.flush() (not commit()) after adding GenerationCandidate records — assigns IDs while deferring commit to after scoring
+- **11-02:** has_refs bool parameter in _handle_quality_mode_candidates — sets duration_seconds=8 if refs, else target_clip_duration
+- **11-02:** all_assets initialized to [] before manifest block — prevents NameError in quality mode without manifest
 
 ### Roadmap Evolution
 
@@ -192,6 +197,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-16 (execution)
-Stopped at: Completed 11-01-PLAN.md (GenerationCandidate model, CandidateScoringService, Project quality columns)
+Last session: 2026-02-17 (execution)
+Stopped at: Completed 11-02-PLAN.md (multi-candidate pipeline integration in video_gen.py)
 Resume file: None

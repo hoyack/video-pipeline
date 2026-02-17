@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 8 of 12 (Veo Reference Passthrough and Clean Sheets)
-Plan: 1 of 3 in current phase
+Plan: 3 of 3 in current phase
 Status: In Progress
-Last activity: 2026-02-17 — Completed 08-01 (reference selection data layer and service)
+Last activity: 2026-02-17 — Completed 08-03 (reference display in SceneCard UI)
 
-Progress: [████████░░] 66% (8 of 12 phases, 19 of 29 plans complete)
+Progress: [████████░░] 68% (8 of 12 phases, 20 of 29 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19
-- Average duration: 2.6 min
-- Total execution time: 0.82 hours
+- Total plans completed: 20
+- Average duration: 2.5 min
+- Total execution time: 0.85 hours
 
 **By Phase:**
 
@@ -34,11 +34,11 @@ Progress: [████████░░] 66% (8 of 12 phases, 19 of 29 plans c
 | 05-manifesting-engine | 2 | 9.1 min | 4.6 min |
 | 06-generateform-integration | 2 | 5.0 min | 2.5 min |
 | 07-manifest-aware-storyboarding | 2 | 5.1 min | 2.6 min |
-| 08-veo-reference-passthrough | 1 | 2.6 min | 2.6 min |
+| 08-veo-reference-passthrough | 2 | 4.4 min | 2.2 min |
 
 **Recent Trend:**
-- Last 5 plans: 06-02 (2.4min), 07-01 (2.0min), 07-02 (3.1min), 08-01 (2.6min)
-- Trend: Phase 8 started - reference selection data layer complete
+- Last 5 plans: 07-01 (2.0min), 07-02 (3.1min), 08-01 (2.6min), 08-03 (1.8min)
+- Trend: Phase 8 reference display complete - efficient UI integration
 
 *Updated after each plan completion*
 
@@ -132,6 +132,8 @@ Recent decisions affecting current work:
 - **07-02:** use_manifests flag determines schema, prompt, and persistence path in single function
 - **08-01:** Scene-type-aware selection adapts prioritization by shot_type (close_up prioritizes face crops, two_shot ensures 2 unique characters, establishing prioritizes environments)
 - **08-01:** Deduplication by manifest_tag prevents same character occupying multiple slots for Veo reference diversity
+- **08-03:** Efficient in-memory join pattern for reference resolution (one query for all scene manifests, one query for all assets, then in-memory join prevents N+1 queries)
+- **08-03:** Reference badges only appear when scene has selected_references (backward compatible for non-manifest projects and scenes without references)
 
 ### Roadmap Evolution
 
@@ -158,5 +160,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17 (execution)
-Stopped at: Completed 08-01-PLAN.md (reference selection data layer and service)
+Stopped at: Completed 08-03-PLAN.md (reference display in SceneCard UI)
 Resume file: None

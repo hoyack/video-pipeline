@@ -28,6 +28,18 @@ export interface StatusResponse {
   error_message: string | null;
 }
 
+/** Reference image selected for a scene's video generation */
+export interface SceneReference {
+  asset_id: string;
+  manifest_tag: string;
+  name: string;
+  asset_type: string;
+  thumbnail_url: string | null;
+  reference_image_url: string | null;
+  quality_score: number | null;
+  is_face_crop: boolean;
+}
+
 /** Scene detail within ProjectDetail */
 export interface SceneDetail {
   scene_index: number;
@@ -44,6 +56,7 @@ export interface SceneDetail {
   start_keyframe_url?: string | null;
   end_keyframe_url?: string | null;
   clip_url?: string | null;
+  selected_references?: SceneReference[];
 }
 
 /** Response from GET /api/projects/{id} */

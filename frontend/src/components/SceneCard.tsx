@@ -1,6 +1,6 @@
 import { useState } from "react";
 import clsx from "clsx";
-import type { SceneDetail } from "../api/types.ts";
+import type { SceneDetail, SceneReference } from "../api/types.ts";
 
 function Dot({ filled, color }: { filled: boolean; color: string }) {
   return (
@@ -118,6 +118,40 @@ export function SceneCard({
                   />
                 </div>
               )}
+            </div>
+          )}
+          {/* Identity References (Phase 8) */}
+          {scene.selected_references && scene.selected_references.length > 0 && (
+            <div className="mt-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                Identity References
+              </span>
+              <div className="mt-1 flex gap-2">
+                {scene.selected_references.map((ref) => (
+                  <div
+                    key={ref.asset_id}
+                    className="flex items-center gap-1.5 rounded border border-gray-700 bg-gray-800/50 px-2 py-1"
+                    title={ref.name}
+                  >
+                    {(ref.thumbnail_url || ref.reference_image_url) && (
+                      <img
+                        src={ref.thumbnail_url || ref.reference_image_url || ""}
+                        alt={ref.manifest_tag}
+                        className="h-6 w-6 rounded object-cover"
+                        loading="lazy"
+                      />
+                    )}
+                    <span className="text-[10px] font-medium text-blue-400">
+                      {ref.manifest_tag}
+                    </span>
+                    {ref.quality_score != null && (
+                      <span className="text-[10px] text-gray-500">
+                        {ref.quality_score.toFixed(1)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           {scene.start_frame_prompt && (

@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 12 of 12 (Fork System Integration with Manifests) — IN PROGRESS
-Plan: 2 of 3 complete
-Status: 12-02 complete — Fork endpoint asset copy, scene manifest inheritance, asset invalidation, process_new_uploads
-Last activity: 2026-02-17 — Completed 12-02 (fork_project extended + ManifestingEngine.process_new_uploads)
+Phase: 12 of 12 (Fork System Integration with Manifests) — COMPLETE
+Plan: 3 of 3 complete
+Status: 12-03 complete — EditForkPanel asset management UI with lock/edit/remove controls and new upload file picker
+Last activity: 2026-02-17 — Completed 12-03 (fork asset management UI, TypeScript types, fetchManifestAssets)
 
-Progress: [████████░░] 98% (11 of 12 phases complete, 33 of 34 plans complete)
+Progress: [██████████] 100% (12 of 12 phases complete, 34 of 34 plans complete)
 
 ## Performance Metrics
 
@@ -38,7 +38,7 @@ Progress: [████████░░] 98% (11 of 12 phases complete, 33 of 
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
 | 11-multi-candidate-quality-mode | 3/3 | 14.0 min | 4.7 min |
-| 12-fork-system-integration-with-manifests | 2/3 | 5.0 min | 2.5 min |
+| 12-fork-system-integration-with-manifests | 3/3 | 7.0 min | 2.3 min |
 
 **Recent Trend:**
 - Last 5 plans: 11-02 (3.0min), 11-03 (8.0min), 12-01 (2.0min), 12-02 (3.0min)
@@ -186,6 +186,10 @@ Recent decisions affecting current work:
 - **12-02:** Asset modification invalidation only tightens scene_boundary, never loosens it
 - **12-02:** process_new_uploads uses List[dict] format for cross_match_faces (correct interface); existing process_manifest uses tuple format (pre-existing inconsistency, not introduced here)
 - **12-02:** New uploads continue tag numbering from inherited max per asset_type to avoid collisions
+- **12-03:** fetchManifestAssets reuses GET /api/manifests/{id} endpoint (returns assets array) — no new backend endpoint needed
+- **12-03:** Asset Registry section only renders when detail.manifest_id is present — zero visual impact for non-manifest projects
+- **12-03:** Silent catch on fetchManifestAssets failure — asset section shows empty state, never breaks fork flow
+- **12-03:** Asset modification removes field from modifiedAssets when value returns to original — keeps buildForkRequest clean
 
 ### Roadmap Evolution
 
@@ -212,5 +216,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17 (execution)
-Stopped at: Completed 12-02-PLAN.md (fork_project extended with asset copy, scene manifest inheritance, asset invalidation + ManifestingEngine.process_new_uploads)
+Stopped at: Completed 12-03-PLAN.md (EditForkPanel asset management UI — all 12 phases complete, project DONE)
 Resume file: None

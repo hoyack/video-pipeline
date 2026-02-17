@@ -214,6 +214,11 @@ class SceneManifest(Base):
     selected_reference_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     cv_analysis_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     continuity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Phase 10: Adaptive Prompt Rewriting
+    rewritten_keyframe_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rewritten_video_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

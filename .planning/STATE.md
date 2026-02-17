@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 9 of 12 (CV Analysis Pipeline and Progressive Enrichment)
-Plan: 3 of 3 in current phase — PHASE COMPLETE
-Status: Phase 9 Complete, Ready for Phase 10
-Last activity: 2026-02-17 — Completed 09-03 (CV analysis integration into video_gen pipeline loop)
+Phase: 10 of 12 (Adaptive Prompt Rewriting)
+Plan: 1 of 2 in current phase
+Status: In Progress — 10-01 complete (schemas and service), 10-02 pending (pipeline integration)
+Last activity: 2026-02-17 — Completed 10-01 (PromptRewriterService, pydantic schemas, SceneManifest columns)
 
-Progress: [████████░░] 79% (9 of 12 phases, 23 of 29 plans complete)
+Progress: [████████░░] 82% (9+ of 12 phases, 24 of 29 plans complete)
 
 ## Performance Metrics
 
@@ -36,10 +36,11 @@ Progress: [████████░░] 79% (9 of 12 phases, 23 of 29 plans c
 | 07-manifest-aware-storyboarding | 2 | 5.1 min | 2.6 min |
 | 08-veo-reference-passthrough | 2 | 7.1 min | 3.6 min |
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
+| 10-adaptive-prompt-rewriting | 1 (so far) | 2.0 min | 2.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 08-02 (4.5min), 09-01 (2.0min), 09-02 (6.0min), 09-03 (2.0min)
-- Trend: Phase 9 complete — full CV analysis pipeline integrated into video generation loop
+- Last 5 plans: 09-01 (2.0min), 09-02 (6.0min), 09-03 (2.0min), 10-01 (2.0min)
+- Trend: Phase 10 started — rewriter service and schemas complete in 2 min
 
 *Updated after each plan completion*
 
@@ -150,6 +151,10 @@ Recent decisions affecting current work:
 - **09-03:** scene_manifest_row initialized to None before manifest_id guard so both crash-recovery and escalation paths can access it
 - **09-03:** clip_embeddings excluded from cv_analysis_json persistence (model_dump exclude) to avoid large binary in JSON column
 - **09-03:** CV analysis failure wrapped in try/except — never escalates to pipeline failure (graceful degradation)
+- **10-01:** Separate rewrite_keyframe_prompt and rewrite_video_prompt methods — static-image formula vs motion+audio formula require different system prompts and schemas
+- **10-01:** Module-level helper functions (_format_placed_assets, _build_continuity_patch, etc.) not static methods — simplifies testing, follows Python conventions
+- **10-01:** _list_available_references shows only assets WITH reference_image_url — LLM cannot select what Veo cannot receive
+- **10-01:** Rewriter does not persist results itself — caller (Plan 02: keyframes.py/video_gen.py) stores rewritten prompts in SceneManifest columns
 
 ### Roadmap Evolution
 
@@ -176,5 +181,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17 (execution)
-Stopped at: Completed 09-03-PLAN.md (CV analysis pipeline integration: per-scene hook in video_gen, orchestrator awareness)
+Stopped at: Completed 10-01-PLAN.md (PromptRewriterService, pydantic schemas, SceneManifest columns, SQL migration)
 Resume file: None

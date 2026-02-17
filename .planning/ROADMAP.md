@@ -99,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 8. Veo Reference Passthrough | 0/3 | ○ Planned | — |
 | 9. CV Analysis Pipeline | 0/3 | ○ Planned | — |
 | 10. Adaptive Prompt Rewriting | 0/2 | Complete    | 2026-02-17 |
-| 11. Multi-Candidate Quality Mode | 0/? | ○ Not planned | — |
+| 11. Multi-Candidate Quality Mode | 0/3 | ○ Planned | — |
 | 12. Fork System Integration | 0/? | ○ Not planned | — |
 
 ### Phase 4: Manifest System Foundation
@@ -233,10 +233,12 @@ Plans:
   5. CLIP embedding similarity between scene N-1 last frame and candidate first frame for continuity scoring
   6. Candidate comparison UI shows all candidates with scores; user can manually override auto-selection
   7. Cost impact clearly shown (Quality Mode ~2x video generation cost)
-**Plans:** 0 plans
+**Plans:** 3 plans in 3 waves
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 11 to break down)
+- [ ] 11-01-PLAN.md — GenerationCandidate model, Project quality columns, CandidateScoringService
+- [ ] 11-02-PLAN.md — Pipeline integration: multi-candidate video_gen.py with scoring and auto-selection
+- [ ] 11-03-PLAN.md — Candidate API endpoints, GenerateForm Quality Mode toggle, SceneCard comparison UI
 
 ### Phase 12: Fork System Integration with Manifests
 **Goal**: Forked projects inherit the parent's full Asset Registry, manifest reference, and scene manifests with proper invalidation rules; users can add new reference uploads, modify assets, or remove assets in the fork with incremental manifesting

@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 7: Manifest-Aware Storyboarding and Audio Manifest** - Enhanced storyboard with asset context, scene manifests, audio direction
 - [ ] **Phase 8: Veo Reference Passthrough and Clean Sheets** - 3-reference selection logic, background removal, clean sheet generation
 - [ ] **Phase 9: CV Analysis Pipeline and Progressive Enrichment** - Post-generation YOLO + face matching + CLIP, asset extraction from generated content
-- [ ] **Phase 10: Adaptive Prompt Rewriting** - Dynamic prompt enrichment with continuity checking and LLM rewriter
+- [x] **Phase 10: Adaptive Prompt Rewriting** - Dynamic prompt enrichment with continuity checking and LLM rewriter (completed 2026-02-17)
 - [ ] **Phase 11: Multi-Candidate Quality Mode** - sampleCount configuration, composite scoring pipeline, candidate comparison UI
 - [ ] **Phase 12: Fork System Integration with Manifests** - Asset/manifest inheritance, incremental manifesting on fork
 
@@ -98,7 +98,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 7. Manifest-Aware Storyboarding | 0/2 | ○ Planned | — |
 | 8. Veo Reference Passthrough | 0/3 | ○ Planned | — |
 | 9. CV Analysis Pipeline | 0/3 | ○ Planned | — |
-| 10. Adaptive Prompt Rewriting | 0/2 | ○ Planned | — |
+| 10. Adaptive Prompt Rewriting | 0/2 | Complete    | 2026-02-17 |
 | 11. Multi-Candidate Quality Mode | 0/? | ○ Not planned | — |
 | 12. Fork System Integration | 0/? | ○ Not planned | — |
 
@@ -216,7 +216,7 @@ Plans:
   4. Continuity checking compares scene N-1 end state with scene N start requirements and patches prompts accordingly
   5. Reverse prompts refined based on what models actually produce (not just initial descriptions)
   6. `scene_manifests.rewritten_keyframe_prompt` and `rewritten_video_prompt` stored separately from original prompt
-**Plans:** 2 plans in 2 waves
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 10-01-PLAN.md — PromptRewriterService, pydantic output schemas, SceneManifest columns, and SQL migration

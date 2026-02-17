@@ -92,7 +92,13 @@ class CLIPEmbeddingService:
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            features = self._model.get_image_features(**inputs)
+            output = self._model.get_image_features(**inputs)
+
+        # transformers 5.x returns BaseModelOutputWithPooling instead of tensor
+        if isinstance(output, torch.Tensor):
+            features = output
+        else:
+            features = output.pooler_output if hasattr(output, "pooler_output") else output[0]
 
         # Normalize to unit vector
         embedding = features.cpu().numpy()[0]

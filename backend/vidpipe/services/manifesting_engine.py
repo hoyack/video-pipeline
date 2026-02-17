@@ -8,6 +8,7 @@ import asyncio
 import base64
 import logging
 import math
+import shutil
 import uuid
 from glob import glob
 from pathlib import Path
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.db.models import Asset, Manifest
 from vidpipe.services.cv_detection import CVDetectionService
+from vidpipe.services.entity_extraction import _yolo_class_to_asset_type
 from vidpipe.services.face_matching import FaceMatchingService
 from vidpipe.services.reverse_prompt_service import ReversePromptService
 
@@ -183,17 +185,15 @@ class ManifestingEngine:
         if not manifest:
             raise ValueError(f"Manifest {manifest_id} not found")
 
-        # Get all uploaded assets (source="uploaded" with reference_image_url)
+        # Get all uploadable assets (uploaded images + video frames with reference_image_url)
         result = await self.session.execute(
             select(Asset).where(
                 Asset.manifest_id == manifest_id,
-                Asset.source == "uploaded",
+                Asset.source.in_(["uploaded", "video_frame"]),
                 Asset.reference_image_url.isnot(None),
             ).order_by(Asset.sort_order, Asset.created_at)
         )
         uploaded_assets = list(result.scalars().all())
-
-        self.progress["progress"]["uploads_total"] = len(uploaded_assets)
 
         # Step 1: Assemble contact sheet
         self.progress["current_step"] = "contact_sheet"
@@ -210,11 +210,39 @@ class ManifestingEngine:
         self.progress["current_step"] = "yolo_detection"
         logger.info("Step 2: Running YOLO detection")
 
-        extracted_crops = []
+        # Find which uploads already have extracted children (incremental processing)
+        existing_extracted = await self.session.execute(
+            select(Asset.source_asset_id).where(
+                Asset.manifest_id == manifest_id,
+                Asset.source == "extracted",
+                Asset.source_asset_id.isnot(None),
+            )
+        )
+        already_processed_ids = {row[0] for row in existing_extracted.all()}
+
+        # Filter to only unprocessed uploads
+        new_uploads = [a for a in uploaded_assets if a.id not in already_processed_ids]
+        if already_processed_ids:
+            logger.info(
+                f"Incremental processing: {len(new_uploads)} new uploads, "
+                f"{len(already_processed_ids)} already processed"
+            )
+
+        self.progress["progress"]["uploads_total"] = len(new_uploads)
+
+        # Load existing extracted assets (kept from previous runs)
+        prev_extracted_result = await self.session.execute(
+            select(Asset).where(
+                Asset.manifest_id == manifest_id,
+                Asset.source == "extracted",
+            )
+        )
+        extracted_crops = list(prev_extracted_result.scalars().all())
+
         crops_dir = Path("tmp/manifests") / str(manifest_id) / "crops"
         crops_dir.mkdir(parents=True, exist_ok=True)
 
-        for asset in uploaded_assets:
+        for asset in new_uploads:
             # Resolve actual file path
             pattern = f"tmp/manifests/{manifest_id}/uploads/{asset.id}_*"
             matches = glob(pattern)
@@ -248,7 +276,7 @@ class ManifestingEngine:
                 # Create new Asset record
                 new_asset = Asset(
                     manifest_id=manifest_id,
-                    asset_type=asset.asset_type,  # Inherit from parent
+                    asset_type=_yolo_class_to_asset_type(det["class"]),
                     name=f"{asset.name} - {det['class']}",
                     manifest_tag="",  # Will be reassigned in finalization
                     reference_image_url=f"/api/assets/{{id}}/image",  # Placeholder, will be resolved
@@ -274,6 +302,51 @@ class ManifestingEngine:
 
                 extracted_crops.append(new_asset)
 
+            # Create scene/environment asset with detected objects masked out
+            object_bboxes = [d["bbox"] for d in detections["objects"]]
+            img_for_size = Image.open(img_path)
+            w, h = img_for_size.size
+            img_for_size.close()
+
+            mask_coverage = self._bbox_mask_coverage(w, h, object_bboxes)
+            if mask_coverage <= 0.40:
+                scene_crop_filename = f"{uuid.uuid4()}.jpg"
+                scene_crop_path = crops_dir / scene_crop_filename
+
+                await asyncio.to_thread(
+                    self._save_scene_masked, img_path, object_bboxes, str(scene_crop_path)
+                )
+
+                scene_asset = Asset(
+                    manifest_id=manifest_id,
+                    asset_type="ENVIRONMENT",
+                    name=f"{asset.name} - scene",
+                    manifest_tag="",
+                    reference_image_url=f"/api/assets/{{id}}/image",
+                    source="extracted",
+                    source_asset_id=asset.id,
+                    detection_class="scene",
+                    detection_confidence=1.0,
+                    is_face_crop=False,
+                    sort_order=asset.sort_order,
+                )
+                self.session.add(scene_asset)
+                await self.session.flush()
+
+                scene_asset.reference_image_url = f"/api/assets/{scene_asset.id}/image"
+
+                final_scene_path = crops_dir / f"{scene_asset.id}_{scene_crop_filename}"
+                await asyncio.to_thread(
+                    Path(scene_crop_path).rename, final_scene_path
+                )
+
+                extracted_crops.append(scene_asset)
+            else:
+                logger.info(
+                    f"Skipping scene for {asset.name}: "
+                    f"{mask_coverage:.0%} of image masked by detections"
+                )
+
             self.progress["progress"]["uploads_processed"] += 1
 
         self.progress["progress"]["crops_total"] = len(extracted_crops)
@@ -283,12 +356,15 @@ class ManifestingEngine:
         self.progress["current_step"] = "face_matching"
         logger.info("Step 3: Running face cross-matching")
 
-        # Get all face crops
+        # Get all face crops — only generate embeddings for those without one
         face_crops = [a for a in extracted_crops if a.is_face_crop]
 
         if face_crops:
-            # Generate embeddings
+            # Generate embeddings (skip those already embedded)
             for face_asset in face_crops:
+                if face_asset.face_embedding is not None:
+                    continue
+
                 pattern = f"tmp/manifests/{manifest_id}/crops/{face_asset.id}_*"
                 matches = glob(pattern)
                 if not matches:
@@ -307,23 +383,19 @@ class ManifestingEngine:
             await self.session.flush()
 
             # Cross-match faces
-            embeddings = [
-                (a.id, a.face_embedding) for a in face_crops if a.face_embedding
-            ]
+            face_crops_with_emb = [a for a in face_crops if a.face_embedding]
 
-            if len(embeddings) > 1:
+            if len(face_crops_with_emb) > 1:
                 face_groups = await asyncio.to_thread(
                     self.face_matcher.cross_match_faces,
-                    [(aid, bytes_to_np(emb)) for aid, emb in embeddings],
+                    [{"embedding": bytes_to_np(a.face_embedding)} for a in face_crops_with_emb],
                 )
 
                 # Mark duplicates (keep highest confidence in each group)
                 for group in face_groups:
                     if len(group) > 1:
-                        # Find highest confidence
-                        group_assets = [
-                            a for a in face_crops if a.id in [uuid.UUID(g) for g in group]
-                        ]
+                        # group contains integer indices into face_crops_with_emb
+                        group_assets = [face_crops_with_emb[i] for i in group]
                         group_assets.sort(
                             key=lambda x: x.detection_confidence or 0.0, reverse=True
                         )
@@ -339,17 +411,22 @@ class ManifestingEngine:
 
         await self.session.flush()
 
-        # Step 4: Reverse-prompting (ALL assets: uploaded + extracted)
+        # Step 4: Reverse-prompting (only assets without existing reverse_prompt)
         self.progress["current_step"] = "reverse_prompting"
         logger.info("Step 4: Running reverse-prompting")
 
         all_assets = uploaded_assets + extracted_crops
+        assets_needing_prompts = [a for a in all_assets if not a.reverse_prompt]
+        logger.info(
+            f"Reverse-prompting {len(assets_needing_prompts)} assets "
+            f"({len(all_assets) - len(assets_needing_prompts)} already done)"
+        )
         semaphore = asyncio.Semaphore(5)  # Rate limiting: 5 concurrent
 
         async def process_asset_reverse_prompt(asset: Asset):
             async with semaphore:
                 # Resolve image path
-                if asset.source == "uploaded":
+                if asset.source in ("uploaded", "video_frame"):
                     pattern = f"tmp/manifests/{manifest_id}/uploads/{asset.id}_*"
                 else:
                     pattern = f"tmp/manifests/{manifest_id}/crops/{asset.id}_*"
@@ -378,8 +455,8 @@ class ManifestingEngine:
 
                 self.progress["progress"]["crops_reverse_prompted"] += 1
 
-        # Process all assets concurrently with rate limiting
-        await asyncio.gather(*[process_asset_reverse_prompt(a) for a in all_assets])
+        # Process only assets that need reverse-prompting
+        await asyncio.gather(*[process_asset_reverse_prompt(a) for a in assets_needing_prompts])
         await self.session.flush()
 
         # Step 5: Finalize - reassign manifest_tags
@@ -577,11 +654,12 @@ class ManifestingEngine:
                     continue
 
                 # Generate tag for extracted crop
-                crop_tag = _next_tag(asset.asset_type)
+                detected_type = _yolo_class_to_asset_type(det["class"])
+                crop_tag = _next_tag(detected_type)
 
                 crop_asset = Asset(
                     manifest_id=manifest_id,
-                    asset_type=asset.asset_type,
+                    asset_type=detected_type,
                     name=f"{asset.name} - {det['class']}",
                     manifest_tag=crop_tag,
                     reference_image_url=f"/api/assets/{{id}}/image",  # placeholder
@@ -605,6 +683,55 @@ class ManifestingEngine:
                 crop_asset.reference_image_url = f"/api/assets/{crop_asset.id}/image"
 
                 new_extracted_crops.append(crop_asset)
+
+            # Create scene/environment asset with detected objects masked out
+            object_bboxes = [d["bbox"] for d in detections.get("objects", [])]
+            img_for_size = Image.open(img_path_str)
+            w, h = img_for_size.size
+            img_for_size.close()
+
+            mask_coverage = self._bbox_mask_coverage(w, h, object_bboxes)
+            if mask_coverage <= 0.40:
+                scene_crop_filename = f"{uuid.uuid4()}.jpg"
+                scene_crop_path = crops_dir / scene_crop_filename
+
+                try:
+                    await asyncio.to_thread(
+                        self._save_scene_masked, img_path_str, object_bboxes, str(scene_crop_path)
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save scene crop for asset {asset.id}: {e}")
+                else:
+                    scene_tag = _next_tag("ENVIRONMENT")
+
+                    scene_asset = Asset(
+                        manifest_id=manifest_id,
+                        asset_type="ENVIRONMENT",
+                        name=f"{asset.name} - scene",
+                        manifest_tag=scene_tag,
+                        reference_image_url=f"/api/assets/{{id}}/image",
+                        source="extracted",
+                        source_asset_id=asset.id,
+                        detection_class="scene",
+                        detection_confidence=1.0,
+                        is_face_crop=False,
+                        sort_order=asset.sort_order,
+                        is_inherited=False,
+                    )
+                    self.session.add(scene_asset)
+                    await self.session.flush()
+
+                    final_scene_path = crops_dir / f"{scene_asset.id}_{scene_crop_filename}"
+                    await asyncio.to_thread(Path(str(scene_crop_path)).rename, final_scene_path)
+
+                    scene_asset.reference_image_url = f"/api/assets/{scene_asset.id}/image"
+
+                    new_extracted_crops.append(scene_asset)
+            else:
+                logger.info(
+                    f"Skipping scene for {asset.name}: "
+                    f"{mask_coverage:.0%} of image masked by detections"
+                )
 
         await self.session.flush()
 
@@ -825,6 +952,52 @@ class ManifestingEngine:
         if crop.mode == "RGBA":
             crop = crop.convert("RGB")
         crop.save(output_path, format="JPEG", quality=90)
+
+    def _save_scene_masked(
+        self, source_path: str, bboxes: list[list[float]], output_path: str
+    ):
+        """Save full image with detected object bboxes blacked out (sync for to_thread).
+
+        Args:
+            source_path: Path to source image
+            bboxes: List of [x1, y1, x2, y2] bounding boxes to mask
+            output_path: Path to save masked scene image
+        """
+        img = Image.open(source_path)
+        if img.mode == "RGBA":
+            img = img.convert("RGB")
+        draw = ImageDraw.Draw(img)
+        for bbox in bboxes:
+            x1, y1, x2, y2 = bbox
+            draw.rectangle([x1, y1, x2, y2], fill="black")
+        img.save(output_path, format="JPEG", quality=90)
+
+    @staticmethod
+    def _bbox_mask_coverage(
+        width: int, height: int, bboxes: list[list[float]]
+    ) -> float:
+        """Compute fraction of image area covered by bounding boxes.
+
+        Handles overlapping boxes correctly via a boolean pixel mask.
+
+        Args:
+            width: Image width in pixels
+            height: Image height in pixels
+            bboxes: List of [x1, y1, x2, y2] bounding boxes
+
+        Returns:
+            Coverage ratio in [0.0, 1.0]
+        """
+        if not bboxes or width <= 0 or height <= 0:
+            return 0.0
+        mask = np.zeros((height, width), dtype=bool)
+        for bbox in bboxes:
+            x1 = max(0, int(bbox[0]))
+            y1 = max(0, int(bbox[1]))
+            x2 = min(width, int(bbox[2]))
+            y2 = min(height, int(bbox[3]))
+            mask[y1:y2, x1:x2] = True
+        return float(mask.sum()) / (width * height)
 
 
 def bytes_to_np(embedding_bytes: bytes):

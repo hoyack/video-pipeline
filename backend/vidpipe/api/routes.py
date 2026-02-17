@@ -25,7 +25,7 @@ from vidpipe.schemas.storyboard import SceneSchema
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services import manifest_service
-from vidpipe.workers.processing_tasks import process_manifest_task, TASK_STATUS
+from vidpipe.workers.processing_tasks import process_manifest_task, extract_video_frames_task, TASK_STATUS
 
 from collections import Counter
 
@@ -440,9 +440,17 @@ class ManifestDetailResponse(BaseModel):
     last_used_at: Optional[str]
     version: int
     parent_manifest_id: Optional[str]
+    source_video_duration: Optional[float] = None
     created_at: str
     updated_at: str
     assets: list["AssetResponse"]
+
+
+class VideoUploadResponse(BaseModel):
+    """Response schema for POST /api/manifests/{id}/upload-video."""
+    task_id: str
+    status: str
+    manifest_id: str
 
 
 class CreateAssetRequest(BaseModel):
@@ -1939,6 +1947,7 @@ async def get_manifest_detail(manifest_id: uuid.UUID):
             last_used_at=manifest.last_used_at.isoformat() if manifest.last_used_at else None,
             version=manifest.version,
             parent_manifest_id=str(manifest.parent_manifest_id) if manifest.parent_manifest_id else None,
+            source_video_duration=manifest.source_video_duration,
             created_at=manifest.created_at.isoformat(),
             updated_at=manifest.updated_at.isoformat(),
             assets=[_asset_to_response(a) for a in assets],
@@ -2197,6 +2206,118 @@ async def get_manifest_progress(manifest_id: uuid.UUID):
             return ProcessingProgressResponse(
                 status="not_started",
                 current_step=None,
+                progress={},
+            )
+
+
+ALLOWED_VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
+
+
+@router.post("/manifests/{manifest_id}/upload-video", status_code=202, response_model=VideoUploadResponse)
+async def upload_video_for_manifest(
+    manifest_id: uuid.UUID,
+    file: UploadFile = File(...),
+):
+    """Upload a video file to extract frames for manifest creation.
+
+    Accepts MP4, MOV, WebM up to 200MB. Returns 202 and runs extraction
+    in background.
+    """
+    from vidpipe.config import settings
+
+    max_size = settings.cv_analysis.max_video_file_size_mb * 1024 * 1024
+
+    # Validate manifest exists and is DRAFT
+    async with async_session() as session:
+        manifest = await manifest_service.get_manifest(session, manifest_id)
+        if not manifest:
+            raise HTTPException(status_code=404, detail="Manifest not found")
+        if manifest.status not in ("DRAFT", "READY", "ERROR"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot upload video to manifest in status {manifest.status}. Must be DRAFT, READY, or ERROR."
+            )
+
+    # Validate file type
+    content_type = file.content_type or ""
+    ext = Path(file.filename or "").suffix.lower()
+    if content_type not in ALLOWED_VIDEO_MIMES and ext not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported video format. Accepted: MP4, MOV, WebM"
+        )
+
+    # Read and validate size
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Video exceeds {settings.cv_analysis.max_video_file_size_mb}MB limit"
+        )
+
+    # Save video to disk
+    video_dir = Path("tmp/manifests") / str(manifest_id)
+    video_dir.mkdir(parents=True, exist_ok=True)
+    video_ext = ext if ext in ALLOWED_VIDEO_EXTENSIONS else ".mp4"
+    video_path = video_dir / f"source_video{video_ext}"
+    video_path.write_bytes(content)
+
+    # Update manifest status
+    async with async_session() as session:
+        manifest = await session.get(Manifest, manifest_id)
+        if manifest:
+            manifest.status = "EXTRACTING"
+            manifest.source_video_path = str(video_path)
+            await session.commit()
+
+    # Spawn background task
+    asyncio.create_task(extract_video_frames_task(str(manifest_id), str(video_path)))
+
+    return VideoUploadResponse(
+        task_id=f"extract_{manifest_id}",
+        status="started",
+        manifest_id=str(manifest_id),
+    )
+
+
+@router.get("/manifests/{manifest_id}/extraction-progress", response_model=ProcessingProgressResponse)
+async def get_extraction_progress(manifest_id: uuid.UUID):
+    """Get video frame extraction progress for a manifest."""
+    task_id = f"extract_{manifest_id}"
+
+    if task_id in TASK_STATUS:
+        task_data = TASK_STATUS[task_id]
+        return ProcessingProgressResponse(
+            status=task_data.get("status", "extracting"),
+            current_step=task_data.get("current_step"),
+            progress=task_data.get("progress"),
+            error=task_data.get("error"),
+        )
+
+    # Check database status
+    async with async_session() as session:
+        manifest = await manifest_service.get_manifest(session, manifest_id)
+        if not manifest:
+            raise HTTPException(status_code=404, detail="Manifest not found")
+
+        if manifest.status == "EXTRACTING":
+            return ProcessingProgressResponse(
+                status="extracting",
+                current_step="initializing",
+                progress={},
+            )
+        elif manifest.status == "ERROR":
+            return ProcessingProgressResponse(
+                status="error",
+                current_step="unknown",
+                error="Extraction failed (see server logs)",
+            )
+        else:
+            # DRAFT with video means extraction completed
+            return ProcessingProgressResponse(
+                status="complete",
+                current_step="complete",
                 progress={},
             )
 

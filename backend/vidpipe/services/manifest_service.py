@@ -422,15 +422,27 @@ async def delete_asset(
 
     manifest_id = asset.manifest_id
 
-    # Delete asset
-    await session.delete(asset)
+    # Delete child assets first (extracted crops referencing this asset)
+    # Must flush children before deleting parent to satisfy FK constraints
+    children = await session.execute(
+        select(Asset).where(Asset.source_asset_id == asset_id)
+    )
+    child_list = list(children.scalars().all())
+    if child_list:
+        for child in child_list:
+            await session.delete(child)
+        await session.flush()
 
-    # Update manifest asset count
+    # Delete parent asset
+    await session.delete(asset)
+    await session.flush()
+
+    # Update manifest asset count (parent + children)
+    deleted_count = 1 + len(child_list)
     manifest = await get_manifest(session, manifest_id)
     if manifest:
-        manifest.asset_count = max(0, manifest.asset_count - 1)
-
-    await session.flush()
+        manifest.asset_count = max(0, manifest.asset_count - deleted_count)
+        await session.flush()
 
 
 def save_asset_image(

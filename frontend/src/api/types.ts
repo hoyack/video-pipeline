@@ -230,6 +230,7 @@ export interface ManifestDetail {
   last_used_at: string | null;
   version: number;
   parent_manifest_id: string | null;
+  source_video_duration: number | null;
   created_at: string;
   updated_at: string;
   assets: AssetResponse[];

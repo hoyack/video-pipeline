@@ -100,6 +100,9 @@ class CVAnalysisConfig(BaseModel):
     max_frames_per_clip: int = 8
     quality_gate_threshold: float = 5.0
     face_match_threshold: float = 0.6
+    video_frame_dedup_threshold: float = 0.90
+    max_video_duration_seconds: int = 300
+    max_video_file_size_mb: int = 200
 
 
 class Settings(BaseSettings):

@@ -2,13 +2,16 @@ import { useState, useRef } from "react";
 
 interface AssetUploaderProps {
   onFilesSelected: (files: File[]) => void;
+  onVideoSelected?: (file: File) => void;
   disabled?: boolean;
 }
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const ACCEPTED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 
-export function AssetUploader({ onFilesSelected, disabled = false }: AssetUploaderProps) {
+export function AssetUploader({ onFilesSelected, onVideoSelected, disabled = false }: AssetUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -20,11 +23,23 @@ export function AssetUploader({ onFilesSelected, disabled = false }: AssetUpload
     const errors: string[] = [];
 
     Array.from(fileList).forEach((file) => {
-      if (!ACCEPTED_TYPES.includes(file.type)) {
-        // Silently filter out non-image files
+      // Check for video files first
+      if (ACCEPTED_VIDEO_TYPES.includes(file.type)) {
+        if (file.size > MAX_VIDEO_SIZE) {
+          errors.push(`${file.name} exceeds 200MB video limit`);
+          return;
+        }
+        if (onVideoSelected) {
+          onVideoSelected(file);
+        }
         return;
       }
-      if (file.size > MAX_FILE_SIZE) {
+
+      if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+        // Silently filter out unsupported files
+        return;
+      }
+      if (file.size > MAX_IMAGE_SIZE) {
         errors.push(`${file.name} exceeds 10MB limit`);
         return;
       }
@@ -91,15 +106,17 @@ export function AssetUploader({ onFilesSelected, disabled = false }: AssetUpload
       >
         <div className="flex flex-col items-center gap-2">
           <div className="text-4xl text-gray-500">↑</div>
-          <p className="text-gray-300">Drag and drop images here</p>
+          <p className="text-gray-300">Drag and drop images or video here</p>
           <p className="text-sm text-gray-500">or click to browse</p>
-          <p className="text-xs text-gray-600 mt-2">PNG, JPEG, WebP up to 10MB each</p>
+          <p className="text-xs text-gray-600 mt-2">
+            PNG, JPEG, WebP images (up to 10MB) or MP4, MOV, WebM video (up to 200MB)
+          </p>
         </div>
         <input
           ref={inputRef}
           type="file"
           multiple
-          accept="image/png,image/jpeg,image/webp"
+          accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
           onChange={handleInputChange}
           className="hidden"
           disabled={disabled}

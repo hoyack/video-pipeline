@@ -188,6 +188,29 @@ export async function uploadAssetImage(assetId: string, file: File): Promise<Ass
   return res.json() as Promise<AssetResponse>;
 }
 
+/** POST /api/manifests/{id}/upload-video — upload video for frame extraction */
+export async function uploadVideoForManifest(
+  manifestId: string,
+  file: File,
+): Promise<{ task_id: string; status: string; manifest_id: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/manifests/${manifestId}/upload-video`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<{ task_id: string; status: string; manifest_id: string }>;
+}
+
+/** GET /api/manifests/{id}/extraction-progress — poll extraction progress */
+export function getExtractionProgress(manifestId: string): Promise<ProcessingProgress> {
+  return request<ProcessingProgress>(`/api/manifests/${manifestId}/extraction-progress`);
+}
+
 /** POST /api/manifests/{id}/process — trigger background processing */
 export function processManifest(manifestId: string): Promise<{ task_id: string; status: string }> {
   return request<{ task_id: string; status: string }>(`/api/manifests/${manifestId}/process`, {

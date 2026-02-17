@@ -16,6 +16,8 @@ import {
   processManifest,
   getProcessingProgress,
   reprocessAsset,
+  uploadVideoForManifest,
+  getExtractionProgress,
 } from "../api/client.ts";
 import { AssetUploader } from "./AssetUploader.tsx";
 import { AssetEditor } from "./AssetEditor.tsx";
@@ -35,7 +37,7 @@ const CATEGORIES = [
   "STYLES",
 ];
 
-const ASSET_TYPES = ["CHARACTER", "OBJECT", "VEHICLE", "LOCATION", "PROP"];
+const ASSET_TYPES = ["CHARACTER", "OBJECT", "VEHICLE", "ENVIRONMENT", "PROP", "STYLE", "OTHER"];
 
 // Human-readable step labels
 const STEP_LABELS: Record<string, string> = {
@@ -45,6 +47,16 @@ const STEP_LABELS: Record<string, string> = {
   reverse_prompting: "Generating asset descriptions...",
   finalizing: "Assigning tags and populating registry...",
   done: "Processing complete!",
+};
+
+// Extraction step labels
+const EXTRACTION_STEP_LABELS: Record<string, string> = {
+  initializing: "Initializing...",
+  analyzing: "Analyzing video...",
+  sampling: "Sampling frames...",
+  deduplicating: "Deduplicating with CLIP...",
+  saving: "Saving assets...",
+  complete: "Extraction complete!",
 };
 
 export function ManifestCreator({
@@ -75,11 +87,18 @@ export function ManifestCreator({
     Record<string, Record<string, boolean>>
   >({});
 
+  // Video extraction state
+  const [extracting, setExtracting] = useState(false);
+  const [extractionProgress, setExtractionProgress] =
+    useState<ProcessingProgress | null>(null);
+
   const isNewManifest = !manifestId;
 
   // Determine current stage based on manifest status
   const currentStage = (() => {
+    if (extracting) return 1; // Stay on stage 1 but show extraction UI
     if (!manifest || manifest.status === "DRAFT") return 1;
+    if (manifest.status === "EXTRACTING") return 1;
     if (manifest.status === "PROCESSING") return 2;
     if (manifest.status === "READY" || manifest.status === "ERROR") return 3;
     return 1;
@@ -100,6 +119,10 @@ export function ManifestCreator({
           // If manifest is already PROCESSING, start polling
           if (data.status === "PROCESSING") {
             setProcessing(true);
+          }
+          // If manifest is EXTRACTING, start extraction polling
+          if (data.status === "EXTRACTING") {
+            setExtracting(true);
           }
         })
         .catch((err) => {
@@ -139,33 +162,72 @@ export function ManifestCreator({
     return () => clearInterval(pollInterval);
   }, [processing, manifest?.manifest_id]);
 
+  // Polling for video frame extraction
+  useEffect(() => {
+    if (!extracting || !manifest?.manifest_id) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const progressData = await getExtractionProgress(manifest.manifest_id);
+        setExtractionProgress(progressData);
+
+        if (progressData.status === "complete") {
+          clearInterval(pollInterval);
+          setExtracting(false);
+          setExtractionProgress(null);
+          // Reload manifest to get extracted frame assets
+          const updated = await getManifestDetail(manifest.manifest_id);
+          setManifest(updated);
+          setAssets(updated.assets);
+        } else if (progressData.status === "error") {
+          clearInterval(pollInterval);
+          setExtracting(false);
+          setExtractionProgress(null);
+          setError(progressData.error || "Video extraction failed");
+          // Reload manifest to get current state
+          const updated = await getManifestDetail(manifest.manifest_id);
+          setManifest(updated);
+        }
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error("Failed to fetch extraction progress:", errorMessage);
+      }
+    }, 1500);
+
+    return () => clearInterval(pollInterval);
+  }, [extracting, manifest?.manifest_id]);
+
+  // Lazy-create manifest helper (shared between image and video upload)
+  const ensureManifestExists = async (): Promise<string | null> => {
+    const currentManifestId = manifestId || manifest?.manifest_id;
+    if (currentManifestId) return currentManifestId;
+
+    try {
+      const newManifest = await createManifest({
+        name: name || "Untitled Manifest",
+        description: description || undefined,
+        category,
+        tags: tags
+          ? tags
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : undefined,
+      });
+      setManifest(newManifest as unknown as ManifestDetail);
+      return newManifest.manifest_id;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(`Failed to create manifest: ${errorMessage}`);
+      return null;
+    }
+  };
+
   const handleFilesSelected = async (files: File[]) => {
     if (files.length === 0) return;
 
-    // Lazy create manifest on first upload if creating new
-    let currentManifestId = manifestId || manifest?.manifest_id;
-
-    if (!currentManifestId) {
-      try {
-        const newManifest = await createManifest({
-          name: name || "Untitled Manifest",
-          description: description || undefined,
-          category,
-          tags: tags
-            ? tags
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean)
-            : undefined,
-        });
-        currentManifestId = newManifest.manifest_id;
-        setManifest(newManifest as unknown as ManifestDetail);
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setError(`Failed to create manifest: ${errorMessage}`);
-        return;
-      }
-    }
+    const currentManifestId = await ensureManifestExists();
+    if (!currentManifestId) return;
 
     // Process files sequentially to avoid overwhelming API
     for (const file of files) {
@@ -198,6 +260,26 @@ export function ManifestCreator({
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(`Failed to upload ${file.name}: ${errorMessage}`);
       }
+    }
+  };
+
+  const handleVideoSelected = async (file: File) => {
+    const currentManifestId = await ensureManifestExists();
+    if (!currentManifestId) return;
+
+    setError(null);
+    setExtracting(true);
+
+    try {
+      await uploadVideoForManifest(currentManifestId, file);
+      // Update local manifest status
+      setManifest((prev) =>
+        prev ? { ...prev, status: "EXTRACTING" } : null
+      );
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(`Failed to upload video: ${errorMessage}`);
+      setExtracting(false);
     }
   };
 
@@ -363,6 +445,68 @@ export function ManifestCreator({
     return "bg-red-700 text-red-300";
   };
 
+  // Extraction progress UI (shown during video frame extraction)
+  const renderExtractionProgress = () => {
+    const stepLabel =
+      EXTRACTION_STEP_LABELS[extractionProgress?.current_step || ""] ||
+      "Extracting frames...";
+    const candidateFrames =
+      (extractionProgress?.progress as Record<string, number> | null)
+        ?.candidate_frames || 0;
+    const uniqueFrames =
+      (extractionProgress?.progress as Record<string, number> | null)
+        ?.unique_frames || 0;
+
+    return (
+      <div className="mb-8 rounded-lg border border-purple-800 bg-purple-900/20 p-8">
+        <div className="flex flex-col items-center gap-4">
+          {/* Spinner */}
+          <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+
+          {/* Step label */}
+          <p className="text-lg text-purple-300">{stepLabel}</p>
+
+          {/* Frame counts */}
+          <div className="flex gap-6 text-sm">
+            {candidateFrames > 0 && (
+              <div>
+                <span className="text-gray-400">Sampled:</span>{" "}
+                <span className="text-white font-medium">
+                  {candidateFrames} frames
+                </span>
+              </div>
+            )}
+            {uniqueFrames > 0 && (
+              <div>
+                <span className="text-gray-400">Unique:</span>{" "}
+                <span className="text-purple-300 font-medium">
+                  {uniqueFrames} frames
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Video info banner (shown in Stage 1 after extraction)
+  const renderVideoInfoBanner = () => {
+    if (!manifest?.source_video_duration) return null;
+
+    const videoFrameAssets = assets.filter((a) => a.source === "video_frame");
+    if (videoFrameAssets.length === 0) return null;
+
+    return (
+      <div className="mb-4 rounded-lg border border-purple-800 bg-purple-900/20 px-4 py-3">
+        <p className="text-sm text-purple-300">
+          Video uploaded ({manifest.source_video_duration.toFixed(1)}s) —{" "}
+          {videoFrameAssets.length} frames extracted
+        </p>
+      </div>
+    );
+  };
+
   // STAGE 1: Upload + tag UI (DRAFT)
   const renderStage1 = () => (
     <>
@@ -431,22 +575,31 @@ export function ManifestCreator({
         </div>
       </div>
 
-      {/* Upload zone */}
-      <div className="mb-8">
-        <AssetUploader
-          onFilesSelected={handleFilesSelected}
-          disabled={saving}
-        />
-      </div>
+      {/* Extraction progress (shown during video extraction) */}
+      {extracting && renderExtractionProgress()}
+
+      {/* Upload zone (hidden during extraction) */}
+      {!extracting && (
+        <div className="mb-8">
+          <AssetUploader
+            onFilesSelected={handleFilesSelected}
+            onVideoSelected={handleVideoSelected}
+            disabled={saving}
+          />
+        </div>
+      )}
+
+      {/* Video info banner */}
+      {!extracting && renderVideoInfoBanner()}
 
       {/* Asset list */}
       <div className="mb-8">
         <h3 className="text-lg font-medium text-gray-200 mb-4">
           Assets ({assets.length})
         </h3>
-        {assets.length === 0 ? (
+        {assets.length === 0 && !extracting ? (
           <p className="text-sm text-gray-500 text-center py-8">
-            No assets yet. Drop images above to add assets.
+            No assets yet. Drop images or a video above to add assets.
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -472,7 +625,7 @@ export function ManifestCreator({
         >
           Cancel
         </button>
-        {assets.length > 0 && (
+        {assets.length > 0 && !extracting && (
           <button
             onClick={handleProcess}
             disabled={processing}
@@ -483,7 +636,7 @@ export function ManifestCreator({
         )}
         <button
           onClick={handleSave}
-          disabled={saving || !name.trim()}
+          disabled={saving || extracting || !name.trim()}
           className="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-6 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? "Saving..." : "Save Draft"}
@@ -584,6 +737,7 @@ export function ManifestCreator({
   const renderStage3 = () => {
     const uploadedAssets = assets.filter((a) => a.source === "uploaded");
     const extractedAssets = assets.filter((a) => a.source === "extracted");
+    const videoFrameAssets = assets.filter((a) => a.source === "video_frame");
 
     const assetsByType = assets.reduce(
       (acc, asset) => {
@@ -603,23 +757,35 @@ export function ManifestCreator({
           <p className="text-sm text-gray-400 mb-4">{manifest?.name}</p>
 
           {/* Summary stats */}
-          <div className="flex gap-6 text-sm">
+          <div className="flex gap-6 text-sm flex-wrap">
             <div>
               <span className="text-gray-400">Total assets:</span>{" "}
               <span className="text-white font-medium">{assets.length}</span>
             </div>
-            <div>
-              <span className="text-gray-400">Uploaded:</span>{" "}
-              <span className="text-white font-medium">
-                {uploadedAssets.length}
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-400">Extracted:</span>{" "}
-              <span className="text-white font-medium">
-                {extractedAssets.length}
-              </span>
-            </div>
+            {uploadedAssets.length > 0 && (
+              <div>
+                <span className="text-gray-400">Uploaded:</span>{" "}
+                <span className="text-white font-medium">
+                  {uploadedAssets.length}
+                </span>
+              </div>
+            )}
+            {videoFrameAssets.length > 0 && (
+              <div>
+                <span className="text-gray-400">Video frames:</span>{" "}
+                <span className="text-purple-300 font-medium">
+                  {videoFrameAssets.length}
+                </span>
+              </div>
+            )}
+            {extractedAssets.length > 0 && (
+              <div>
+                <span className="text-gray-400">Extracted:</span>{" "}
+                <span className="text-white font-medium">
+                  {extractedAssets.length}
+                </span>
+              </div>
+            )}
             {Object.entries(assetsByType).map(([type, count]) => (
               <div key={type}>
                 <span className="text-gray-400">{type}:</span>{" "}
@@ -628,6 +794,22 @@ export function ManifestCreator({
             ))}
           </div>
         </div>
+
+        {/* Add more assets */}
+        {!extracting && (
+          <div className="mb-8">
+            <h3 className="text-sm font-medium text-gray-400 mb-3">
+              Add more references
+            </h3>
+            <AssetUploader
+              onFilesSelected={handleFilesSelected}
+              onVideoSelected={handleVideoSelected}
+              disabled={processing}
+            />
+          </div>
+        )}
+
+        {extracting && extractionProgress && renderExtractionProgress()}
 
         {/* Asset list */}
         <div className="mb-8 space-y-4">
@@ -706,10 +888,12 @@ export function ManifestCreator({
                       className={`px-2 py-1 rounded ${
                         asset.source === "uploaded"
                           ? "bg-purple-900 text-purple-300"
-                          : "bg-gray-800 text-gray-400"
+                          : asset.source === "video_frame"
+                            ? "bg-purple-900 text-purple-300"
+                            : "bg-gray-800 text-gray-400"
                       }`}
                     >
-                      {asset.source}
+                      {asset.source === "video_frame" ? "video frame" : asset.source}
                     </span>
                     {asset.is_face_crop && (
                       <span className="px-2 py-1 rounded bg-indigo-900 text-indigo-300">

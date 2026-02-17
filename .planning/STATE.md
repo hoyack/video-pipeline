@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 8 of 12 (Veo Reference Passthrough and Clean Sheets)
-Plan: 2 of 3 in current phase
+Phase: 9 of 12 (CV Analysis Pipeline and Progressive Enrichment)
+Plan: 1 of 3 in current phase
 Status: In Progress
-Last activity: 2026-02-17 — Completed 08-02 (Veo reference passthrough and clean sheet generation)
+Last activity: 2026-02-16 — Completed 09-01 (CV analysis foundation services)
 
-Progress: [████████░░] 68% (8 of 12 phases, 20 of 29 plans complete)
+Progress: [████████░░] 72% (9 of 12 phases, 21 of 29 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 20
+- Total plans completed: 21
 - Average duration: 2.7 min
-- Total execution time: 0.90 hours
+- Total execution time: 0.93 hours
 
 **By Phase:**
 
@@ -35,10 +35,11 @@ Progress: [████████░░] 68% (8 of 12 phases, 20 of 29 plans c
 | 06-generateform-integration | 2 | 5.0 min | 2.5 min |
 | 07-manifest-aware-storyboarding | 2 | 5.1 min | 2.6 min |
 | 08-veo-reference-passthrough | 2 | 7.1 min | 3.6 min |
+| 09-cv-analysis-pipeline | 1 | 2.0 min | 2.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 07-01 (2.0min), 07-02 (3.1min), 08-01 (2.6min), 08-02 (4.5min)
-- Trend: Phase 8 clean sheet service complete - complex CV integration with retry logic
+- Last 5 plans: 07-02 (3.1min), 08-01 (2.6min), 08-02 (4.5min), 09-01 (2.0min)
+- Trend: Phase 9 foundation services - CLIP embeddings, frame sampling, AssetAppearance model
 
 *Updated after each plan completion*
 
@@ -135,6 +136,10 @@ Recent decisions affecting current work:
 - **08-02:** Duration forced to 8 seconds when reference_images attached (Veo 3.1 API constraint - non-negotiable)
 - **08-02:** Reference images passed on ALL safety escalation levels (identity references independent of content-policy prefixes)
 - **08-02:** Tier 3 face validation with 3 attempts and threshold loosening 0.6 → 0.5 (balances quality with success rate)
+- **09-01:** Store clip_embedding as bytes (numpy.tobytes()) matching face_embedding pattern for 10x storage reduction vs JSON
+- **09-01:** cv2 imported inside frame_sampler functions (not top-level) to avoid ImportError when opencv not installed
+- **09-01:** CVAnalysisConfig uses Field(default_factory=CVAnalysisConfig) so cv_analysis section is optional in config.yaml
+- **09-01:** extract_frames() reads sequentially and saves only target frames for efficiency (avoids random seeks)
 
 ### Roadmap Evolution
 
@@ -160,6 +165,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-17 (execution)
-Stopped at: Completed 08-02-PLAN.md (Veo reference passthrough and clean sheet generation)
+Last session: 2026-02-16 (execution)
+Stopped at: Completed 09-01-PLAN.md (CV analysis foundation: CLIP embeddings, frame sampler, AssetAppearance model)
 Resume file: None

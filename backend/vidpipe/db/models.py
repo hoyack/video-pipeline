@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Text, JSON, Integer, Float, Boolean, ForeignKey, func
+from sqlalchemy import String, Text, JSON, Integer, Float, Boolean, ForeignKey, Index, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -167,6 +167,11 @@ class Project(Base):
         ForeignKey("manifests.id"), nullable=True, index=True
     )
     manifest_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Phase 11: Multi-Candidate Quality Mode
+    quality_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=1)
+
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -280,6 +285,44 @@ class VideoClip(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     veo_submission_count: Mapped[int] = mapped_column(Integer, default=0)
     safety_regen_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class GenerationCandidate(Base):
+    """Stores per-candidate video clips with individual and composite quality scores.
+
+    Spec reference: Phase 11 - Multi-Candidate Quality Mode
+    """
+    __tablename__ = "generation_candidates"
+    __table_args__ = (
+        Index("idx_candidates_project_scene", "project_id", "scene_index"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_index: Mapped[int] = mapped_column(Integer)
+    candidate_number: Mapped[int] = mapped_column(Integer)  # 0-based index within batch
+    local_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    thumbnail_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # First frame JPEG
+
+    # Individual dimension scores (0-10)
+    manifest_adherence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    visual_quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    continuity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    prompt_adherence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    composite_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Scoring details JSON blob for debugging and UI display
+    scoring_details: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Selection state
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    selected_by: Mapped[str] = mapped_column(String(20), default="auto")  # 'auto' or 'user'
+
+    # Cost tracking
+    generation_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    scoring_cost: Mapped[float] = mapped_column(Float, default=0.0)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class PipelineRun(Base):

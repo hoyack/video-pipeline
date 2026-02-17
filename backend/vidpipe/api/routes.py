@@ -217,6 +217,9 @@ class GenerateRequest(BaseModel):
     video_model: str = "veo-3.1-fast-generate-001"
     enable_audio: bool = True
     manifest_id: Optional[str] = None
+    # Phase 11: Multi-Candidate Quality Mode
+    quality_mode: bool = False
+    candidate_count: int = 1
 
 
 class GenerateResponse(BaseModel):
@@ -285,6 +288,9 @@ class ProjectDetail(BaseModel):
     video_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
     forked_from: Optional[str] = None
+    # Phase 11: Multi-Candidate Quality Mode
+    quality_mode: bool = False
+    candidate_count: int = 1
 
 
 class ProjectListItem(BaseModel):
@@ -299,6 +305,9 @@ class ProjectListItem(BaseModel):
     image_model: Optional[str] = None
     video_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
+    # Phase 11: Multi-Candidate Quality Mode
+    quality_mode: bool = False
+    candidate_count: int = 1
 
 
 class ResumeResponse(BaseModel):
@@ -519,6 +528,12 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             detail=f"Audio generation not supported for {request.video_model}",
         )
 
+    # Validate Phase 11: quality mode and candidate count
+    if request.candidate_count < 1 or request.candidate_count > 4:
+        raise HTTPException(status_code=422, detail="candidate_count must be 1-4")
+    if request.quality_mode and request.candidate_count < 2:
+        raise HTTPException(status_code=422, detail="Quality Mode requires candidate_count >= 2")
+
     # Derive scene count from total duration and clip duration
     scene_count = math.ceil(request.total_duration / request.clip_duration)
 
@@ -536,6 +551,8 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             video_model=request.video_model,
             audio_enabled=request.enable_audio,
             seed=random.randint(0, 2**32 - 1),
+            quality_mode=request.quality_mode,
+            candidate_count=request.candidate_count if request.quality_mode else 1,
             status="pending",
         )
         session.add(project)
@@ -730,6 +747,8 @@ async def get_project_detail(project_id: uuid.UUID):
             video_model=project.video_model,
             audio_enabled=project.audio_enabled,
             forked_from=str(project.forked_from_id) if project.forked_from_id else None,
+            quality_mode=project.quality_mode,
+            candidate_count=project.candidate_count,
         )
 
 

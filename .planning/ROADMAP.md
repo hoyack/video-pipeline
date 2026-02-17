@@ -97,7 +97,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 6. GenerateForm Integration | 0/2 | ○ Planned | — |
 | 7. Manifest-Aware Storyboarding | 0/2 | ○ Planned | — |
 | 8. Veo Reference Passthrough | 0/3 | ○ Planned | — |
-| 9. CV Analysis Pipeline | 0/? | ○ Not planned | — |
+| 9. CV Analysis Pipeline | 0/3 | ○ Planned | — |
 | 10. Adaptive Prompt Rewriting | 0/? | ○ Not planned | — |
 | 11. Multi-Candidate Quality Mode | 0/? | ○ Not planned | — |
 | 12. Fork System Integration | 0/? | ○ Not planned | — |
@@ -199,10 +199,12 @@ Plans:
   6. New entities extracted from generated content are reverse-prompted and registered in Asset Registry
   7. `asset_appearances` table tracks where each asset appears across scenes
   8. Progressive enrichment: scene N+1 generation benefits from assets extracted from scenes 1..N
-**Plans:** 0 plans
+**Plans:** 3 plans in 3 waves
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 9 to break down)
+- [ ] 09-01-PLAN.md — CLIP embedding service, video frame sampler, AssetAppearance model, and cv_analysis config
+- [ ] 09-02-PLAN.md — CV analysis orchestrator service and entity extraction/registration service
+- [ ] 09-03-PLAN.md — Pipeline integration with per-scene analysis hook and progressive enrichment
 
 ### Phase 10: Adaptive Prompt Rewriting
 **Goal**: A dedicated LLM rewriter assembles final generation prompts by injecting asset reverse_prompts, manifest metadata, continuity corrections, and audio direction — replacing static storyboard prompts with dynamically enriched versions

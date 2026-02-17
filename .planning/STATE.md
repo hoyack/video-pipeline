@@ -10,9 +10,9 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 8 of 12 (Veo Reference Passthrough and Clean Sheets)
-Plan: 3 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In Progress
-Last activity: 2026-02-17 — Completed 08-03 (reference display in SceneCard UI)
+Last activity: 2026-02-17 — Completed 08-02 (Veo reference passthrough and clean sheet generation)
 
 Progress: [████████░░] 68% (8 of 12 phases, 20 of 29 plans complete)
 
@@ -20,8 +20,8 @@ Progress: [████████░░] 68% (8 of 12 phases, 20 of 29 plans c
 
 **Velocity:**
 - Total plans completed: 20
-- Average duration: 2.5 min
-- Total execution time: 0.85 hours
+- Average duration: 2.7 min
+- Total execution time: 0.90 hours
 
 **By Phase:**
 
@@ -34,11 +34,11 @@ Progress: [████████░░] 68% (8 of 12 phases, 20 of 29 plans c
 | 05-manifesting-engine | 2 | 9.1 min | 4.6 min |
 | 06-generateform-integration | 2 | 5.0 min | 2.5 min |
 | 07-manifest-aware-storyboarding | 2 | 5.1 min | 2.6 min |
-| 08-veo-reference-passthrough | 2 | 4.4 min | 2.2 min |
+| 08-veo-reference-passthrough | 2 | 7.1 min | 3.6 min |
 
 **Recent Trend:**
-- Last 5 plans: 07-01 (2.0min), 07-02 (3.1min), 08-01 (2.6min), 08-03 (1.8min)
-- Trend: Phase 8 reference display complete - efficient UI integration
+- Last 5 plans: 07-01 (2.0min), 07-02 (3.1min), 08-01 (2.6min), 08-02 (4.5min)
+- Trend: Phase 8 clean sheet service complete - complex CV integration with retry logic
 
 *Updated after each plan completion*
 
@@ -132,8 +132,9 @@ Recent decisions affecting current work:
 - **07-02:** use_manifests flag determines schema, prompt, and persistence path in single function
 - **08-01:** Scene-type-aware selection adapts prioritization by shot_type (close_up prioritizes face crops, two_shot ensures 2 unique characters, establishing prioritizes environments)
 - **08-01:** Deduplication by manifest_tag prevents same character occupying multiple slots for Veo reference diversity
-- **08-03:** Efficient in-memory join pattern for reference resolution (one query for all scene manifests, one query for all assets, then in-memory join prevents N+1 queries)
-- **08-03:** Reference badges only appear when scene has selected_references (backward compatible for non-manifest projects and scenes without references)
+- **08-02:** Duration forced to 8 seconds when reference_images attached (Veo 3.1 API constraint - non-negotiable)
+- **08-02:** Reference images passed on ALL safety escalation levels (identity references independent of content-policy prefixes)
+- **08-02:** Tier 3 face validation with 3 attempts and threshold loosening 0.6 → 0.5 (balances quality with success rate)
 
 ### Roadmap Evolution
 
@@ -160,5 +161,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-17 (execution)
-Stopped at: Completed 08-03-PLAN.md (reference display in SceneCard UI)
+Stopped at: Completed 08-02-PLAN.md (Veo reference passthrough and clean sheet generation)
 Resume file: None

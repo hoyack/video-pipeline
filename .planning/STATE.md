@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 7 of 12 (Manifest-Aware Storyboarding and Audio Manifest)
-Plan: 2 of 2 in current phase
-Status: Complete
-Last activity: 2026-02-16 — Completed 07-02 (enhanced storyboard pipeline with manifest-aware context)
+Phase: 8 of 12 (Veo Reference Passthrough and Clean Sheets)
+Plan: 1 of 3 in current phase
+Status: In Progress
+Last activity: 2026-02-17 — Completed 08-01 (reference selection data layer and service)
 
-Progress: [███████░░░] 58% (7 of 12 phases complete)
+Progress: [████████░░] 66% (8 of 12 phases, 19 of 29 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 18
+- Total plans completed: 19
 - Average duration: 2.6 min
-- Total execution time: 0.78 hours
+- Total execution time: 0.82 hours
 
 **By Phase:**
 
@@ -34,10 +34,11 @@ Progress: [███████░░░] 58% (7 of 12 phases complete)
 | 05-manifesting-engine | 2 | 9.1 min | 4.6 min |
 | 06-generateform-integration | 2 | 5.0 min | 2.5 min |
 | 07-manifest-aware-storyboarding | 2 | 5.1 min | 2.6 min |
+| 08-veo-reference-passthrough | 1 | 2.6 min | 2.6 min |
 
 **Recent Trend:**
-- Last 5 plans: 06-01 (2.6min), 06-02 (2.4min), 07-01 (2.0min), 07-02 (3.1min)
-- Trend: Phase 7 complete - manifest-aware storyboarding with asset registry context
+- Last 5 plans: 06-02 (2.4min), 07-01 (2.0min), 07-02 (3.1min), 08-01 (2.6min)
+- Trend: Phase 8 started - reference selection data layer complete
 
 *Updated after each plan completion*
 
@@ -129,6 +130,8 @@ Recent decisions affecting current work:
 - **07-02:** Production notes only included for quality >= 7.0 to manage context window size
 - **07-02:** Asset tags validated post-generation with warnings (not errors) to allow new asset declarations
 - **07-02:** use_manifests flag determines schema, prompt, and persistence path in single function
+- **08-01:** Scene-type-aware selection adapts prioritization by shot_type (close_up prioritizes face crops, two_shot ensures 2 unique characters, establishing prioritizes environments)
+- **08-01:** Deduplication by manifest_tag prevents same character occupying multiple slots for Veo reference diversity
 
 ### Roadmap Evolution
 
@@ -154,6 +157,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-16 (execution)
-Stopped at: Completed 07-02-PLAN.md (enhanced storyboard pipeline with manifest-aware context)
+Last session: 2026-02-17 (execution)
+Stopped at: Completed 08-01-PLAN.md (reference selection data layer and service)
 Resume file: None

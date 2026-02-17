@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 11 of 12 (Multi-Candidate Quality Mode) — IN PROGRESS
-Plan: 2 of 3 complete
-Status: 11-02 complete — Multi-candidate pipeline integration in video_gen.py
-Last activity: 2026-02-17 — Completed 11-02 (pipeline integration: _poll_and_collect_candidates, _handle_quality_mode_candidates)
+Phase: 11 of 12 (Multi-Candidate Quality Mode) — COMPLETE
+Plan: 3 of 3 complete
+Status: 11-03 complete — Candidate API endpoints and Quality Mode UI
+Last activity: 2026-02-16 — Completed 11-03 (candidate API + Quality Mode toggle + SceneCard comparison grid)
 
-Progress: [████████░░] 91% (10 of 12 phases complete, 28 of 31 plans complete)
+Progress: [████████░░] 94% (11 of 12 phases complete, 31 of 31 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 26
-- Average duration: 2.5 min
-- Total execution time: 1.08 hours
+- Total plans completed: 31
+- Average duration: 2.7 min
+- Total execution time: 1.39 hours
 
 **By Phase:**
 
@@ -37,11 +37,11 @@ Progress: [████████░░] 91% (10 of 12 phases complete, 28 of 
 | 08-veo-reference-passthrough | 2 | 7.1 min | 3.6 min |
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
-| 11-multi-candidate-quality-mode | 2/3 | 6.0 min | 3.0 min |
+| 11-multi-candidate-quality-mode | 3/3 | 14.0 min | 4.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 10-01 (2.0min), 10-02 (2.0min), 11-01 (3.0min), 11-02 (3.0min)
-- Trend: Phase 11 core complete — data layer + pipeline integration both done in ~3 min each
+- Last 5 plans: 10-02 (2.0min), 11-01 (3.0min), 11-02 (3.0min), 11-03 (8.0min)
+- Trend: Phase 11 complete — all 3 plans done; 11-03 larger due to full-stack API+UI work
 
 *Updated after each plan completion*
 
@@ -172,6 +172,10 @@ Recent decisions affecting current work:
 - **11-02:** session.flush() (not commit()) after adding GenerationCandidate records — assigns IDs while deferring commit to after scoring
 - **11-02:** has_refs bool parameter in _handle_quality_mode_candidates — sets duration_seconds=8 if refs, else target_clip_duration
 - **11-02:** all_assets initialized to [] before manifest block — prevents NameError in quality mode without manifest
+- **11-03:** Candidate comparison panel uses lazy loading (fetches on first expand) to avoid N API calls on project load
+- **11-03:** selectCandidate PUT updates both is_selected flag AND VideoClip.local_path — stitcher reads local_path so both must stay consistent
+- **11-03:** Optimistic UI update on selection: setCandidates fires immediately, PUT request fires async — avoids UI lag
+- **11-03:** .gitignore fixed: lib/ pattern changed to /lib/ (root-only) to allow frontend/src/lib/ to be committed
 
 ### Roadmap Evolution
 
@@ -197,6 +201,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-17 (execution)
-Stopped at: Completed 11-02-PLAN.md (multi-candidate pipeline integration in video_gen.py)
+Last session: 2026-02-16 (execution)
+Stopped at: Completed 11-03-PLAN.md (candidate API + Quality Mode UI — Phase 11 complete)
 Resume file: None

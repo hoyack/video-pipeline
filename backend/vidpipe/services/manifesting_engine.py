@@ -5,6 +5,7 @@ YOLO detection, face cross-matching, reverse-prompting, and tag assignment.
 """
 
 import asyncio
+import base64
 import logging
 import math
 import uuid
@@ -12,6 +13,7 @@ from glob import glob
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -422,6 +424,334 @@ class ManifestingEngine:
             "face_groups": self.progress["progress"]["face_merges"],
             "total_assets": len(all_manifest_assets),
         }
+
+    async def process_new_uploads(
+        self,
+        manifest_id: uuid.UUID,
+        new_uploads: list,  # list of NewUpload Pydantic models
+        existing_face_embeddings: list,  # [(asset_id, embedding_bytes), ...]
+    ) -> list:
+        """Process new reference uploads added during a fork.
+
+        Runs YOLO detection, face cross-matching (against inherited + new),
+        and reverse-prompting. Does NOT update manifest status or contact sheet
+        since the manifest is already READY from the parent.
+
+        Args:
+            manifest_id: Manifest UUID (shared with parent project)
+            new_uploads: List of NewUpload Pydantic models (image_data base64, name, asset_type, ...)
+            existing_face_embeddings: [(asset_id, embedding_bytes)] from inherited assets
+                                      used for cross-matching against new face crops
+
+        Returns:
+            List of newly created Asset objects (both upload and extracted crops)
+        """
+        logger.info(
+            f"process_new_uploads: {len(new_uploads)} uploads for manifest {manifest_id}"
+        )
+
+        from vidpipe.services.manifest_service import TAG_PREFIX_MAP
+
+        # Prepare directories
+        uploads_dir = Path("tmp/manifests") / str(manifest_id) / "uploads"
+        crops_dir = Path("tmp/manifests") / str(manifest_id) / "crops"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        crops_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- Step 1: Determine max tag numbers per type across ALL existing assets ---
+        existing_result = await self.session.execute(
+            select(Asset).where(Asset.manifest_id == manifest_id)
+        )
+        existing_assets = list(existing_result.scalars().all())
+
+        # Build per-type counters from existing manifest_tags
+        # e.g. CHAR_03 → CHARACTER counter = 3
+        type_counters: dict[str, int] = {}
+        for a in existing_assets:
+            tag = a.manifest_tag or ""
+            prefix = TAG_PREFIX_MAP.get(a.asset_type, "OTHER")
+            if tag.startswith(prefix + "_"):
+                try:
+                    num = int(tag[len(prefix) + 1:])
+                    type_counters[a.asset_type] = max(
+                        type_counters.get(a.asset_type, 0), num
+                    )
+                except ValueError:
+                    pass
+
+        def _next_tag(asset_type: str) -> str:
+            """Generate next manifest_tag for the given asset_type."""
+            count = type_counters.get(asset_type, 0) + 1
+            type_counters[asset_type] = count
+            prefix = TAG_PREFIX_MAP.get(asset_type, "OTHER")
+            return f"{prefix}_{count:02d}"
+
+        # --- Step 2: Save uploaded images and create Asset rows ---
+        new_upload_assets: list[Asset] = []
+
+        for upload in new_uploads:
+            # Decode base64 image data
+            try:
+                image_bytes = base64.b64decode(upload.image_data)
+            except Exception as e:
+                logger.warning(f"Failed to decode base64 for upload {upload.name}: {e}")
+                continue
+
+            # Determine file extension from image data header
+            if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+                ext = "png"
+            elif image_bytes[:2] == b"\xff\xd8":
+                ext = "jpg"
+            elif image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+                ext = "webp"
+            else:
+                ext = "jpg"  # fallback
+
+            # Generate tag for this asset type
+            manifest_tag = _next_tag(upload.asset_type)
+
+            # Create Asset row
+            new_asset = Asset(
+                manifest_id=manifest_id,
+                asset_type=upload.asset_type,
+                name=upload.name,
+                manifest_tag=manifest_tag,
+                user_tags=upload.tags,
+                description=upload.description,
+                source="uploaded",
+                sort_order=len(existing_assets) + len(new_upload_assets),
+                is_inherited=False,
+            )
+            self.session.add(new_asset)
+            await self.session.flush()  # Get new_asset.id
+
+            # Save image to disk with asset ID prefix
+            img_filename = f"{new_asset.id}_{upload.name}.{ext}"
+            img_path = uploads_dir / img_filename
+
+            await asyncio.to_thread(img_path.write_bytes, image_bytes)
+
+            # Set reference_image_url
+            new_asset.reference_image_url = f"/api/assets/{new_asset.id}/image"
+
+            new_upload_assets.append(new_asset)
+
+        await self.session.flush()
+
+        # --- Step 3: YOLO detection on new uploads ---
+        new_extracted_crops: list[Asset] = []
+
+        for asset in new_upload_assets:
+            pattern = f"tmp/manifests/{manifest_id}/uploads/{asset.id}_*"
+            matches = glob(pattern)
+            if not matches:
+                logger.warning(f"Image not found for new upload asset {asset.id}, skipping YOLO")
+                continue
+
+            img_path_str = matches[0]
+
+            try:
+                detections = await asyncio.to_thread(
+                    self.cv_detector.detect_objects_and_faces, img_path_str
+                )
+            except Exception as e:
+                logger.warning(f"YOLO detection failed for asset {asset.id}: {e}")
+                continue
+
+            all_detections = [
+                {**d, "is_face": False} for d in detections.get("objects", [])
+            ] + [
+                {**d, "is_face": True} for d in detections.get("faces", [])
+            ]
+
+            for det in all_detections:
+                crop_filename = f"{uuid.uuid4()}.jpg"
+                crop_path = crops_dir / crop_filename
+
+                try:
+                    await asyncio.to_thread(
+                        self._save_crop, img_path_str, det["bbox"], str(crop_path)
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save crop for asset {asset.id}: {e}")
+                    continue
+
+                # Generate tag for extracted crop
+                crop_tag = _next_tag(asset.asset_type)
+
+                crop_asset = Asset(
+                    manifest_id=manifest_id,
+                    asset_type=asset.asset_type,
+                    name=f"{asset.name} - {det['class']}",
+                    manifest_tag=crop_tag,
+                    reference_image_url=f"/api/assets/{{id}}/image",  # placeholder
+                    source="extracted",
+                    source_asset_id=asset.id,
+                    detection_class=det["class"],
+                    detection_confidence=det["confidence"],
+                    crop_bbox=det["bbox"],
+                    is_face_crop=det.get("is_face", False),
+                    sort_order=asset.sort_order,
+                    is_inherited=False,
+                )
+                self.session.add(crop_asset)
+                await self.session.flush()  # Get crop_asset.id
+
+                # Move crop to final location with asset ID prefix
+                final_crop_path = crops_dir / f"{crop_asset.id}_{crop_filename}"
+                await asyncio.to_thread(Path(str(crop_path)).rename, final_crop_path)
+
+                # Update reference_image_url with actual asset ID
+                crop_asset.reference_image_url = f"/api/assets/{crop_asset.id}/image"
+
+                new_extracted_crops.append(crop_asset)
+
+        await self.session.flush()
+
+        # --- Step 4: Generate face embeddings for new face crops ---
+        new_face_crops = [a for a in new_extracted_crops if a.is_face_crop]
+
+        for face_asset in new_face_crops:
+            pattern = f"tmp/manifests/{manifest_id}/crops/{face_asset.id}_*"
+            matches = glob(pattern)
+            if not matches:
+                continue
+
+            crop_path_str = matches[0]
+            try:
+                embedding = await asyncio.to_thread(
+                    self.face_matcher.generate_embedding, crop_path_str
+                )
+                face_asset.face_embedding = embedding.tobytes()
+            except ValueError:
+                logger.warning(
+                    f"No face detected in new crop {face_asset.id}, reclassifying"
+                )
+                face_asset.is_face_crop = False
+
+        await self.session.flush()
+
+        # --- Step 5: Cross-match faces (inherited + new) ---
+        # Build combined face data for cross-matching using dict format
+        # Inherited embeddings passed in as (asset_id, embedding_bytes) tuples
+        combined_face_data: list[dict] = []
+
+        # Add inherited face embeddings
+        for _, emb_bytes in existing_face_embeddings:
+            if emb_bytes:
+                emb_array = np.frombuffer(emb_bytes, dtype=np.float32).copy()
+                combined_face_data.append({"embedding": emb_array, "source": "inherited"})
+
+        # Add new face crop embeddings with back-references to assets
+        new_face_data_refs: list[Asset] = []
+        for face_asset in new_face_crops:
+            if face_asset.face_embedding and face_asset.is_face_crop:
+                emb_array = np.frombuffer(face_asset.face_embedding, dtype=np.float32).copy()
+                combined_face_data.append({"embedding": emb_array, "source": "new"})
+                new_face_data_refs.append(face_asset)
+
+        if len(combined_face_data) > 1:
+            try:
+                face_groups = await asyncio.to_thread(
+                    self.face_matcher.cross_match_faces,
+                    combined_face_data,
+                )
+
+                # Count inherited embeddings offset
+                inherited_offset = len(existing_face_embeddings)
+
+                # Mark duplicate new face crops (duplicates of inherited OR other new)
+                for group in face_groups:
+                    if len(group) <= 1:
+                        continue
+
+                    # Check if any group member is in the "new" range
+                    new_indices = [
+                        idx for idx in group if idx >= inherited_offset
+                    ]
+                    inherited_indices = [
+                        idx for idx in group if idx < inherited_offset
+                    ]
+
+                    if not new_indices:
+                        continue
+
+                    # If there's an inherited face in the group, all new ones are duplicates
+                    if inherited_indices:
+                        # Find primary: take the first inherited one
+                        primary_label = "inherited asset"
+                        for new_idx in new_indices:
+                            asset_ref_idx = new_idx - inherited_offset
+                            if 0 <= asset_ref_idx < len(new_face_data_refs):
+                                dup_asset = new_face_data_refs[asset_ref_idx]
+                                dup_asset.description = (
+                                    f"(Duplicate of {primary_label}) "
+                                    + (dup_asset.description or "")
+                                )
+                    else:
+                        # All are new — keep highest confidence, mark others
+                        new_assets_in_group = []
+                        for new_idx in new_indices:
+                            asset_ref_idx = new_idx - inherited_offset
+                            if 0 <= asset_ref_idx < len(new_face_data_refs):
+                                new_assets_in_group.append(new_face_data_refs[asset_ref_idx])
+
+                        if len(new_assets_in_group) > 1:
+                            new_assets_in_group.sort(
+                                key=lambda x: x.detection_confidence or 0.0, reverse=True
+                            )
+                            primary = new_assets_in_group[0]
+                            for dup_asset in new_assets_in_group[1:]:
+                                dup_asset.description = (
+                                    f"(Duplicate of {primary.name}) "
+                                    + (dup_asset.description or "")
+                                )
+            except Exception as e:
+                logger.warning(f"Face cross-matching failed for new uploads: {e}")
+
+        await self.session.flush()
+
+        # --- Step 6: Reverse-prompting on all new assets (uploads + crops) ---
+        all_new_assets = new_upload_assets + new_extracted_crops
+        semaphore = asyncio.Semaphore(5)
+
+        async def _reverse_prompt_new(asset: Asset):
+            async with semaphore:
+                if asset.source == "uploaded":
+                    pattern = f"tmp/manifests/{manifest_id}/uploads/{asset.id}_*"
+                else:
+                    pattern = f"tmp/manifests/{manifest_id}/crops/{asset.id}_*"
+
+                matches = glob(pattern)
+                if not matches:
+                    logger.warning(f"Image not found for new asset {asset.id}, skipping reverse-prompt")
+                    return
+
+                img_path_str = matches[0]
+
+                try:
+                    result = await self.reverse_prompter.reverse_prompt_asset(
+                        img_path_str, asset.asset_type, asset.name
+                    )
+                    asset.reverse_prompt = result.get("reverse_prompt")
+                    asset.visual_description = result.get("visual_description")
+                    asset.quality_score = result.get("quality_score")
+
+                    suggested_name = result.get("suggested_name")
+                    if suggested_name and (not asset.name or asset.name.startswith("Untitled")):
+                        asset.name = suggested_name
+                except Exception as e:
+                    logger.warning(f"Reverse-prompting failed for asset {asset.id}: {e}")
+
+        await asyncio.gather(*[_reverse_prompt_new(a) for a in all_new_assets])
+        await self.session.flush()
+
+        logger.info(
+            f"process_new_uploads complete: {len(new_upload_assets)} uploads, "
+            f"{len(new_extracted_crops)} crops"
+        )
+
+        return all_new_assets
 
     async def reprocess_asset(self, asset_id: uuid.UUID) -> Asset:
         """Reprocess a single asset (re-run YOLO + reverse-prompting).

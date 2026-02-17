@@ -144,6 +144,7 @@ async def _submit_video_job(
     end_frame_bytes: bytes,
     project: Project,
     reference_images: Optional[list] = None,
+    candidate_count: int = 1,
 ):
     """Submit a Veo video generation job with retry on transient 429/5xx errors.
 
@@ -159,6 +160,7 @@ async def _submit_video_job(
     video_config = types.GenerateVideosConfig(
         aspect_ratio=project.aspect_ratio,
         duration_seconds=duration_seconds,
+        number_of_videos=candidate_count,
         last_frame=types.Image(image_bytes=end_frame_bytes, mime_type="image/png"),
         negative_prompt=(
             "photorealistic, photo, photograph, hyperrealistic, "

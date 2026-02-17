@@ -288,6 +288,7 @@ class ProjectDetail(BaseModel):
     video_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
     forked_from: Optional[str] = None
+    manifest_id: Optional[str] = None
     # Phase 11: Multi-Candidate Quality Mode
     quality_mode: bool = False
     candidate_count: int = 1
@@ -317,6 +318,27 @@ class ResumeResponse(BaseModel):
     status_url: str
 
 
+class ModifiedAsset(BaseModel):
+    """Asset modification in a fork."""
+    changes: dict  # {"reverse_prompt": "...", "name": "...", "reference_image": base64_str}
+
+
+class NewUpload(BaseModel):
+    """New reference image to add in fork."""
+    image_data: str  # base64-encoded image
+    name: str
+    asset_type: str
+    description: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class AssetChanges(BaseModel):
+    """Asset changes for fork request."""
+    modified_assets: dict[str, ModifiedAsset] = Field(default_factory=dict)  # asset_id -> changes
+    removed_asset_ids: list[str] = Field(default_factory=list)
+    new_uploads: list[NewUpload] = Field(default_factory=list)
+
+
 class ForkRequest(BaseModel):
     """Request schema for POST /api/projects/{id}/fork."""
     prompt: Optional[str] = None
@@ -331,6 +353,7 @@ class ForkRequest(BaseModel):
     scene_edits: Optional[dict[int, dict[str, str]]] = None
     deleted_scenes: Optional[list[int]] = None
     clear_keyframes: Optional[list[int]] = None
+    asset_changes: Optional[AssetChanges] = None
 
 
 class ForkResponse(BaseModel):
@@ -765,6 +788,7 @@ async def get_project_detail(project_id: uuid.UUID):
             video_model=project.video_model,
             audio_enabled=project.audio_enabled,
             forked_from=str(project.forked_from_id) if project.forked_from_id else None,
+            manifest_id=str(project.manifest_id) if project.manifest_id else None,
             quality_mode=project.quality_mode,
             candidate_count=project.candidate_count,
         )
@@ -1095,6 +1119,10 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
         src_scene_count = source.target_scene_count or 3
         if deleted_set and len(deleted_set) >= src_scene_count:
             raise HTTPException(status_code=422, detail="Cannot delete all scenes; at least 1 must remain")
+
+        # Validate asset_changes requires a manifest on the source project
+        if request.asset_changes is not None and source.manifest_id is None:
+            raise HTTPException(status_code=422, detail="Cannot apply asset_changes to a project without a manifest")
 
         # Compute invalidation point
         resume_from, scene_boundary = _compute_invalidation(

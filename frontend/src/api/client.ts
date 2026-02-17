@@ -17,6 +17,7 @@ import type {
   UpdateAssetRequest,
   AssetResponse,
   ProcessingProgress,
+  CandidateScore,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -204,6 +205,28 @@ export function reprocessAsset(assetId: string): Promise<AssetResponse> {
   return request<AssetResponse>(`/api/assets/${assetId}/reprocess`, {
     method: "POST",
   });
+}
+
+/** GET /api/projects/{id}/scenes/{idx}/candidates */
+export function listCandidates(
+  projectId: string,
+  sceneIdx: number,
+): Promise<CandidateScore[]> {
+  return request<CandidateScore[]>(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/candidates`,
+  );
+}
+
+/** PUT /api/projects/{id}/scenes/{idx}/candidates/{cid}/select */
+export function selectCandidate(
+  projectId: string,
+  sceneIdx: number,
+  candidateId: string,
+): Promise<{ selected: string; selected_by: string }> {
+  return request<{ selected: string; selected_by: string }>(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/candidates/${candidateId}/select`,
+    { method: "PUT" },
+  );
 }
 
 export { ApiError };

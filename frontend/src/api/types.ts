@@ -1,3 +1,19 @@
+/** Candidate score data from GET /api/projects/{id}/scenes/{idx}/candidates */
+export interface CandidateScore {
+  candidate_id: string;
+  candidate_number: number;
+  local_path: string | null;
+  manifest_adherence_score: number | null;
+  visual_quality_score: number | null;
+  continuity_score: number | null;
+  prompt_adherence_score: number | null;
+  composite_score: number | null;
+  is_selected: boolean;
+  selected_by: string;
+  generation_cost: number;
+  scoring_cost: number;
+}
+
 /** Request body for POST /api/generate */
 export interface GenerateRequest {
   prompt: string;
@@ -10,6 +26,8 @@ export interface GenerateRequest {
   video_model: string;
   enable_audio: boolean;
   manifest_id?: string;
+  quality_mode?: boolean;
+  candidate_count?: number;
 }
 
 /** Response from POST /api/generate */
@@ -78,6 +96,8 @@ export interface ProjectDetail {
   video_model?: string | null;
   audio_enabled?: boolean | null;
   forked_from?: string | null;
+  quality_mode?: boolean;
+  candidate_count?: number;
 }
 
 /** Item in GET /api/projects list */

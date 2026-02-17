@@ -14,6 +14,7 @@ import {
   IMAGE_MODELS,
   VIDEO_MODELS,
   estimateCost,
+  qualityModeCostMultiplier,
 } from "../lib/constants.ts";
 
 interface GenerateFormProps {
@@ -31,6 +32,8 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   const [videoModel, setVideoModel] = useState(VIDEO_MODELS[0].id);
   const [enableAudio, setEnableAudio] = useState(true);
   const [selectedManifestId, setSelectedManifestId] = useState<string | null>(null);
+  const [qualityMode, setQualityMode] = useState(false);
+  const [candidateCount, setCandidateCount] = useState(2);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +76,8 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         video_model: videoModel,
         enable_audio: audioActive,
         manifest_id: selectedManifestId ?? undefined,
+        quality_mode: qualityMode,
+        candidate_count: qualityMode ? candidateCount : undefined,
       });
       onGenerated(res.project_id);
     } catch (err) {
@@ -317,6 +322,65 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
           selectedManifestId={selectedManifestId}
           onManifestSelect={setSelectedManifestId}
         />
+      </div>
+
+      {/* Quality Mode */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <label className="text-sm font-medium text-gray-200">Quality Mode</label>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Generate multiple candidates per scene and auto-select the best
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setQualityMode(!qualityMode)}
+            className={clsx(
+              "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+              qualityMode ? "bg-amber-600" : "bg-gray-700"
+            )}
+          >
+            <span
+              className={clsx(
+                "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                qualityMode ? "translate-x-6" : "translate-x-1"
+              )}
+            />
+          </button>
+        </div>
+
+        {qualityMode && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-gray-400">Candidates per scene:</label>
+              <div className="flex gap-1">
+                {[2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setCandidateCount(n)}
+                    className={clsx(
+                      "px-3 py-1 rounded text-xs font-medium transition-colors",
+                      candidateCount === n
+                        ? "bg-amber-600 text-white"
+                        : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                    )}
+                  >
+                    {n}x
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-500">Cost impact:</span>
+              <span className="text-amber-400 font-medium">
+                ~{qualityModeCostMultiplier(candidateCount)}x video generation cost
+                {" "}(${(cost * candidateCount).toFixed(2)} est.)
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Cost Estimate */}

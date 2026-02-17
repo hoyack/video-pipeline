@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import clsx from "clsx";
-import type { SceneDetail, SceneReference } from "../api/types.ts";
+import type { SceneDetail, SceneReference, CandidateScore } from "../api/types.ts";
+import { listCandidates, selectCandidate } from "../api/client.ts";
 
 function Dot({ filled, color }: { filled: boolean; color: string }) {
   return (
@@ -28,9 +29,13 @@ function PromptSection({ label, text }: { label: string; text: string }) {
 export function SceneCard({
   scene,
   defaultExpanded = false,
+  projectId,
+  qualityMode = false,
 }: {
   scene: SceneDetail;
   defaultExpanded?: boolean;
+  projectId?: string;
+  qualityMode?: boolean;
 }) {
   const hasExpandableContent = !!(
     scene.start_frame_prompt ||
@@ -42,6 +47,19 @@ export function SceneCard({
     scene.clip_url
   );
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [candidates, setCandidates] = useState<CandidateScore[]>([]);
+  const [candidatesLoaded, setCandidatesLoaded] = useState(false);
+
+  useEffect(() => {
+    if (qualityMode && projectId && expanded && !candidatesLoaded) {
+      listCandidates(projectId, scene.scene_index)
+        .then((data) => {
+          setCandidates(data);
+          setCandidatesLoaded(true);
+        })
+        .catch(() => {}); // Non-critical — scene card still shows normally
+    }
+  }, [qualityMode, projectId, expanded, candidatesLoaded, scene.scene_index]);
 
   return (
     <div
@@ -165,6 +183,85 @@ export function SceneCard({
           )}
           {scene.transition_notes && (
             <PromptSection label="Transition" text={scene.transition_notes} />
+          )}
+          {/* Quality Mode — Candidate Comparison (Phase 11) */}
+          {candidates.length > 1 && (
+            <div className="mt-3 border-t border-gray-800 pt-3">
+              <h4 className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                Quality Mode — {candidates.length} Candidates
+              </h4>
+              <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                {candidates.map((c) => (
+                  <button
+                    key={c.candidate_id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!c.is_selected && projectId) {
+                        selectCandidate(projectId, scene.scene_index, c.candidate_id)
+                          .then(() => {
+                            setCandidates((prev) =>
+                              prev.map((p) => ({
+                                ...p,
+                                is_selected: p.candidate_id === c.candidate_id,
+                                selected_by: p.candidate_id === c.candidate_id ? "user" : p.selected_by,
+                              }))
+                            );
+                          })
+                          .catch(() => {});
+                      }
+                    }}
+                    className={clsx(
+                      "rounded-lg border p-2 text-left transition-colors text-xs",
+                      c.is_selected
+                        ? "border-amber-500 bg-amber-500/10"
+                        : "border-gray-800 bg-gray-900/50 hover:border-gray-700"
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-medium text-gray-300">
+                        Take {c.candidate_number + 1}
+                      </span>
+                      {c.is_selected && (
+                        <span className="text-[9px] font-bold uppercase text-amber-400">
+                          {c.selected_by === "user" ? "User Pick" : "Best"}
+                        </span>
+                      )}
+                    </div>
+                    {c.composite_score != null && (
+                      <div className="text-lg font-bold text-gray-200 mb-1">
+                        {c.composite_score.toFixed(1)}
+                      </div>
+                    )}
+                    <div className="space-y-0.5 text-[10px] text-gray-500">
+                      {c.manifest_adherence_score != null && (
+                        <div className="flex justify-between">
+                          <span>Manifest</span>
+                          <span className="text-gray-400">{c.manifest_adherence_score.toFixed(1)}</span>
+                        </div>
+                      )}
+                      {c.visual_quality_score != null && (
+                        <div className="flex justify-between">
+                          <span>Quality</span>
+                          <span className="text-gray-400">{c.visual_quality_score.toFixed(1)}</span>
+                        </div>
+                      )}
+                      {c.continuity_score != null && (
+                        <div className="flex justify-between">
+                          <span>Continuity</span>
+                          <span className="text-gray-400">{c.continuity_score.toFixed(1)}</span>
+                        </div>
+                      )}
+                      {c.prompt_adherence_score != null && (
+                        <div className="flex justify-between">
+                          <span>Prompt</span>
+                          <span className="text-gray-400">{c.prompt_adherence_score.toFixed(1)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

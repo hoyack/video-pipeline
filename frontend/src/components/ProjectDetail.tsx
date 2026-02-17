@@ -239,7 +239,13 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {detail.scenes.map((scene) => (
-              <SceneCard key={scene.scene_index} scene={scene} defaultExpanded />
+              <SceneCard
+                key={scene.scene_index}
+                scene={scene}
+                defaultExpanded
+                projectId={detail.project_id}
+                qualityMode={detail.quality_mode}
+              />
             ))}
           </div>
         </div>

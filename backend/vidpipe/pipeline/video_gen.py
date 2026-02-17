@@ -38,7 +38,8 @@ from tenacity import (
 )
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip
+from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, GenerationCandidate
+from vidpipe.services.candidate_scoring import CandidateScoringService
 from vidpipe.services.cv_analysis_service import CVAnalysisService
 from vidpipe.services.entity_extraction import identify_new_entities, extract_and_register_new_entities
 from vidpipe.services.file_manager import FileManager
@@ -59,6 +60,20 @@ def _get_cv_analysis_service() -> CVAnalysisService:
     if _cv_analysis_service is None:
         _cv_analysis_service = CVAnalysisService()
     return _cv_analysis_service
+
+
+# ---------------------------------------------------------------------------
+# Lazy candidate scoring service (Phase 11: multi-candidate quality mode)
+# ---------------------------------------------------------------------------
+_candidate_scoring_service: CandidateScoringService | None = None
+
+
+def _get_candidate_scoring_service() -> CandidateScoringService:
+    """Return singleton CandidateScoringService, creating it on first call."""
+    global _candidate_scoring_service
+    if _candidate_scoring_service is None:
+        _candidate_scoring_service = CandidateScoringService()
+    return _candidate_scoring_service
 
 # ---------------------------------------------------------------------------
 # Content-policy safety prefixes (escalating strength)
@@ -358,6 +373,237 @@ async def _poll_video_operation(
 
 
 # ---------------------------------------------------------------------------
+# Phase 11: Multi-candidate poll (collects ALL video bytes for quality mode)
+# ---------------------------------------------------------------------------
+async def _poll_and_collect_candidates(
+    session: AsyncSession,
+    clip: VideoClip,
+    client,
+    project: Project,
+    scene: Scene,
+    file_mgr: FileManager,
+    selected_refs: Optional[list] = None,
+) -> tuple[str, list[bytes]]:
+    """Poll Veo operation and collect ALL candidate video bytes.
+
+    Returns (status, video_bytes_list) where status is one of:
+      "complete"        — all surviving candidates downloaded
+      "content_policy"  — zero candidates survived RAI filtering
+      "timed_out"       — max polls exceeded
+      "failed"          — non-policy failure
+
+    For content_policy: in Quality Mode, only escalate if ZERO candidates survive.
+    Some candidates may be RAI filtered while others succeed (partial success treated
+    as "complete" with available survivors).
+    """
+    poll_interval = settings.pipeline.video_poll_interval
+    max_polls = settings.pipeline.video_poll_max
+
+    for poll_attempt in range(clip.poll_count, max_polls):
+        op_obj = types.GenerateVideosOperation(name=clip.operation_name)
+        operation = await client.aio.operations.get(operation=op_obj)
+        clip.poll_count = poll_attempt + 1
+
+        if operation.done:
+            # Check how many candidates survived
+            generated_videos = []
+            if hasattr(operation, "response") and operation.response:
+                generated_videos = list(operation.response.generated_videos or [])
+
+            rai_filtered = 0
+            if hasattr(operation, "response") and operation.response:
+                rai_filtered = getattr(operation.response, "rai_media_filtered_count", 0) or 0
+
+            if len(generated_videos) == 0:
+                # All candidates filtered or operation error
+                if _is_content_policy_operation(operation):
+                    error_msg = "Content filtered by responsible AI (all candidates)"
+                    if not (hasattr(operation, "response") and operation.response):
+                        error_msg = str(getattr(operation, "error", error_msg))
+                    clip.status = "failed"
+                    clip.error_message = error_msg
+                    await session.commit()
+                    return "content_policy", []
+                else:
+                    # Non-policy failure
+                    clip.status = "failed"
+                    clip.error_message = (
+                        str(operation.error)
+                        if hasattr(operation, "error")
+                        else "Unknown error — no generated videos"
+                    )
+                    scene.status = "failed"
+                    await session.commit()
+                    return "failed", []
+
+            # At least one candidate survived — partial RAI filter is OK
+            if rai_filtered > 0:
+                logger.warning(
+                    f"Scene {scene.scene_index}: {rai_filtered} candidate(s) filtered by RAI, "
+                    f"{len(generated_videos)} candidate(s) survived — treating as success"
+                )
+
+            # Download all surviving candidate bytes
+            video_bytes_list: list[bytes] = []
+            for gen_video in generated_videos:
+                if gen_video.video and gen_video.video.video_bytes:
+                    video_bytes_list.append(gen_video.video.video_bytes)
+                elif gen_video.video and gen_video.video.gcs_uri:
+                    video_bytes_list.append(
+                        await _download_from_gcs(gen_video.video.gcs_uri)
+                    )
+                else:
+                    logger.warning(
+                        f"Scene {scene.scene_index}: candidate missing video data, skipping"
+                    )
+
+            if not video_bytes_list:
+                clip.status = "failed"
+                clip.error_message = "No video data in any candidate response"
+                scene.status = "failed"
+                await session.commit()
+                return "failed", []
+
+            # Mark clip as polling-complete (final path set later in _handle_quality_mode_candidates)
+            clip.status = "complete"
+            await session.commit()
+            return "complete", video_bytes_list
+
+        # Not done yet — commit poll progress and sleep
+        await session.commit()
+        await asyncio.sleep(poll_interval)
+
+        # Check for user-requested stop between polls
+        await session.refresh(project)
+        if project.status == "stopped":
+            from vidpipe.orchestrator.pipeline import PipelineStopped
+            raise PipelineStopped("Pipeline stopped by user")
+
+    # Timeout
+    clip.status = "timed_out"
+    clip.error_message = (
+        f"Operation did not complete after {max_polls * poll_interval} seconds"
+    )
+    scene.status = "timed_out"
+    await session.commit()
+    return "timed_out", []
+
+
+# ---------------------------------------------------------------------------
+# Phase 11: Save, score, and select best candidate (quality mode helper)
+# ---------------------------------------------------------------------------
+async def _handle_quality_mode_candidates(
+    session: AsyncSession,
+    scene: Scene,
+    project: Project,
+    clip: VideoClip,
+    file_mgr: FileManager,
+    video_bytes_list: list[bytes],
+    scene_manifest_row,
+    video_prompt: str,
+    all_assets: list,
+    has_refs: bool = False,
+) -> None:
+    """Save all candidate videos, score them, and auto-select the best one.
+
+    Steps:
+    1. Save each candidate video to disk
+    2. Create GenerationCandidate records
+    3. Score all candidates via CandidateScoringService
+    4. Update records with scores, mark winner as is_selected=True
+    5. Update VideoClip.local_path to point to selected candidate
+    6. Run CV analysis on selected candidate only
+    """
+    clips_dir = file_mgr.base_dir / str(project.id) / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    candidate_records: list[GenerationCandidate] = []
+
+    # Step 1 & 2: Save each candidate and create DB records
+    for i, video_bytes in enumerate(video_bytes_list):
+        candidate_path = clips_dir / f"scene_{scene.scene_index}_candidate_{i}.mp4"
+        candidate_path.write_bytes(video_bytes)
+
+        candidate = GenerationCandidate(
+            project_id=project.id,
+            scene_index=scene.scene_index,
+            candidate_number=i,
+            local_path=str(candidate_path),
+        )
+        session.add(candidate)
+        candidate_records.append(candidate)
+
+    await session.flush()  # Assign IDs without full commit
+
+    # Step 3: Find previous scene's selected clip for continuity scoring
+    previous_clip_path = None
+    if scene.scene_index > 0:
+        prev_scene_result = await session.execute(
+            select(Scene).where(
+                Scene.project_id == project.id,
+                Scene.scene_index == scene.scene_index - 1,
+            )
+        )
+        prev_scene = prev_scene_result.scalar_one_or_none()
+        if prev_scene:
+            prev_clip_result = await session.execute(
+                select(VideoClip).where(VideoClip.scene_id == prev_scene.id)
+            )
+            prev_clip = prev_clip_result.scalar_one_or_none()
+            if prev_clip:
+                previous_clip_path = prev_clip.local_path
+
+    # Step 4: Score all candidates
+    scoring_service = _get_candidate_scoring_service()
+    # Build candidates_info list (score_all_candidates expects dicts with "local_path")
+    candidates_info = [{"local_path": cand.local_path} for cand in candidate_records]
+
+    score_results = await scoring_service.score_all_candidates(
+        candidates_info=candidates_info,
+        scene_index=scene.scene_index,
+        scene_manifest_json=scene_manifest_row.manifest_json if scene_manifest_row else None,
+        rewritten_video_prompt=video_prompt,
+        existing_assets=all_assets,
+        previous_scene_clip_path=previous_clip_path,
+    )
+
+    # Step 5: Update GenerationCandidate records with scores
+    for cand, scores in zip(candidate_records, score_results):
+        cand.manifest_adherence_score = scores.get("manifest_adherence_score")
+        cand.visual_quality_score = scores.get("visual_quality_score")
+        cand.continuity_score = scores.get("continuity_score")
+        cand.prompt_adherence_score = scores.get("prompt_adherence_score")
+        cand.composite_score = scores.get("composite_score")
+        cand.scoring_details = scores.get("scoring_details")
+        cand.scoring_cost = scores.get("scoring_cost", 0.0)
+
+    # Step 6: Select winner (highest composite_score)
+    winner_idx = max(
+        range(len(score_results)),
+        key=lambda i: score_results[i].get("composite_score", 0.0),
+    )
+    candidate_records[winner_idx].is_selected = True
+    candidate_records[winner_idx].selected_by = "auto"
+
+    logger.info(
+        f"Scene {scene.scene_index}: selected candidate {winner_idx} "
+        f"(composite={score_results[winner_idx].get('composite_score', 0):.2f}) "
+        f"from {len(candidate_records)} candidates"
+    )
+
+    # Step 7: Update VideoClip.local_path to point to selected candidate
+    clip.local_path = candidate_records[winner_idx].local_path
+    clip.duration_seconds = 8 if has_refs else project.target_clip_duration
+    clip.source = "generated"
+    scene.status = "video_done"
+
+    await session.commit()
+
+    # Step 8: Run CV analysis on selected candidate only
+    await _run_post_generation_analysis(session, scene, clip, project, scene_manifest_row)
+
+
+# ---------------------------------------------------------------------------
 # Phase 9: Post-generation CV analysis for progressive enrichment
 # ---------------------------------------------------------------------------
 async def _run_post_generation_analysis(
@@ -532,8 +778,11 @@ async def _generate_video_for_scene(
 
     # Initialize scene_manifest_row to None so it's accessible from both
     # completion paths (crash recovery resume and escalation loop).
+    # Phase 11: Initialize all_assets to [] so quality mode without manifest
+    # does not raise NameError when referencing it in _handle_quality_mode_candidates.
     scene_manifest_row = None
     selected_refs = []
+    all_assets: list = []
     if project.manifest_id:
         # Query scene manifest
         sm_result = await session.execute(
@@ -656,21 +905,45 @@ async def _generate_video_for_scene(
 
     # If clip exists and is still polling, resume the poll (crash recovery)
     if clip and clip.status == "polling" and clip.operation_name:
-        poll_result = await _poll_video_operation(
-            session, clip, client, project, scene, file_mgr, selected_refs,
-        )
-        if poll_result != "content_policy":
+        if project.quality_mode and project.candidate_count > 1:
+            # Phase 11: Quality mode crash recovery — use multi-candidate poll
+            poll_result, video_bytes_list = await _poll_and_collect_candidates(
+                session, clip, client, project, scene, file_mgr, selected_refs,
+            )
             if poll_result == "complete":
-                # Phase 9: Post-generation CV analysis for progressive enrichment
-                await _run_post_generation_analysis(
-                    session, scene, clip, project, scene_manifest_row,
+                await _handle_quality_mode_candidates(
+                    session, scene, project, clip, file_mgr,
+                    video_bytes_list,
+                    scene_manifest_row,
+                    base_video_prompt or scene.video_motion_prompt,
+                    all_assets,
+                    has_refs=bool(selected_refs),
                 )
-            return  # complete, failed, or timed_out
-        # Content policy → fall through to escalation loop
-        logger.warning(
-            f"Scene {scene.scene_index}: resumed poll hit content policy, "
-            "starting remediation"
-        )
+                return
+            elif poll_result != "content_policy":
+                return  # failed or timed_out
+            # Content policy with zero survivors → fall through to escalation
+            logger.warning(
+                f"Scene {scene.scene_index}: quality-mode resumed poll hit content policy, "
+                "starting remediation"
+            )
+        else:
+            # Standard mode crash recovery: existing behavior
+            poll_result = await _poll_video_operation(
+                session, clip, client, project, scene, file_mgr, selected_refs,
+            )
+            if poll_result != "content_policy":
+                if poll_result == "complete":
+                    # Phase 9: Post-generation CV analysis for progressive enrichment
+                    await _run_post_generation_analysis(
+                        session, scene, clip, project, scene_manifest_row,
+                    )
+                return  # complete, failed, or timed_out
+            # Content policy → fall through to escalation loop
+            logger.warning(
+                f"Scene {scene.scene_index}: resumed poll hit content policy, "
+                "starting remediation"
+            )
 
     # Build Veo reference images list (Phase 8)
     veo_ref_images = None
@@ -734,12 +1007,16 @@ async def _generate_video_for_scene(
                 f"Maintain the visual style shown in the source frames."
             )
 
+        # Phase 11: Determine candidate count for this submission
+        candidate_count = project.candidate_count if project.quality_mode else 1
+
         # Submit job (retries transient 429/5xx automatically)
         try:
             operation = await _submit_video_job(
                 client, video_model, video_prompt,
                 start_frame_bytes, end_frame_bytes, project,
                 reference_images=veo_ref_images,
+                candidate_count=candidate_count,
             )
         except Exception as e:
             if (
@@ -790,10 +1067,16 @@ async def _generate_video_for_scene(
             clip.veo_submission_count = (clip.veo_submission_count or 0) + 1
         await session.commit()
 
-        # Poll operation
-        poll_result = await _poll_video_operation(
-            session, clip, client, project, scene, file_mgr, selected_refs,
-        )
+        # Phase 11: Choose poll function based on mode
+        if project.quality_mode and project.candidate_count > 1:
+            poll_result, video_bytes_list = await _poll_and_collect_candidates(
+                session, clip, client, project, scene, file_mgr, selected_refs,
+            )
+        else:
+            poll_result = await _poll_video_operation(
+                session, clip, client, project, scene, file_mgr, selected_refs,
+            )
+            video_bytes_list = []  # Not used in standard mode
 
         if poll_result == "complete":
             if safety_level > 0:
@@ -801,10 +1084,21 @@ async def _generate_video_for_scene(
                     f"Scene {scene.scene_index}: succeeded at safety level "
                     f"{safety_level}"
                 )
-            # Phase 9: Post-generation CV analysis for progressive enrichment
-            await _run_post_generation_analysis(
-                session, scene, clip, project, scene_manifest_row,
-            )
+            # Phase 11: Quality mode — save/score/select all candidates
+            if project.quality_mode and project.candidate_count > 1:
+                await _handle_quality_mode_candidates(
+                    session, scene, project, clip, file_mgr,
+                    video_bytes_list,
+                    scene_manifest_row,
+                    base_video_prompt or scene.video_motion_prompt,
+                    all_assets,
+                    has_refs=bool(veo_ref_images),
+                )
+            else:
+                # Standard mode: Phase 9 post-generation CV analysis
+                await _run_post_generation_analysis(
+                    session, scene, clip, project, scene_manifest_row,
+                )
             return
         elif poll_result == "content_policy":
             # Reset scene status for next attempt

@@ -96,7 +96,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 5. Manifesting Engine | 0/3 | ○ Planned | — |
 | 6. GenerateForm Integration | 0/2 | ○ Planned | — |
 | 7. Manifest-Aware Storyboarding | 0/2 | ○ Planned | — |
-| 8. Veo Reference Passthrough | 0/? | ○ Not planned | — |
+| 8. Veo Reference Passthrough | 0/3 | ○ Planned | — |
 | 9. CV Analysis Pipeline | 0/? | ○ Not planned | — |
 | 10. Adaptive Prompt Rewriting | 0/? | ○ Not planned | — |
 | 11. Multi-Candidate Quality Mode | 0/? | ○ Not planned | — |
@@ -180,10 +180,12 @@ Plans:
   4. Clean sheet generation available per asset: background removal (rembg), full clean sheet via Gemini Image, multi-angle sheet
   5. `asset_clean_references` table stores clean reference images with tier, quality score, and face similarity score
   6. SceneCard in frontend shows which 3 references were selected per scene
-**Plans:** 0 plans
+**Plans:** 3 plans in 2 waves
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 8 to break down)
+- [ ] 08-01-PLAN.md — AssetCleanReference model, SceneManifest column, and reference selection service
+- [ ] 08-02-PLAN.md — Video gen pipeline with reference passthrough and clean sheet generation service
+- [ ] 08-03-PLAN.md — Frontend SceneCard reference badges and API SceneDetail enhancement
 
 ### Phase 9: CV Analysis Pipeline and Progressive Enrichment
 **Goal**: Post-generation CV analysis runs YOLO + face matching + CLIP on generated keyframes and video clips, extracting new assets and progressively enriching the registry so later scenes benefit from earlier extractions

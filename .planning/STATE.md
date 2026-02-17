@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 11 of 12 (Multi-Candidate Quality Mode) — COMPLETE
-Plan: 3 of 3 complete
-Status: 11-03 complete — Candidate API endpoints and Quality Mode UI
-Last activity: 2026-02-16 — Completed 11-03 (candidate API + Quality Mode toggle + SceneCard comparison grid)
+Phase: 12 of 12 (Fork System Integration with Manifests) — IN PROGRESS
+Plan: 1 of 3 complete
+Status: 12-01 complete — DB migration and Asset inheritance schema foundation
+Last activity: 2026-02-17 — Completed 12-01 (Asset inheritance columns + AssetChanges Pydantic models + manifest_id in ProjectDetail)
 
-Progress: [████████░░] 94% (11 of 12 phases complete, 31 of 31 plans complete)
+Progress: [████████░░] 97% (11 of 12 phases complete, 32 of 34 plans complete)
 
 ## Performance Metrics
 
@@ -38,10 +38,11 @@ Progress: [████████░░] 94% (11 of 12 phases complete, 31 of 
 | 09-cv-analysis-pipeline | 3 | 10.0 min | 3.3 min |
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
 | 11-multi-candidate-quality-mode | 3/3 | 14.0 min | 4.7 min |
+| 12-fork-system-integration-with-manifests | 1/3 | 2.0 min | 2.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 10-02 (2.0min), 11-01 (3.0min), 11-02 (3.0min), 11-03 (8.0min)
-- Trend: Phase 11 complete — all 3 plans done; 11-03 larger due to full-stack API+UI work
+- Last 5 plans: 11-01 (3.0min), 11-02 (3.0min), 11-03 (8.0min), 12-01 (2.0min)
+- Trend: Phase 12 started — 12-01 schema foundation very fast (pure DB + Pydantic, no logic)
 
 *Updated after each plan completion*
 
@@ -176,6 +177,9 @@ Recent decisions affecting current work:
 - **11-03:** selectCandidate PUT updates both is_selected flag AND VideoClip.local_path — stitcher reads local_path so both must stay consistent
 - **11-03:** Optimistic UI update on selection: setCandidates fires immediately, PUT request fires async — avoids UI lag
 - **11-03:** .gitignore fixed: lib/ pattern changed to /lib/ (root-only) to allow frontend/src/lib/ to be committed
+- **12-01:** Asset inheritance columns use TEXT in SQL migration (SQLite UUID-as-TEXT) but Mapped[Optional[uuid.UUID]] with ForeignKey in ORM — consistent with source_asset_id pattern
+- **12-01:** manifest_id in ProjectDetail is Optional[str] (not UUID) for JSON API consistency with all other ID fields
+- **12-01:** 422 validation for asset_changes without manifest placed before _compute_invalidation to fail fast
 
 ### Roadmap Evolution
 
@@ -201,6 +205,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-16 (execution)
-Stopped at: Completed 11-03-PLAN.md (candidate API + Quality Mode UI — Phase 11 complete)
+Last session: 2026-02-17 (execution)
+Stopped at: Completed 12-01-PLAN.md (Asset inheritance schema + AssetChanges Pydantic models + manifest_id in ProjectDetail)
 Resume file: None

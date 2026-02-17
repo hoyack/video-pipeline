@@ -41,6 +41,7 @@ from vidpipe.config import settings
 from vidpipe.db.models import Project, Scene, Keyframe, VideoClip
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+from vidpipe.services import manifest_service
 
 logger = logging.getLogger(__name__)
 
@@ -127,15 +128,22 @@ async def _submit_video_job(
     start_frame_bytes: bytes,
     end_frame_bytes: bytes,
     project: Project,
+    reference_images: Optional[list] = None,
 ):
     """Submit a Veo video generation job with retry on transient 429/5xx errors.
 
     Content-policy errors (400/INVALID_ARGUMENT) are NOT retried here;
     they propagate to the caller for escalation.
     """
+    # Determine duration: 8 seconds if references attached, else project setting
+    duration_seconds = project.target_clip_duration
+    if reference_images:
+        duration_seconds = 8
+        logger.info(f"Duration overridden to 8s (reference images attached)")
+
     video_config = types.GenerateVideosConfig(
         aspect_ratio=project.aspect_ratio,
-        duration_seconds=project.target_clip_duration,
+        duration_seconds=duration_seconds,
         last_frame=types.Image(image_bytes=end_frame_bytes, mime_type="image/png"),
         negative_prompt=(
             "photorealistic, photo, photograph, hyperrealistic, "
@@ -154,6 +162,10 @@ async def _submit_video_job(
     # Disable prompt rewriter on Veo 2
     if video_model == "veo-2.0-generate-001":
         video_config.enhance_prompt = False
+
+    # Phase 8: Pass reference images if provided (identity preservation)
+    if reference_images:
+        video_config.reference_images = reference_images
 
     return await client.aio.models.generate_videos(
         model=video_model,
@@ -241,6 +253,7 @@ async def _poll_video_operation(
     project: Project,
     scene: Scene,
     file_mgr: FileManager,
+    selected_refs: Optional[list] = None,
 ) -> str:
     """Poll a Veo operation until completion.
 
@@ -289,7 +302,7 @@ async def _poll_video_operation(
                 )
                 clip.local_path = str(file_path)
                 clip.status = "complete"
-                clip.duration_seconds = project.target_clip_duration
+                clip.duration_seconds = 8 if selected_refs else project.target_clip_duration
                 clip.source = "generated"
                 scene.status = "video_done"
                 await session.commit()
@@ -396,6 +409,39 @@ async def _generate_video_for_scene(
     start_frame_bytes = Path(start_kf.file_path).read_bytes()
     end_frame_bytes = Path(end_kf.file_path).read_bytes()
 
+    # Load scene manifest and select references (Phase 8)
+    from vidpipe.db.models import SceneManifest as SceneManifestModel
+    from vidpipe.services.reference_selection import select_references_for_scene, get_primary_clean_reference
+
+    selected_refs = []
+    if project.manifest_id:
+        # Query scene manifest
+        sm_result = await session.execute(
+            select(SceneManifestModel).where(
+                SceneManifestModel.project_id == project.id,
+                SceneManifestModel.scene_index == scene.scene_index
+            )
+        )
+        scene_manifest_row = sm_result.scalar_one_or_none()
+
+        if scene_manifest_row and scene_manifest_row.manifest_json:
+            # Load all manifest assets
+            all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
+            selected_refs = select_references_for_scene(
+                scene_manifest_row.manifest_json,
+                all_assets
+            )
+
+            # Persist selected tags for debugging and UI display
+            if selected_refs:
+                scene_manifest_row.selected_reference_tags = [r.manifest_tag for r in selected_refs]
+                await session.commit()
+
+        logger.info(
+            f"Scene {scene.scene_index}: selected {len(selected_refs)} reference(s): "
+            f"{[r.manifest_tag for r in selected_refs]}"
+        )
+
     # Check if VideoClip already exists (idempotent resume per VGEN-03)
     result = await session.execute(
         select(VideoClip).where(VideoClip.scene_id == scene.id)
@@ -405,7 +451,7 @@ async def _generate_video_for_scene(
     # If clip exists and is still polling, resume the poll (crash recovery)
     if clip and clip.status == "polling" and clip.operation_name:
         poll_result = await _poll_video_operation(
-            session, clip, client, project, scene, file_mgr,
+            session, clip, client, project, scene, file_mgr, selected_refs,
         )
         if poll_result != "content_policy":
             return  # complete, failed, or timed_out
@@ -414,6 +460,31 @@ async def _generate_video_for_scene(
             f"Scene {scene.scene_index}: resumed poll hit content policy, "
             "starting remediation"
         )
+
+    # Build Veo reference images list (Phase 8)
+    veo_ref_images = None
+    if selected_refs:
+        veo_ref_images = []
+        for asset in selected_refs:
+            # Check for clean sheet override
+            clean_ref = await get_primary_clean_reference(session, asset.id)
+            img_url = clean_ref.clean_image_url if clean_ref else asset.reference_image_url
+
+            if img_url:
+                # Read image bytes (local file paths)
+                ref_bytes = Path(img_url).read_bytes()
+                veo_ref_images.append(
+                    types.VideoGenerationReferenceImage(
+                        reference_image=types.Image(
+                            image_bytes=ref_bytes,
+                            mime_type="image/png"
+                        ),
+                        reference_type=types.VideoGenerationReferenceType.ASSET
+                    )
+                )
+
+        if not veo_ref_images:
+            veo_ref_images = None  # No valid images found
 
     # ---- Escalating content-policy remediation loop ----
     max_levels = len(_VIDEO_SAFETY_PREFIXES)
@@ -449,6 +520,7 @@ async def _generate_video_for_scene(
             operation = await _submit_video_job(
                 client, video_model, video_prompt,
                 start_frame_bytes, end_frame_bytes, project,
+                reference_images=veo_ref_images,
             )
         except Exception as e:
             if (
@@ -501,7 +573,7 @@ async def _generate_video_for_scene(
 
         # Poll operation
         poll_result = await _poll_video_operation(
-            session, clip, client, project, scene, file_mgr,
+            session, clip, client, project, scene, file_mgr, selected_refs,
         )
 
         if poll_result == "complete":

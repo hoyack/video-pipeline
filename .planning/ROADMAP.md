@@ -98,7 +98,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 7. Manifest-Aware Storyboarding | 0/2 | ○ Planned | — |
 | 8. Veo Reference Passthrough | 0/3 | ○ Planned | — |
 | 9. CV Analysis Pipeline | 0/3 | ○ Planned | — |
-| 10. Adaptive Prompt Rewriting | 0/? | ○ Not planned | — |
+| 10. Adaptive Prompt Rewriting | 0/2 | ○ Planned | — |
 | 11. Multi-Candidate Quality Mode | 0/? | ○ Not planned | — |
 | 12. Fork System Integration | 0/? | ○ Not planned | — |
 
@@ -216,10 +216,11 @@ Plans:
   4. Continuity checking compares scene N-1 end state with scene N start requirements and patches prompts accordingly
   5. Reverse prompts refined based on what models actually produce (not just initial descriptions)
   6. `scene_manifests.rewritten_keyframe_prompt` and `rewritten_video_prompt` stored separately from original prompt
-**Plans:** 0 plans
+**Plans:** 2 plans in 2 waves
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 10 to break down)
+- [ ] 10-01-PLAN.md — PromptRewriterService, pydantic output schemas, SceneManifest columns, and SQL migration
+- [ ] 10-02-PLAN.md — Pipeline integration: keyframes.py and video_gen.py rewriter hooks with LLM reference override
 
 ### Phase 11: Multi-Candidate Quality Mode
 **Goal**: Users can generate 2-4 candidate clips per scene with composite quality scoring (manifest adherence, visual quality, continuity, prompt adherence) and select the best take manually or automatically

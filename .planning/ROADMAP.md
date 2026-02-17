@@ -100,7 +100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 9. CV Analysis Pipeline | 0/3 | ○ Planned | — |
 | 10. Adaptive Prompt Rewriting | 0/2 | Complete    | 2026-02-17 |
 | 11. Multi-Candidate Quality Mode | 0/3 | Complete    | 2026-02-17 |
-| 12. Fork System Integration | 0/? | ○ Not planned | — |
+| 12. Fork System Integration | 0/3 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -251,3 +251,9 @@ Plans:
   5. Modified assets (swapped reference image, edited reverse_prompt) invalidate scenes using that asset from the modification point forward
   6. Face embeddings cross-matched against ALL assets (inherited + new) during incremental manifesting
   7. EditForkPanel shows inherited assets with lock/edit/remove controls and "Add New Reference Images" option
+**Plans:** 3 plans in 3 waves
+
+Plans:
+- [ ] 12-01-PLAN.md — DB migration, Asset inheritance ORM fields, ForkRequest/AssetChanges schemas, ProjectDetail manifest_id
+- [ ] 12-02-PLAN.md — Fork endpoint asset copy, scene manifest inheritance, invalidation extension, incremental manifesting
+- [ ] 12-03-PLAN.md — Frontend TypeScript types, API client, EditForkPanel asset management UI

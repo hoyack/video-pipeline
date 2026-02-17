@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from google.genai import types
 from vidpipe.db import async_session
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel
+from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, GenerationCandidate
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import SceneSchema
@@ -470,6 +470,24 @@ class ProcessingProgressResponse(BaseModel):
     current_step: Optional[str] = None
     progress: Optional[dict] = None
     error: Optional[str] = None
+
+
+class CandidateResponse(BaseModel):
+    """Response schema for a single generation candidate."""
+    candidate_id: str
+    candidate_number: int
+    local_path: Optional[str] = None
+    manifest_adherence_score: Optional[float] = None
+    visual_quality_score: Optional[float] = None
+    continuity_score: Optional[float] = None
+    prompt_adherence_score: Optional[float] = None
+    composite_score: Optional[float] = None
+    scoring_details: Optional[dict] = None
+    is_selected: bool = False
+    selected_by: str = "auto"
+    generation_cost: float = 0.0
+    scoring_cost: float = 0.0
+    created_at: str
 
 
 # ============================================================================
@@ -1919,3 +1937,94 @@ async def reprocess_asset(asset_id: uuid.UUID):
         updated = await engine.reprocess_asset(asset_id)
 
         return _asset_to_response(updated)
+
+
+# ============================================================================
+# Phase 11: Multi-Candidate Quality Mode Endpoints
+# ============================================================================
+
+@router.get("/projects/{project_id}/scenes/{scene_idx}/candidates")
+async def list_candidates(project_id: str, scene_idx: int):
+    """List all generation candidates for a specific scene with scores."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(GenerationCandidate)
+            .where(
+                GenerationCandidate.project_id == uuid.UUID(project_id),
+                GenerationCandidate.scene_index == scene_idx,
+            )
+            .order_by(GenerationCandidate.candidate_number)
+        )
+        candidates = result.scalars().all()
+        return [
+            CandidateResponse(
+                candidate_id=str(c.id),
+                candidate_number=c.candidate_number,
+                local_path=c.local_path,
+                manifest_adherence_score=c.manifest_adherence_score,
+                visual_quality_score=c.visual_quality_score,
+                continuity_score=c.continuity_score,
+                prompt_adherence_score=c.prompt_adherence_score,
+                composite_score=c.composite_score,
+                scoring_details=c.scoring_details,
+                is_selected=c.is_selected,
+                selected_by=c.selected_by,
+                generation_cost=c.generation_cost,
+                scoring_cost=c.scoring_cost,
+                created_at=str(c.created_at),
+            )
+            for c in candidates
+        ]
+
+
+@router.put("/projects/{project_id}/scenes/{scene_idx}/candidates/{candidate_id}/select")
+async def select_candidate(project_id: str, scene_idx: int, candidate_id: str):
+    """Manually override auto-selection for a scene's candidate.
+
+    CRITICAL: Updates BOTH GenerationCandidate.is_selected AND VideoClip.local_path.
+    The stitcher reads VideoClip.local_path, so both must be consistent.
+    """
+    async with async_session() as session:
+        # Load all candidates for this scene
+        all_result = await session.execute(
+            select(GenerationCandidate).where(
+                GenerationCandidate.project_id == uuid.UUID(project_id),
+                GenerationCandidate.scene_index == scene_idx,
+            )
+        )
+        all_candidates = all_result.scalars().all()
+        if not all_candidates:
+            raise HTTPException(404, "No candidates found for this scene")
+
+        # Find the chosen candidate
+        chosen = next(
+            (c for c in all_candidates if str(c.id) == candidate_id),
+            None,
+        )
+        if not chosen:
+            raise HTTPException(404, "Candidate not found")
+
+        # Deselect all, then select chosen
+        for c in all_candidates:
+            c.is_selected = False
+        chosen.is_selected = True
+        chosen.selected_by = "user"
+
+        # CRITICAL: Update VideoClip.local_path to point to selected candidate
+        scene_result = await session.execute(
+            select(Scene).where(
+                Scene.project_id == uuid.UUID(project_id),
+                Scene.scene_index == scene_idx,
+            )
+        )
+        scene = scene_result.scalar_one_or_none()
+        if scene:
+            clip_result = await session.execute(
+                select(VideoClip).where(VideoClip.scene_id == scene.id)
+            )
+            clip = clip_result.scalar_one_or_none()
+            if clip:
+                clip.local_path = chosen.local_path
+
+        await session.commit()
+        return {"selected": candidate_id, "selected_by": "user"}

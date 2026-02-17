@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from google.genai import types
 from vidpipe.db import async_session
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset
+from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import SceneSchema
@@ -235,6 +235,18 @@ class StatusResponse(BaseModel):
     error_message: Optional[str] = None
 
 
+class SceneReference(BaseModel):
+    """Asset reference selected for a scene's Veo generation."""
+    asset_id: str
+    manifest_tag: str
+    name: str
+    asset_type: str
+    thumbnail_url: Optional[str] = None
+    reference_image_url: Optional[str] = None
+    quality_score: Optional[float] = None
+    is_face_crop: bool = False
+
+
 class SceneDetail(BaseModel):
     """Scene detail within ProjectDetail response."""
     scene_index: int
@@ -251,6 +263,7 @@ class SceneDetail(BaseModel):
     start_keyframe_url: Optional[str] = None
     end_keyframe_url: Optional[str] = None
     clip_url: Optional[str] = None
+    selected_references: list[SceneReference] = []
 
 
 class ProjectDetail(BaseModel):
@@ -658,6 +671,46 @@ async def get_project_detail(project_id: uuid.UUID):
                 end_keyframe_url=f"/api/keyframes/{end_kf.id}" if end_kf else None,
                 clip_url=f"/api/clips/{clip.id}" if clip and clip.status == "complete" and clip.local_path else None,
             ))
+
+        # Load selected reference tags for all scenes (Phase 8)
+        sm_result = await session.execute(
+            select(SceneManifestModel).where(
+                SceneManifestModel.project_id == project.id
+            )
+        )
+        scene_manifests_by_index = {
+            sm.scene_index: sm for sm in sm_result.scalars().all()
+        }
+
+        # If project has manifest, load assets for reference resolution
+        ref_assets_by_tag = {}
+        if project.manifest_id:
+            assets_result = await session.execute(
+                select(Asset).where(Asset.manifest_id == project.manifest_id)
+            )
+            ref_assets_by_tag = {
+                a.manifest_tag: a for a in assets_result.scalars().all()
+            }
+
+        # Enrich scene_details with selected references
+        for sd in scene_details:
+            sm = scene_manifests_by_index.get(sd.scene_index)
+            if sm and sm.selected_reference_tags:
+                refs = []
+                for tag in sm.selected_reference_tags:
+                    asset = ref_assets_by_tag.get(tag)
+                    if asset:
+                        refs.append(SceneReference(
+                            asset_id=str(asset.id),
+                            manifest_tag=asset.manifest_tag,
+                            name=asset.name,
+                            asset_type=asset.asset_type,
+                            thumbnail_url=asset.thumbnail_url,
+                            reference_image_url=asset.reference_image_url,
+                            quality_score=asset.quality_score,
+                            is_face_crop=asset.is_face_crop,
+                        ))
+                sd.selected_references = refs
 
         return ProjectDetail(
             project_id=str(project.id),

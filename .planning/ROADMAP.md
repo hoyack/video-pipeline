@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 8: Veo Reference Passthrough and Clean Sheets** - 3-reference selection logic, background removal, clean sheet generation
 - [ ] **Phase 9: CV Analysis Pipeline and Progressive Enrichment** - Post-generation YOLO + face matching + CLIP, asset extraction from generated content
 - [x] **Phase 10: Adaptive Prompt Rewriting** - Dynamic prompt enrichment with continuity checking and LLM rewriter (completed 2026-02-17)
-- [ ] **Phase 11: Multi-Candidate Quality Mode** - sampleCount configuration, composite scoring pipeline, candidate comparison UI
+- [x] **Phase 11: Multi-Candidate Quality Mode** - sampleCount configuration, composite scoring pipeline, candidate comparison UI (completed 2026-02-17)
 - [ ] **Phase 12: Fork System Integration with Manifests** - Asset/manifest inheritance, incremental manifesting on fork
 
 ## Phase Details
@@ -99,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 8. Veo Reference Passthrough | 0/3 | ○ Planned | — |
 | 9. CV Analysis Pipeline | 0/3 | ○ Planned | — |
 | 10. Adaptive Prompt Rewriting | 0/2 | Complete    | 2026-02-17 |
-| 11. Multi-Candidate Quality Mode | 0/3 | ○ Planned | — |
+| 11. Multi-Candidate Quality Mode | 0/3 | Complete    | 2026-02-17 |
 | 12. Fork System Integration | 0/? | ○ Not planned | — |
 
 ### Phase 4: Manifest System Foundation
@@ -233,7 +233,7 @@ Plans:
   5. CLIP embedding similarity between scene N-1 last frame and candidate first frame for continuity scoring
   6. Candidate comparison UI shows all candidates with scores; user can manually override auto-selection
   7. Cost impact clearly shown (Quality Mode ~2x video generation cost)
-**Plans:** 3 plans in 3 waves
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 11-01-PLAN.md — GenerationCandidate model, Project quality columns, CandidateScoringService

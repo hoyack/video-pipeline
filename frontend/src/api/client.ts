@@ -229,4 +229,12 @@ export function selectCandidate(
   );
 }
 
+/** GET /api/manifests/{id} — fetch assets for a manifest (used in EditForkPanel) */
+export async function fetchManifestAssets(manifestId: string): Promise<AssetResponse[]> {
+  const res = await fetch(`/api/manifests/${manifestId}`);
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  const data = await res.json();
+  return data.assets;
+}
+
 export { ApiError };

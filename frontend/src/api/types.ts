@@ -96,6 +96,7 @@ export interface ProjectDetail {
   video_model?: string | null;
   audio_enabled?: boolean | null;
   forked_from?: string | null;
+  manifest_id?: string | null;
   quality_mode?: boolean;
   candidate_count?: number;
 }
@@ -127,6 +128,31 @@ export interface StopResponse {
   status: string;
 }
 
+/** Asset modification in a fork */
+export interface ModifiedAsset {
+  changes: {
+    reverse_prompt?: string;
+    name?: string;
+    visual_description?: string;
+  };
+}
+
+/** New reference upload to add in fork */
+export interface NewForkUpload {
+  image_data: string;  // base64-encoded
+  name: string;
+  asset_type: string;
+  description?: string;
+  tags?: string[];
+}
+
+/** Asset changes for fork request */
+export interface AssetChanges {
+  modified_assets?: Record<string, ModifiedAsset>;
+  removed_asset_ids?: string[];
+  new_uploads?: NewForkUpload[];
+}
+
 /** Request body for POST /api/projects/{id}/fork */
 export interface ForkRequest {
   prompt?: string;
@@ -141,6 +167,7 @@ export interface ForkRequest {
   scene_edits?: Record<number, Record<string, string>>;
   deleted_scenes?: number[];
   clear_keyframes?: number[];
+  asset_changes?: AssetChanges;
 }
 
 /** Response from POST /api/projects/{id}/fork */

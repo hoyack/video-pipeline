@@ -39,11 +39,26 @@ from tenacity import (
 
 from vidpipe.config import settings
 from vidpipe.db.models import Project, Scene, Keyframe, VideoClip
+from vidpipe.services.cv_analysis_service import CVAnalysisService
+from vidpipe.services.entity_extraction import identify_new_entities, extract_and_register_new_entities
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services import manifest_service
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Lazy CV analysis service (Phase 9: progressive enrichment)
+# ---------------------------------------------------------------------------
+_cv_analysis_service: CVAnalysisService | None = None
+
+
+def _get_cv_analysis_service() -> CVAnalysisService:
+    """Return singleton CVAnalysisService, creating it on first call."""
+    global _cv_analysis_service
+    if _cv_analysis_service is None:
+        _cv_analysis_service = CVAnalysisService()
+    return _cv_analysis_service
 
 # ---------------------------------------------------------------------------
 # Content-policy safety prefixes (escalating strength)
@@ -341,6 +356,106 @@ async def _poll_video_operation(
 
 
 # ---------------------------------------------------------------------------
+# Phase 9: Post-generation CV analysis for progressive enrichment
+# ---------------------------------------------------------------------------
+async def _run_post_generation_analysis(
+    session: AsyncSession,
+    scene: Scene,
+    clip: VideoClip,
+    project: Project,
+    scene_manifest_row,  # SceneManifest | None (imported inline to avoid circular)
+) -> None:
+    """Run CV analysis on completed video clip for progressive enrichment.
+
+    This runs AFTER each scene's video clip completes, BEFORE the next scene
+    starts. Enables progressive enrichment: assets from scene N feed into
+    scene N+1's reference selection.
+
+    Gracefully degrades — if analysis fails, logs warning and pipeline continues.
+    Non-manifest projects skip CV analysis entirely (backward compatible).
+    """
+    try:
+        # Guard 1: non-manifest projects skip CV analysis entirely
+        if not project.manifest_id:
+            return
+
+        # Guard 2: no video clip path to analyze
+        if not clip.local_path:
+            return
+
+        cv_service = _get_cv_analysis_service()
+
+        # Load all manifest assets for face matching and entity extraction
+        all_assets = await manifest_service.load_manifest_assets(
+            session, project.manifest_id
+        )
+
+        # Collect keyframe paths (start and end frames for this scene)
+        kf_result = await session.execute(
+            select(Keyframe)
+            .where(Keyframe.scene_id == scene.id)
+            .order_by(Keyframe.position)
+        )
+        keyframes = kf_result.scalars().all()
+        keyframe_paths = [
+            kf.file_path
+            for kf in keyframes
+            if kf.file_path and Path(kf.file_path).exists()
+        ]
+
+        # Step 5: Run full CV analysis (frame sampling, YOLO, face match, CLIP, Gemini)
+        analysis_result = await cv_service.analyze_generated_content(
+            scene_index=scene.scene_index,
+            keyframe_paths=keyframe_paths,
+            clip_path=clip.local_path,
+            scene_manifest_json=(
+                scene_manifest_row.manifest_json if scene_manifest_row else None
+            ),
+            existing_assets=all_assets,
+        )
+
+        # Step 6: Track appearances — persist AssetAppearance records
+        await cv_service.track_appearances(
+            session, project.id, scene.scene_index, analysis_result
+        )
+
+        # Step 7: Extract and register new entities into Asset Registry
+        new_entities = identify_new_entities(analysis_result, all_assets)
+        if new_entities:
+            await extract_and_register_new_entities(
+                session,
+                project.id,
+                project.manifest_id,
+                scene.scene_index,
+                new_entities,
+                source="CLIP_EXTRACT",
+            )
+
+        # Step 8: Persist analysis results to SceneManifest (exclude raw embeddings)
+        if scene_manifest_row is not None:
+            scene_manifest_row.cv_analysis_json = analysis_result.model_dump(
+                exclude={"clip_embeddings"}
+            )
+            scene_manifest_row.continuity_score = analysis_result.continuity_score
+
+        # Commit all analysis results (appearances, new assets, scene manifest update)
+        await session.commit()
+
+        logger.info(
+            f"Scene {scene.scene_index}: CV analysis complete — "
+            f"{len(analysis_result.face_matches)} face matches, "
+            f"{analysis_result.new_entity_count} new entities, "
+            f"continuity: {analysis_result.continuity_score:.1f}"
+        )
+
+    except Exception as e:
+        logger.warning(
+            f"Scene {scene.scene_index}: CV analysis failed (non-fatal): {e}"
+        )
+        # Pipeline continues — CV analysis failure is NOT a pipeline failure
+
+
+# ---------------------------------------------------------------------------
 # Main per-scene video generation with escalating remediation
 # ---------------------------------------------------------------------------
 async def generate_videos(session: AsyncSession, project: Project) -> None:
@@ -413,6 +528,9 @@ async def _generate_video_for_scene(
     from vidpipe.db.models import SceneManifest as SceneManifestModel
     from vidpipe.services.reference_selection import select_references_for_scene, get_primary_clean_reference
 
+    # Initialize scene_manifest_row to None so it's accessible from both
+    # completion paths (crash recovery resume and escalation loop).
+    scene_manifest_row = None
     selected_refs = []
     if project.manifest_id:
         # Query scene manifest
@@ -454,6 +572,11 @@ async def _generate_video_for_scene(
             session, clip, client, project, scene, file_mgr, selected_refs,
         )
         if poll_result != "content_policy":
+            if poll_result == "complete":
+                # Phase 9: Post-generation CV analysis for progressive enrichment
+                await _run_post_generation_analysis(
+                    session, scene, clip, project, scene_manifest_row,
+                )
             return  # complete, failed, or timed_out
         # Content policy → fall through to escalation loop
         logger.warning(
@@ -582,6 +705,10 @@ async def _generate_video_for_scene(
                     f"Scene {scene.scene_index}: succeeded at safety level "
                     f"{safety_level}"
                 )
+            # Phase 9: Post-generation CV analysis for progressive enrichment
+            await _run_post_generation_analysis(
+                session, scene, clip, project, scene_manifest_row,
+            )
             return
         elif poll_result == "content_policy":
             # Reset scene status for next attempt

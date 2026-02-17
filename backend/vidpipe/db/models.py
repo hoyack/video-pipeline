@@ -79,6 +79,11 @@ class Asset(Base):
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     source_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("assets.id"), nullable=True)  # parent asset if extracted crop
 
+    # Phase 12: Fork inheritance tracking
+    is_inherited: Mapped[bool] = mapped_column(Boolean, default=False)
+    inherited_from_asset: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("assets.id"), nullable=True)
+    inherited_from_project: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id"), nullable=True)
+
 
 class AssetCleanReference(Base):
     """Clean reference image generated for an asset at a specific quality tier.

@@ -560,6 +560,92 @@ async def _generate_video_for_scene(
             f"{[r.manifest_tag for r in selected_refs]}"
         )
 
+    # Phase 10: Adaptive Prompt Rewriting for manifest projects
+    base_video_prompt = None  # Will hold rewritten or original prompt
+    if project.manifest_id and scene_manifest_row and scene_manifest_row.manifest_json:
+        try:
+            from vidpipe.services.prompt_rewriter import PromptRewriterService
+            from vidpipe.db.models import SceneAudioManifest as SceneAudioManifestModel
+
+            # Load audio manifest
+            audio_result = await session.execute(
+                select(SceneAudioManifestModel).where(
+                    SceneAudioManifestModel.project_id == project.id,
+                    SceneAudioManifestModel.scene_index == scene.scene_index
+                )
+            )
+            audio_manifest_row = audio_result.scalar_one_or_none()
+            audio_manifest_json = None
+            if audio_manifest_row:
+                audio_manifest_json = {
+                    "dialogue_lines": audio_manifest_row.dialogue_json,
+                    "sfx": audio_manifest_row.sfx_json,
+                    "ambient": audio_manifest_row.ambient_json,
+                    "music": audio_manifest_row.music_json,
+                }
+
+            # Load previous scene CV analysis for continuity
+            previous_cv = None
+            if scene.scene_index > 0:
+                prev_sm_result = await session.execute(
+                    select(SceneManifestModel).where(
+                        SceneManifestModel.project_id == project.id,
+                        SceneManifestModel.scene_index == scene.scene_index - 1
+                    )
+                )
+                prev_sm = prev_sm_result.scalar_one_or_none()
+                if prev_sm:
+                    previous_cv = prev_sm.cv_analysis_json
+
+            # all_assets already loaded above in Phase 8 block
+            rewriter = PromptRewriterService()
+            result = await rewriter.rewrite_video_prompt(
+                scene=scene,
+                scene_manifest_json=scene_manifest_row.manifest_json,
+                audio_manifest_json=audio_manifest_json,
+                placed_assets=all_assets,
+                previous_cv_analysis=previous_cv,
+                all_assets=all_assets,
+            )
+
+            base_video_prompt = result.rewritten_prompt
+
+            # Persist rewritten video prompt
+            scene_manifest_row.rewritten_video_prompt = result.rewritten_prompt
+
+            # LLM reference selection overrides Phase 8's deterministic selection
+            if result.selected_reference_tags:
+                asset_map = {a.manifest_tag: a for a in all_assets}
+                llm_selected = [
+                    asset_map[tag]
+                    for tag in result.selected_reference_tags
+                    if tag in asset_map
+                ]
+                if llm_selected:
+                    selected_refs = llm_selected
+                    scene_manifest_row.selected_reference_tags = result.selected_reference_tags
+                    logger.info(
+                        f"Scene {scene.scene_index}: LLM override refs: "
+                        f"{result.selected_reference_tags} "
+                        f"(reason: {result.reference_reasoning})"
+                    )
+
+            await session.commit()
+
+            logger.info(
+                f"Scene {scene.scene_index}: video prompt rewritten "
+                f"({len(result.rewritten_prompt)} chars)"
+            )
+        except Exception as e:
+            # Re-raise PipelineStopped — it must propagate (inherits from Exception)
+            from vidpipe.orchestrator.pipeline import PipelineStopped
+            if isinstance(e, PipelineStopped):
+                raise
+            logger.warning(
+                f"Scene {scene.scene_index}: video rewriter failed (non-fatal): {e}"
+            )
+            base_video_prompt = None  # Fall back to original
+
     # Check if VideoClip already exists (idempotent resume per VGEN-03)
     result = await session.execute(
         select(VideoClip).where(VideoClip.scene_id == scene.id)
@@ -632,11 +718,19 @@ async def _generate_video_for_scene(
                     clip.safety_regen_count = (clip.safety_regen_count or 0) + 1
 
         # Build video prompt with escalating safety prefix
-        video_prompt = (
-            f"{_VIDEO_SAFETY_PREFIXES[safety_level]}"
-            f"{scene.video_motion_prompt}. "
-            f"Maintain the visual style shown in the source frames."
-        )
+        # Phase 10: Use rewritten prompt as base if available (manifest projects)
+        # Safety prefix stacks on top; rewritten prompt already includes full formula + audio
+        if base_video_prompt:
+            video_prompt = (
+                f"{_VIDEO_SAFETY_PREFIXES[safety_level]}"
+                f"{base_video_prompt}"
+            )
+        else:
+            video_prompt = (
+                f"{_VIDEO_SAFETY_PREFIXES[safety_level]}"
+                f"{scene.video_motion_prompt}. "
+                f"Maintain the visual style shown in the source frames."
+            )
 
         # Submit job (retries transient 429/5xx automatically)
         try:

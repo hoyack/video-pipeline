@@ -12,6 +12,7 @@ This module implements KEYF-01 through KEYF-06 requirements:
 import asyncio
 import logging
 
+import numpy as np
 from google.genai import types
 from google.genai.errors import ClientError, ServerError
 from sqlalchemy import select
@@ -31,6 +32,21 @@ from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Identity emphasis escalation prefixes for face verification retry
+# ---------------------------------------------------------------------------
+_IDENTITY_EMPHASIS_PREFIXES = [
+    # Level 0: normal generation (no prefix)
+    "",
+    # Level 1: strong identity-matching instruction
+    (
+        "CRITICAL: The character's FACE must EXACTLY match the reference photo(s). "
+        "Pay close attention to facial bone structure, eye shape, nose bridge, "
+        "jawline, and skin tone. The generated face must be recognizable as the "
+        "SAME PERSON shown in the reference images. "
+    ),
+]
 
 
 def _is_retriable(exc: BaseException) -> bool:
@@ -54,17 +70,20 @@ def _is_retriable(exc: BaseException) -> bool:
 async def _generate_image_from_text(
     client, prompt: str, aspect_ratio: str, image_model: str,
     seed: int | None = None,
+    reference_images: list[bytes] | None = None,
 ) -> bytes:
-    """Generate image from text prompt using Imagen or Gemini.
+    """Generate image from text prompt using Gemini generate_content().
 
-    Imagen models use the generate_images() API.
-    Gemini image models use generate_content() with response_modalities=["IMAGE"].
+    When reference_images are provided, they are prepended as image parts
+    so Gemini can use them for visual identity grounding (face, clothing, etc.).
 
     Args:
         client: Vertex AI client instance
         prompt: Text description for image generation
         aspect_ratio: Image aspect ratio (e.g., "16:9", "9:16", "1:1")
         image_model: Model ID to use for generation
+        seed: Optional seed for reproducibility
+        reference_images: Optional list of PNG bytes for identity grounding
 
     Returns:
         PNG image data as bytes
@@ -72,41 +91,38 @@ async def _generate_image_from_text(
     Raises:
         ValueError: If no image found in response
     """
-    if image_model.startswith("imagen-"):
-        # Imagen models → generate_images() API
-        imagen_config = types.GenerateImagesConfig(
-            number_of_images=1,
-            aspect_ratio=aspect_ratio,
-            output_mime_type="image/png",
+    # Build contents: [ref_image_1, ref_image_2, ..., text_prompt]
+    # When reference images are present, prepend an identity-matching instruction
+    # so Gemini knows these images define the characters' visual appearance.
+    contents: list = []
+    if reference_images:
+        ref_prefix = (
+            "The following reference photo(s) show the EXACT person(s) who must appear "
+            "in the generated image. Match their face, skin tone, head shape, and "
+            "distinguishing features as closely as possible. "
+            "These are real reference photos — the generated character MUST look like "
+            "the same person, not just a similar description.\n\n"
         )
-        if seed is not None:
-            imagen_config.seed = seed
-            imagen_config.add_watermark = False
-        response = await client.aio.models.generate_images(
-            model=image_model,
-            prompt=prompt,
-            config=imagen_config,
-        )
+        contents.append(ref_prefix)
+        for ref_bytes in reference_images:
+            contents.append(
+                types.Part.from_bytes(data=ref_bytes, mime_type="image/png")
+            )
+    contents.append(prompt)
 
-        if response.generated_images:
-            return response.generated_images[0].image.image_bytes
+    response = await client.aio.models.generate_content(
+        model=image_model,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+        ),
+    )
 
-        raise ValueError("No image generated in response")
-    else:
-        # Gemini image models → generate_content() with image output
-        response = await client.aio.models.generate_content(
-            model=image_model,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-            ),
-        )
+    for part in response.candidates[0].content.parts:
+        if part.inline_data:
+            return part.inline_data.data
 
-        for part in response.candidates[0].content.parts:
-            if part.inline_data:
-                return part.inline_data.data
-
-        raise ValueError("No image generated in response")
+    raise ValueError("No image generated in response")
 
 
 @retry(
@@ -121,20 +137,21 @@ async def _generate_image_conditioned(
     prompt: str,
     aspect_ratio: str,
     conditioned_model: str,
+    reference_images: list[bytes] | None = None,
 ) -> bytes:
-    """Generate image using reference image for conditioning.
+    """Generate image using conditioning frame + optional asset reference images.
 
-    Uses Gemini model with multimodal input (reference image + text) and
-    image output via response_modalities. Imagen's generate_images API
-    doesn't support reference image conditioning, so we use Gemini which
-    natively handles multimodal understanding + image generation.
+    Contents order: [conditioning_frame, ref_image_1, ..., text_prompt]
+    The conditioning frame comes first (strongest weight for visual continuity),
+    followed by asset reference images for identity grounding.
 
     Args:
         client: Vertex AI client instance
-        reference_image_bytes: PNG image data to use as reference
+        reference_image_bytes: PNG image data from previous frame (conditioning)
         prompt: Text description for conditioned generation
         aspect_ratio: Image aspect ratio (e.g., "16:9", "9:16", "1:1")
         conditioned_model: Model ID to use for conditioned generation
+        reference_images: Optional list of PNG bytes for identity grounding
 
     Returns:
         PNG image data as bytes
@@ -142,12 +159,25 @@ async def _generate_image_conditioned(
     Raises:
         ValueError: If no image found in response
     """
+    # Build contents: [conditioning_frame, identity_instruction, ref_images..., text_prompt]
+    contents: list = [
+        types.Part.from_bytes(data=reference_image_bytes, mime_type="image/png"),
+    ]
+    if reference_images:
+        contents.append(types.Part.from_text(text=(
+            "The following reference photo(s) show the EXACT person(s) who must appear "
+            "in the generated image. Match their face, skin tone, head shape, and "
+            "distinguishing features as closely as possible."
+        )))
+        for ref_bytes in reference_images:
+            contents.append(
+                types.Part.from_bytes(data=ref_bytes, mime_type="image/png")
+            )
+    contents.append(types.Part.from_text(text=prompt))
+
     response = await client.aio.models.generate_content(
         model=conditioned_model,
-        contents=[
-            types.Part.from_bytes(data=reference_image_bytes, mime_type="image/png"),
-            types.Part.from_text(text=prompt),
-        ],
+        contents=contents,
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
         ),
@@ -159,6 +189,105 @@ async def _generate_image_conditioned(
             return part.inline_data.data
 
     raise ValueError("No image generated in response")
+
+
+async def _verify_keyframe_faces(
+    keyframe_bytes: bytes,
+    placed_char_assets: list,
+    threshold: float | None = None,
+) -> tuple[bool, float, str]:
+    """Verify generated keyframe contains faces matching placed CHARACTER assets.
+
+    Uses YOLO face detection + ArcFace embedding comparison.
+
+    Soft degradation — returns (True, ...) when:
+    - No placed chars have face_embedding → "no_embeddings_available"
+    - No faces detected in keyframe → "no_faces_detected"
+    - CV services fail → "verification_error"
+
+    Args:
+        keyframe_bytes: Generated keyframe image bytes
+        placed_char_assets: Asset objects for placed CHARACTERs (must have face_embedding)
+        threshold: Cosine similarity threshold (default from config)
+
+    Returns:
+        (passed, best_similarity, detail_string)
+    """
+    if threshold is None:
+        threshold = settings.cv_analysis.keyframe_face_match_threshold
+
+    # Filter to assets that actually have face embeddings
+    assets_with_emb = [
+        a for a in placed_char_assets
+        if a.face_embedding is not None
+    ]
+    if not assets_with_emb:
+        return True, 0.0, "no_embeddings_available"
+
+    try:
+        from vidpipe.services.cv_detection import CVDetectionService
+        from vidpipe.services.face_matching import FaceMatchingService
+
+        cv_detector = CVDetectionService()
+        face_matcher = FaceMatchingService()
+
+        # Detect faces in generated keyframe
+        faces = await asyncio.to_thread(
+            cv_detector.detect_faces_from_bytes, keyframe_bytes
+        )
+        if not faces:
+            return True, 0.0, "no_faces_detected"
+
+        # Crop the best face from the keyframe and get its embedding
+        from PIL import Image
+        import io
+
+        img = Image.open(io.BytesIO(keyframe_bytes)).convert("RGB")
+
+        best_similarity = 0.0
+
+        for face in faces:
+            x1, y1, x2, y2 = face["bbox"]
+            # Add 10% padding
+            fw, fh = x2 - x1, y2 - y1
+            px, py = fw * 0.1, fh * 0.1
+            cx1 = max(0, x1 - px)
+            cy1 = max(0, y1 - py)
+            cx2 = min(img.width, x2 + px)
+            cy2 = min(img.height, y2 + py)
+
+            face_crop = img.crop((cx1, cy1, cx2, cy2))
+
+            # Convert crop to bytes for embedding
+            buf = io.BytesIO()
+            face_crop.save(buf, format="PNG")
+            crop_bytes = buf.getvalue()
+
+            try:
+                gen_embedding = await asyncio.to_thread(
+                    face_matcher.generate_embedding_from_bytes, crop_bytes
+                )
+            except ValueError:
+                continue
+
+            # Compare against each placed CHARACTER's stored embedding
+            for asset in assets_with_emb:
+                ref_embedding = np.frombuffer(
+                    asset.face_embedding, dtype=np.float32
+                ).copy()
+                sim = FaceMatchingService.cosine_similarity(gen_embedding, ref_embedding)
+                best_similarity = max(best_similarity, sim)
+
+        passed = best_similarity >= threshold
+        detail = (
+            f"best_sim={best_similarity:.3f} threshold={threshold:.3f} "
+            f"faces_detected={len(faces)} chars_checked={len(assets_with_emb)}"
+        )
+        return passed, best_similarity, detail
+
+    except Exception as e:
+        logger.warning(f"Face verification error (non-fatal): {e}")
+        return True, 0.0, f"verification_error: {e}"
 
 
 async def generate_keyframes(session: AsyncSession, project: Project) -> None:
@@ -189,14 +318,16 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
         - Uses rate limiting to prevent 429 errors
         - Sequential processing ensures visual continuity (KEYF-04)
     """
-    # Resolve image models from project (with fallback to settings)
+    # Resolve image model from project (with fallback to settings)
     image_model = project.image_model or settings.models.image_gen
 
-    # Auto-pair the conditioned model
-    from vidpipe.api.routes import IMAGE_CONDITIONED_MAP
-    conditioned_model = IMAGE_CONDITIONED_MAP.get(
-        image_model, settings.models.image_conditioned
-    )
+    # Guard: Imagen models no longer supported — fall back to config default
+    if image_model.startswith("imagen-"):
+        logger.warning(
+            f"Project uses unsupported Imagen model '{image_model}', "
+            f"falling back to '{settings.models.image_gen}'"
+        )
+        image_model = settings.models.image_gen
 
     # Build character bible prefix from storyboard data
     character_prefix = ""
@@ -222,9 +353,8 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
         if parts:
             style_prefix = ". ".join(parts) + ". "
 
-    # Get location-aware clients for each model
+    # All Gemini now — same client for text-to-image and conditioned generation
     image_client = get_vertex_client(location=location_for_model(image_model))
-    conditioned_client = get_vertex_client(location=location_for_model(conditioned_model))
     file_mgr = FileManager()
 
     # Query scenes ordered by scene_index for sequential processing
@@ -263,10 +393,15 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
             continue
 
         # Phase 10: Adaptive Prompt Rewriting for manifest projects
+        # Also resolves asset reference images for multimodal keyframe generation
         rewritten_start_prompt = None
+        selected_ref_assets: list = []
+        ref_image_bytes_list: list[bytes] = []
+        placed_char_assets: list = []  # CHARACTER assets placed in scene (for face verification)
         if project.manifest_id:
             try:
                 from vidpipe.services.prompt_rewriter import PromptRewriterService
+                from vidpipe.services.reference_selection import resolve_asset_image_bytes
                 from vidpipe.db.models import SceneManifest as SceneManifestModel
 
                 # Load scene manifest
@@ -315,11 +450,58 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
                         f"Scene {scene.scene_index}: keyframe prompt rewritten "
                         f"(refs: {result.selected_reference_tags})"
                     )
+
+                    # Post-LLM enforcement: ensure placed CHARACTER assets are in refs
+                    asset_map = {a.manifest_tag: a for a in all_assets}
+                    placed_char_tags = {
+                        p["asset_tag"]
+                        for p in scene_manifest_row.manifest_json.get("placements", [])
+                        if "asset_tag" in p
+                        and asset_map.get(p["asset_tag"])
+                        and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
+                        and asset_map[p["asset_tag"]].reference_image_url
+                    }
+                    current_tags = list(result.selected_reference_tags or [])
+                    missing_chars = placed_char_tags - set(current_tags)
+                    if missing_chars:
+                        enforced = list(missing_chars) + current_tags
+                        result.selected_reference_tags = enforced[:3]
+                        logger.info(
+                            f"Scene {scene.scene_index}: enforced placed CHARACTER refs "
+                            f"{missing_chars} → {result.selected_reference_tags}"
+                        )
+
+                    # Collect placed CHARACTER assets for face verification
+                    placed_char_assets = [
+                        asset_map[tag]
+                        for tag in placed_char_tags
+                        if tag in asset_map
+                    ]
+
+                    # Resolve selected reference tags → asset image bytes
+                    if result.selected_reference_tags:
+                        for tag in result.selected_reference_tags:
+                            asset = asset_map.get(tag)
+                            if asset:
+                                ref_bytes = await resolve_asset_image_bytes(session, asset)
+                                if ref_bytes:
+                                    ref_image_bytes_list.append(ref_bytes)
+                                    selected_ref_assets.append(asset)
+                        if ref_image_bytes_list:
+                            logger.info(
+                                f"Scene {scene.scene_index}: resolved "
+                                f"{len(ref_image_bytes_list)} reference image(s) "
+                                f"for keyframe generation"
+                            )
             except Exception as e:
                 logger.warning(
                     f"Scene {scene.scene_index}: keyframe rewriter failed (non-fatal): {e}"
                 )
                 rewritten_start_prompt = None  # Fall back to original
+                ref_image_bytes_list = []  # Reset on failure
+
+        # Face verification retry config (max 2 retries = 3 total attempts)
+        _max_identity_retries = 2
 
         # Generate or inherit START frame
         if scene.scene_index == 0:
@@ -327,15 +509,41 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
             # Prepend style guide + character bible for maximum fidelity
             # Phase 10: Use rewritten prompt when available (already includes asset details)
             if rewritten_start_prompt:
-                # Rewriter already injected asset reverse_prompts; omit character_prefix
-                # to avoid double-injection. Keep style_prefix for model-level consistency.
                 enriched_prompt = f"{style_prefix}{rewritten_start_prompt}"
             else:
                 enriched_prompt = f"{style_prefix}{character_prefix}{scene.start_frame_prompt}"
-            start_frame_bytes = await _generate_image_from_text(
-                image_client, enriched_prompt, project.aspect_ratio, image_model,
-                seed=project.seed,
-            )
+
+            # Face verification retry loop
+            start_frame_bytes = None
+            for identity_level in range(_max_identity_retries + 1):
+                prompt_with_emphasis = (
+                    _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
+                    + enriched_prompt
+                )
+                start_frame_bytes = await _generate_image_from_text(
+                    image_client, prompt_with_emphasis, project.aspect_ratio, image_model,
+                    seed=project.seed,
+                    reference_images=ref_image_bytes_list or None,
+                )
+                # Verify face match if placed chars exist and not final attempt
+                if placed_char_assets and identity_level < _max_identity_retries:
+                    passed, sim, detail = await _verify_keyframe_faces(
+                        start_frame_bytes, placed_char_assets,
+                    )
+                    if passed:
+                        logger.info(
+                            f"Scene {scene.scene_index} start: face verification passed "
+                            f"(level={identity_level}, {detail})"
+                        )
+                        break
+                    else:
+                        logger.warning(
+                            f"Scene {scene.scene_index} start: face verification failed "
+                            f"(level={identity_level}, {detail}), retrying"
+                        )
+                        continue
+                else:
+                    break  # No verification needed or final attempt
             start_source = "generated"
         else:
             # Scene N: Inherit from previous scene's end frame (KEYF-03)
@@ -374,10 +582,37 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
             f"- Same {style_label} rendering style\n"
             f"{character_prefix}"
         )
-        end_frame_bytes = await _generate_image_conditioned(
-            conditioned_client, start_frame_bytes, conditioning_prompt, project.aspect_ratio,
-            conditioned_model,
-        )
+
+        # Face verification retry loop for end frame
+        end_frame_bytes = None
+        for identity_level in range(_max_identity_retries + 1):
+            prompt_with_emphasis = (
+                _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
+                + conditioning_prompt
+            )
+            end_frame_bytes = await _generate_image_conditioned(
+                image_client, start_frame_bytes, prompt_with_emphasis,
+                project.aspect_ratio, image_model,
+                reference_images=ref_image_bytes_list or None,
+            )
+            if placed_char_assets and identity_level < _max_identity_retries:
+                passed, sim, detail = await _verify_keyframe_faces(
+                    end_frame_bytes, placed_char_assets,
+                )
+                if passed:
+                    logger.info(
+                        f"Scene {scene.scene_index} end: face verification passed "
+                        f"(level={identity_level}, {detail})"
+                    )
+                    break
+                else:
+                    logger.warning(
+                        f"Scene {scene.scene_index} end: face verification failed "
+                        f"(level={identity_level}, {detail}), retrying"
+                    )
+                    continue
+            else:
+                break
 
         # Save end keyframe to filesystem
         end_file_path = file_mgr.save_keyframe(

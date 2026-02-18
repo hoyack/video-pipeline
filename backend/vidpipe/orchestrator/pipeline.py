@@ -17,7 +17,7 @@ from typing import Callable, Dict, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Project, PipelineRun, Scene, Keyframe, VideoClip, AssetAppearance
+from vidpipe.db.models import Project, PipelineRun, Scene, Keyframe, VideoClip, AssetAppearance, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel
 from vidpipe.orchestrator.state import get_resume_step
 from vidpipe.pipeline.storyboard import generate_storyboard
 from vidpipe.pipeline.keyframes import generate_keyframes
@@ -38,6 +38,10 @@ async def _generate_expansion_if_needed(session: AsyncSession, project: Project)
     records than target_scene_count. This generates the missing scenes using
     the existing storyboard as context, creating Scene records and updating
     storyboard_raw before keyframing begins.
+
+    For manifest-aware projects (manifest_id set), generates enhanced scenes
+    with scene_manifest and audio_manifest, creating SceneManifest and
+    SceneAudioManifest rows for the new scenes.
     """
     target = project.target_scene_count or 0
     if target <= 0:
@@ -64,8 +68,17 @@ async def _generate_expansion_if_needed(session: AsyncSession, project: Project)
     if project.storyboard_raw and "scenes" in project.storyboard_raw:
         kept_sb_scenes = project.storyboard_raw["scenes"]
 
+    # For manifest-aware projects, load assets and use enhanced schema
+    asset_registry_block = None
+    if project.manifest_id:
+        from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry
+        assets = await load_manifest_assets(session, project.manifest_id)
+        if assets:
+            asset_registry_block = format_asset_registry(assets)
+
     new_scene_data = await _generate_expansion_scenes(
         project, kept_sb_scenes, num_new, start_index=existing_count,
+        asset_registry_block=asset_registry_block,
     )
 
     for sd in new_scene_data:
@@ -80,6 +93,40 @@ async def _generate_expansion_if_needed(session: AsyncSession, project: Project)
             status="pending",
         )
         session.add(scene)
+
+        # Create SceneManifest row for manifest-aware expansion scenes
+        sm_data = sd.get("scene_manifest")
+        if sm_data:
+            placements = sm_data.get("placements", [])
+            composition = sm_data.get("composition", {})
+            scene_manifest = SceneManifestModel(
+                project_id=project.id,
+                scene_index=sd.get("scene_index", existing_count),
+                manifest_json=sm_data,
+                composition_shot_type=composition.get("shot_type"),
+                composition_camera_movement=composition.get("camera_movement"),
+                asset_tags=[p.get("asset_tag") for p in placements if p.get("asset_tag")],
+                new_asset_count=len(sm_data.get("new_asset_declarations") or []),
+            )
+            session.add(scene_manifest)
+
+        # Create SceneAudioManifest row for manifest-aware expansion scenes
+        am_data = sd.get("audio_manifest")
+        if am_data:
+            dialogue_lines = am_data.get("dialogue_lines", [])
+            audio_manifest = SceneAudioManifestModel(
+                project_id=project.id,
+                scene_index=sd.get("scene_index", existing_count),
+                dialogue_json=dialogue_lines,
+                sfx_json=am_data.get("sfx", []),
+                ambient_json=am_data.get("ambient"),
+                music_json=am_data.get("music"),
+                audio_continuity_json=am_data.get("audio_continuity"),
+                speaker_tags=[d.get("speaker_tag") for d in dialogue_lines if d.get("speaker_tag")],
+                has_dialogue=len(dialogue_lines) > 0,
+                has_music=am_data.get("music") is not None,
+            )
+            session.add(audio_manifest)
 
     # Update storyboard_raw with the new scenes
     if project.storyboard_raw:

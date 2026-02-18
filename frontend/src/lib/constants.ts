@@ -56,7 +56,6 @@ export interface ImageModelOption {
   id: string;
   label: string;
   costPerImage: number;
-  apiType: "generate_images" | "generate_content";
 }
 
 export interface VideoModelOption {
@@ -82,12 +81,8 @@ export const TEXT_MODELS: TextModelOption[] = [
 ];
 
 export const IMAGE_MODELS: ImageModelOption[] = [
-  { id: "imagen-3.0-generate-002", label: "Imagen 3", costPerImage: 0.03, apiType: "generate_images" },
-  { id: "imagen-4.0-generate-001", label: "Imagen 4", costPerImage: 0.04, apiType: "generate_images" },
-  { id: "imagen-4.0-fast-generate-001", label: "Imagen 4 Fast", costPerImage: 0.02, apiType: "generate_images" },
-  { id: "imagen-4.0-ultra-generate-001", label: "Imagen 4 Ultra", costPerImage: 0.06, apiType: "generate_images" },
-  { id: "gemini-2.5-flash-image", label: "Nano Banana", costPerImage: 0.04, apiType: "generate_content" },
-  { id: "gemini-3-pro-image-preview", label: "Nano Banana Pro", costPerImage: 0.13, apiType: "generate_content" },
+  { id: "gemini-2.5-flash-image", label: "Nano Banana", costPerImage: 0.04 },
+  { id: "gemini-3-pro-image-preview", label: "Nano Banana Pro", costPerImage: 0.13 },
 ];
 
 export const VIDEO_MODELS: VideoModelOption[] = [

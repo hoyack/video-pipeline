@@ -18,10 +18,11 @@ from sqlalchemy.orm import selectinload
 
 from google.genai import types
 from vidpipe.db import async_session
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, GenerationCandidate
+from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel, GenerationCandidate
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import SceneSchema
+from vidpipe.schemas.storyboard_enhanced import EnhancedSceneSchema
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services import manifest_service
@@ -44,10 +45,6 @@ ALLOWED_TEXT_MODELS = {
     "gemini-3-pro-preview",
 }
 ALLOWED_IMAGE_MODELS = {
-    "imagen-3.0-generate-002",
-    "imagen-4.0-generate-001",
-    "imagen-4.0-fast-generate-001",
-    "imagen-4.0-ultra-generate-001",
     "gemini-2.5-flash-image",
     "gemini-3-pro-image-preview",
 }
@@ -63,17 +60,6 @@ ALLOWED_VIDEO_MODELS = {
 
 # Video models that support audio generation
 AUDIO_CAPABLE_MODELS = ALLOWED_VIDEO_MODELS - {"veo-2.0-generate-001"}
-
-# Auto-pairing: Imagen models → gemini-2.5-flash-image for conditioned generation.
-# Gemini image models → use the same model for conditioning.
-IMAGE_CONDITIONED_MAP: dict[str, str] = {
-    "imagen-3.0-generate-002": "gemini-2.5-flash-image",
-    "imagen-4.0-generate-001": "gemini-2.5-flash-image",
-    "imagen-4.0-fast-generate-001": "gemini-2.5-flash-image",
-    "imagen-4.0-ultra-generate-001": "gemini-2.5-flash-image",
-    "gemini-2.5-flash-image": "gemini-2.5-flash-image",
-    "gemini-3-pro-image-preview": "gemini-3-pro-image-preview",
-}
 
 # Allowed clip durations per video model
 ALLOWED_DURATIONS: dict[str, list[int]] = {
@@ -98,10 +84,6 @@ TEXT_MODEL_COST: dict[str, float] = {
 }
 
 IMAGE_MODEL_COST: dict[str, float] = {
-    "imagen-3.0-generate-002": 0.03,
-    "imagen-4.0-generate-001": 0.04,
-    "imagen-4.0-fast-generate-001": 0.02,
-    "imagen-4.0-ultra-generate-001": 0.06,
     "gemini-2.5-flash-image": 0.04,
     "gemini-3-pro-image-preview": 0.13,
 }
@@ -213,7 +195,7 @@ class GenerateRequest(BaseModel):
     clip_duration: int = 6
     total_duration: int = 15
     text_model: str = "gemini-2.5-flash"
-    image_model: str = "imagen-4.0-fast-generate-001"
+    image_model: str = "gemini-2.5-flash-image"
     video_model: str = "veo-3.1-fast-generate-001"
     enable_audio: bool = True
     manifest_id: Optional[str] = None
@@ -902,11 +884,17 @@ class _ExpansionScenes(BaseModel):
     scenes: list[SceneSchema] = Field(description="New scenes to append")
 
 
+class _EnhancedExpansionScenes(BaseModel):
+    """Wrapper schema for Gemini structured output of manifest-aware expansion scenes."""
+    scenes: list[EnhancedSceneSchema] = Field(description="New scenes to append with manifest and audio data")
+
+
 async def _generate_expansion_scenes(
     project: Project,
     kept_scenes: list[dict],
     num_new_scenes: int,
     start_index: int,
+    asset_registry_block: Optional[str] = None,
 ) -> list[dict]:
     """Generate storyboard entries for new scenes extending an existing storyboard.
 
@@ -918,6 +906,8 @@ async def _generate_expansion_scenes(
         kept_scenes: storyboard_raw["scenes"] entries for kept scenes
         num_new_scenes: How many new scenes to generate
         start_index: scene_index for the first new scene
+        asset_registry_block: When provided, enables manifest-aware generation
+            with scene_manifest and audio_manifest in the output schema.
 
     Returns:
         List of scene dicts ready for Scene record creation
@@ -929,11 +919,38 @@ async def _generate_expansion_scenes(
     # Build context from kept scenes
     kept_summary = json.dumps(kept_scenes, indent=2) if kept_scenes else "[]"
 
+    # Choose schema based on whether asset registry is available
+    use_enhanced = asset_registry_block is not None
+    schema = _EnhancedExpansionScenes if use_enhanced else _ExpansionScenes
+
+    manifest_instructions = ""
+    if use_enhanced:
+        manifest_instructions = f"""
+AVAILABLE ASSETS (from Asset Registry):
+{asset_registry_block}
+
+SCENE MANIFEST INSTRUCTIONS:
+- Reference registered assets by their [TAG] (e.g., [CHAR_01], [ENV_02])
+- Use the asset's reverse_prompt for visual detail
+- Assign roles: subject | background | prop | interaction_target | environment
+- Specify spatial positions and actions for each placed asset
+- Include composition metadata: shot_type, camera_movement, focal_point
+- Add continuity_notes describing visual continuity with previous scenes
+- You MAY declare new_asset_declarations for assets NOT in the registry
+
+AUDIO MANIFEST INSTRUCTIONS:
+- dialogue_lines: Map speech to character tags (speaker_tag must be a registered [TAG])
+- sfx: Sound effects with trigger descriptions and relative timing
+- ambient: Base layer soundscape + environmental context
+- music: Style, mood, tempo, instruments, and transition cues
+- audio_continuity: What carries from previous scene, what's new, what cuts
+"""
+
     prompt = f"""You are a storyboard director. You have an existing partial storyboard and need to generate {num_new_scenes} NEW continuation scene(s).
 
 VISUAL STYLE: {style_label}
 ASPECT RATIO: {project.aspect_ratio}
-
+{manifest_instructions}
 ORIGINAL SCRIPT:
 {project.prompt}
 
@@ -954,12 +971,12 @@ Generate exactly {num_new_scenes} new scene(s) that continue the narrative from 
         contents=[prompt],
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=_ExpansionScenes,
+            response_schema=schema,
             temperature=0.7,
         ),
     )
 
-    result = _ExpansionScenes.model_validate_json(response.text)
+    result = schema.model_validate_json(response.text)
 
     # Normalize scene indices to start at start_index
     scenes_out = []
@@ -983,9 +1000,13 @@ async def _copy_assets_for_fork(
     Returns:
         (list_of_new_assets, list_of_modified_asset_tags)
     """
-    # Load all parent assets for this manifest
+    # Load canonical (non-inherited) assets for this manifest to avoid
+    # cascading duplication when forking a project that was itself forked
     result = await session.execute(
-        select(Asset).where(Asset.manifest_id == source_manifest_id)
+        select(Asset).where(
+            Asset.manifest_id == source_manifest_id,
+            Asset.is_inherited == False,
+        )
     )
     parent_assets = list(result.scalars().all())
 
@@ -1066,8 +1087,10 @@ async def _copy_scene_manifests(
     scene_boundary: int,
     deleted_set: set,
 ):
-    """Copy scene manifests for unchanged scenes (below invalidation boundary).
+    """Copy scene manifests for all non-deleted source scenes.
 
+    Scenes below the invalidation boundary get a full copy.
+    Scenes at/above the boundary get structural fields only (regen fields cleared).
     Uses post-deletion scene index mapping.
     """
     # Load source scene manifests
@@ -1089,25 +1112,82 @@ async def _copy_scene_manifests(
 
         new_idx = _old_to_new(sm.scene_index)
 
-        # Only copy scenes below the invalidation boundary
-        if new_idx >= scene_boundary:
+        if new_idx < scene_boundary:
+            # Full copy for scenes below boundary
+            new_sm = SceneManifestModel(
+                project_id=new_project_id,
+                scene_index=new_idx,
+                manifest_json=sm.manifest_json,
+                composition_shot_type=sm.composition_shot_type,
+                composition_camera_movement=sm.composition_camera_movement,
+                asset_tags=sm.asset_tags,
+                new_asset_count=sm.new_asset_count,
+                selected_reference_tags=sm.selected_reference_tags,
+                cv_analysis_json=sm.cv_analysis_json,
+                continuity_score=sm.continuity_score,
+                rewritten_keyframe_prompt=sm.rewritten_keyframe_prompt,
+                rewritten_video_prompt=sm.rewritten_video_prompt,
+            )
+        else:
+            # Structural copy for scenes at/above boundary — clear regen fields
+            new_sm = SceneManifestModel(
+                project_id=new_project_id,
+                scene_index=new_idx,
+                manifest_json=sm.manifest_json,
+                composition_shot_type=sm.composition_shot_type,
+                composition_camera_movement=sm.composition_camera_movement,
+                asset_tags=sm.asset_tags,
+                new_asset_count=sm.new_asset_count,
+                selected_reference_tags=None,
+                cv_analysis_json=None,
+                continuity_score=None,
+                rewritten_keyframe_prompt=None,
+                rewritten_video_prompt=None,
+            )
+        session.add(new_sm)
+
+
+async def _copy_scene_audio_manifests(
+    session,
+    source_project_id,
+    new_project_id,
+    deleted_set: set,
+):
+    """Copy scene audio manifests for all non-deleted source scenes.
+
+    Audio manifests have no regen-specific fields, so all columns are copied
+    as-is with scene index remapping for deleted scenes.
+    """
+    result = await session.execute(
+        select(SceneAudioManifestModel).where(
+            SceneAudioManifestModel.project_id == source_project_id
+        )
+    )
+    source_sams = list(result.scalars().all())
+
+    def _old_to_new(old_idx: int) -> int:
+        """Map original scene index to post-deletion index."""
+        return old_idx - sum(1 for d in deleted_set if d < old_idx)
+
+    for sam in source_sams:
+        if sam.scene_index in deleted_set:
             continue
 
-        new_sm = SceneManifestModel(
+        new_idx = _old_to_new(sam.scene_index)
+
+        new_sam = SceneAudioManifestModel(
             project_id=new_project_id,
             scene_index=new_idx,
-            manifest_json=sm.manifest_json,
-            composition_shot_type=sm.composition_shot_type,
-            composition_camera_movement=sm.composition_camera_movement,
-            asset_tags=sm.asset_tags,
-            new_asset_count=sm.new_asset_count,
-            selected_reference_tags=sm.selected_reference_tags,
-            cv_analysis_json=sm.cv_analysis_json,
-            continuity_score=sm.continuity_score,
-            rewritten_keyframe_prompt=sm.rewritten_keyframe_prompt,
-            rewritten_video_prompt=sm.rewritten_video_prompt,
+            dialogue_json=sam.dialogue_json,
+            sfx_json=sam.sfx_json,
+            ambient_json=sam.ambient_json,
+            music_json=sam.music_json,
+            audio_continuity_json=sam.audio_continuity_json,
+            speaker_tags=sam.speaker_tags,
+            has_dialogue=sam.has_dialogue,
+            has_music=sam.has_music,
         )
-        session.add(new_sm)
+        session.add(new_sam)
 
 
 def _compute_asset_invalidation_point(
@@ -1148,63 +1228,33 @@ def _compute_invalidation(
 
     Scene boundary uses *new* (post-deletion) numbering when deleted_scenes
     are present.
+
+    Inherited scenes are always preserved — global setting changes (prompt,
+    style, models, aspect_ratio, etc.) never trigger re-generation of
+    inherited content.  Only per-scene edits and explicit keyframe clears
+    move the boundary.
     """
     scene_count = source.target_scene_count or 3
 
-    # Compute deletion info early — needed for scene count logic
+    # Compute deletion info
     deleted_set = set(deleted_scenes) if deleted_scenes else set()
     deleted_count = len(deleted_set)
     kept_count = scene_count - deleted_count
 
-    # Check if total_duration or clip_duration changes cause scene count change
+    # Compute new scene count from duration settings
     new_total = overrides.get("total_duration", source.total_duration) or source.total_duration or 15
     new_clip = overrides.get("clip_duration", source.target_clip_duration) or source.target_clip_duration or 6
     new_scene_count = math.ceil(new_total / new_clip)
-
-    # Scene count change with no deletions
-    if new_scene_count != scene_count and deleted_count == 0:
-        if new_scene_count > scene_count:
-            # Pure expansion: keep all existing scenes, only generate new ones
-            return "keyframing", scene_count
-        else:
-            # Scene count decreased: full re-run
-            return "pending", 0
-
-    # Edits that force full re-run
-    if any(k in overrides for k in ("prompt", "style", "text_model")):
-        return "pending", 0
-
-    # Edits that force keyframing restart
-    if any(k in overrides for k in ("image_model", "aspect_ratio")):
-        return "keyframing", 0
-
-    # Edits that force video_gen restart (keep all keyframes)
-    if any(k in overrides for k in ("video_model", "audio_enabled", "clip_duration")):
-        if new_scene_count > kept_count:
-            # Expansion needs keyframes for new scenes
-            return "keyframing", kept_count
-        return "video_gen", new_scene_count
-
-    # Expansion after deletion: new scenes need storyboard+keyframes+video
-    if new_scene_count > kept_count:
-        return "keyframing", kept_count
 
     def _old_to_new(old_idx: int) -> int:
         """Map an original scene index to its post-deletion index."""
         return old_idx - sum(1 for d in deleted_set if d < old_idx)
 
-    # Collect all keyframe-level and video-level invalidation candidates
+    # Start with all scenes preserved (boundaries at new_scene_count = no invalidation)
     min_keyframe_boundary = new_scene_count
     min_video_boundary = new_scene_count
 
-    # Scene deletions → keyframe invalidation at the deletion point (new numbering)
-    if deleted_scenes:
-        for d in deleted_scenes:
-            if 0 <= d < scene_count:
-                new_idx = _old_to_new(d)
-                min_keyframe_boundary = min(min_keyframe_boundary, new_idx)
-
-    # Cleared keyframes → keyframe invalidation (using original indices)
+    # Cleared keyframes → keyframe invalidation
     if clear_keyframes:
         for idx in clear_keyframes:
             if 0 <= idx < scene_count and idx not in deleted_set:
@@ -1223,6 +1273,10 @@ def _compute_invalidation(
                 elif field == "video_motion_prompt":
                     new_idx = _old_to_new(idx)
                     min_video_boundary = min(min_video_boundary, new_idx)
+
+    # Expansion: new scenes need keyframes + video
+    if new_scene_count > kept_count:
+        min_keyframe_boundary = min(min_keyframe_boundary, kept_count)
 
     if min_keyframe_boundary < new_scene_count:
         return "keyframing", min_keyframe_boundary
@@ -1367,10 +1421,9 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
             status=resume_from,
         )
 
-        # Copy storyboard data if not starting from pending
-        if resume_from != "pending":
-            new_project.storyboard_raw = source.storyboard_raw
-            new_project.style_guide = source.style_guide
+        # Always copy storyboard data — inherited scenes are always preserved
+        new_project.storyboard_raw = source.storyboard_raw
+        new_project.style_guide = source.style_guide
 
         # Phase 12: Inherit manifest_id and manifest_version from source
         if source.manifest_id is not None:
@@ -1476,7 +1529,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                     for kf in kf_result.scalars().all():
                         src_path = Path(kf.file_path)
                         if src_path.exists():
-                            dst_path = file_mgr.get_project_dir(new_id) / "keyframes" / src_path.name
+                            dst_path = file_mgr.get_project_dir(new_id) / "keyframes" / f"scene_{new_idx}_{kf.position}.png"
                             shutil.copy2(str(src_path), str(dst_path))
                             new_kf = Keyframe(
                                 scene_id=new_scene.id,
@@ -1497,7 +1550,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                     if clip and clip.local_path:
                         src_clip_path = Path(clip.local_path)
                         if src_clip_path.exists():
-                            dst_clip_path = file_mgr.get_project_dir(new_id) / "clips" / src_clip_path.name
+                            dst_clip_path = file_mgr.get_project_dir(new_id) / "clips" / f"scene_{new_idx}.mp4"
                             shutil.copy2(str(src_clip_path), str(dst_clip_path))
                             new_clip = VideoClip(
                                 scene_id=new_scene.id,
@@ -1530,6 +1583,9 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                         sb["scenes"] = [
                             s for i, s in enumerate(sb["scenes"]) if i not in deleted_set
                         ]
+                        # Renumber scene_index to match post-deletion DB indices
+                        for new_idx_sb, scene_data in enumerate(sb["scenes"]):
+                            scene_data["scene_index"] = new_idx_sb
                     new_project.storyboard_raw = sb
 
         # Phase 12: Copy manifest assets and scene manifests for forked project
@@ -1543,12 +1599,19 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                 request.asset_changes,
             )
 
-            # Copy scene manifests for unchanged scenes (below invalidation boundary)
+            # Always copy scene manifests — inherited scenes are always preserved
             await _copy_scene_manifests(
                 session,
                 source.id,
                 new_id,
                 scene_boundary,
+                deleted_set,
+            )
+
+            await _copy_scene_audio_manifests(
+                session,
+                source.id,
+                new_id,
                 deleted_set,
             )
 

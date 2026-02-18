@@ -50,7 +50,6 @@ class ModelsConfig(BaseModel):
 
     storyboard_llm: str
     image_gen: str
-    image_conditioned: str
     video_gen: str
 
 
@@ -68,6 +67,7 @@ class PipelineConfig(BaseModel):
     crossfade_seconds: float
     retry_max_attempts: int
     retry_base_delay: int
+    video_transient_retries: int = 3
 
 
 class StorageConfig(BaseModel):
@@ -100,6 +100,7 @@ class CVAnalysisConfig(BaseModel):
     max_frames_per_clip: int = 8
     quality_gate_threshold: float = 5.0
     face_match_threshold: float = 0.6
+    keyframe_face_match_threshold: float = 0.45
     video_frame_dedup_threshold: float = 0.90
     max_video_duration_seconds: int = 300
     max_video_file_size_mb: int = 200

@@ -50,6 +50,7 @@ RULES:
 6. Preserve the original prompt's narrative intent, but upgrade its visual specificity
 7. Keep under 400 words (Imagen sweet spot for keyframes)
 8. Select exactly 3 reference asset tags — explain why
+9. Assets marked ★ PLACED IN SCENE (MUST SELECT) MUST be included in your reference selection FIRST. Fill remaining slots with other relevant assets.
 
 WHAT NOT TO DO:
 - Do not re-invent character descriptions (use reverse_prompt verbatim)
@@ -76,6 +77,7 @@ RULES:
 5. Apply continuity corrections from CV analysis of previous scene
 6. Keep under 500 words (Veo 3.1 prompt sweet spot)
 7. Select exactly 3 reference asset tags — explain why
+8. Assets marked ★ PLACED IN SCENE (MUST SELECT) MUST be included in your reference selection FIRST. Fill remaining slots with other relevant assets.
 
 CRITICAL:
 - Include ALL audio direction from the manifest (Veo generates audio from this)
@@ -221,6 +223,11 @@ class PromptRewriterService:
         all_assets: list[Asset],
     ) -> str:
         """Assemble the user context block for keyframe rewriting."""
+        placed_tags = {
+            p["asset_tag"]
+            for p in scene_manifest_json.get("placements", [])
+            if "asset_tag" in p
+        }
         sections = [
             "=== ORIGINAL PROMPT ===",
             scene.start_frame_prompt,
@@ -232,7 +239,7 @@ class PromptRewriterService:
             "",
             _build_continuity_patch(previous_cv_analysis, scene.scene_index),
             "",
-            _list_available_references(all_assets),
+            _list_available_references(all_assets, placed_tags=placed_tags),
         ]
         return "\n".join(sections)
 
@@ -246,6 +253,11 @@ class PromptRewriterService:
         all_assets: list[Asset],
     ) -> str:
         """Assemble the user context block for video rewriting."""
+        placed_tags = {
+            p["asset_tag"]
+            for p in scene_manifest_json.get("placements", [])
+            if "asset_tag" in p
+        }
         sections = [
             "=== ORIGINAL PROMPT ===",
             scene.video_motion_prompt,
@@ -259,7 +271,7 @@ class PromptRewriterService:
             "",
             _format_audio_direction(audio_manifest_json),
             "",
-            _list_available_references(all_assets),
+            _list_available_references(all_assets, placed_tags=placed_tags),
         ]
         return "\n".join(sections)
 
@@ -437,30 +449,68 @@ def _format_audio_direction(audio_manifest_json: Optional[dict]) -> str:
     return "\n".join(lines)
 
 
-def _list_available_references(all_assets: list[Asset]) -> str:
+def _list_available_references(
+    all_assets: list[Asset], placed_tags: set[str] | None = None
+) -> str:
     """List all assets that have reference_image_url (available as Veo references).
 
     Only assets WITH reference images can be passed as Veo reference inputs.
     The LLM selects from this list for selected_reference_tags.
 
+    Deduplicates by manifest_tag (keeps highest quality_score per tag).
+    Marks placed CHARACTER assets with ★ PLACED IN SCENE (MUST SELECT).
+
     Args:
         all_assets: All Asset instances in the manifest
+        placed_tags: Set of manifest_tags placed in the current scene
 
     Returns:
         Formatted available references block for LLM context
     """
+    placed_tags = placed_tags or set()
+
+    # Deduplicate by manifest_tag — keep highest quality_score per tag
+    best_by_tag: dict[str, Asset] = {}
+    for a in all_assets:
+        tag = a.manifest_tag
+        if not tag:
+            continue
+        existing = best_by_tag.get(tag)
+        if existing is None:
+            best_by_tag[tag] = a
+        else:
+            a_score = a.quality_score if a.quality_score is not None else -1.0
+            ex_score = existing.quality_score if existing.quality_score is not None else -1.0
+            if a_score > ex_score:
+                best_by_tag[tag] = a
+
+    deduped = list(best_by_tag.values())
+
     lines = ["AVAILABLE REFERENCE IMAGES (select exactly 3 tags):"]
 
-    with_images = [a for a in all_assets if a.reference_image_url]
+    with_images = [a for a in deduped if a.reference_image_url]
     if not with_images:
         lines.append("No assets have reference images. Select from all assets instead.")
-        for a in all_assets:
+        for a in deduped:
             face_note = " [face crop]" if a.is_face_crop else ""
             quality_str = f"{a.quality_score:.1f}" if a.quality_score is not None else "N/A"
             lines.append(f"  [{a.manifest_tag}] {a.name} ({a.asset_type}){face_note} — quality: {quality_str}")
         return "\n".join(lines)
 
-    for asset in with_images:
+    # Reorder: placed assets first, then the rest
+    placed_assets = [a for a in with_images if a.manifest_tag in placed_tags]
+    unplaced_assets = [a for a in with_images if a.manifest_tag not in placed_tags]
+
+    for asset in placed_assets:
+        face_note = " [face crop]" if asset.is_face_crop else ""
+        quality_str = f"{asset.quality_score:.1f}" if asset.quality_score is not None else "N/A"
+        lines.append(
+            f"  [{asset.manifest_tag}] {asset.name} ({asset.asset_type}){face_note}"
+            f" — quality: {quality_str} — HAS REFERENCE IMAGE"
+            f" — ★ PLACED IN SCENE (MUST SELECT)"
+        )
+
+    for asset in unplaced_assets:
         face_note = " [face crop]" if asset.is_face_crop else ""
         quality_str = f"{asset.quality_score:.1f}" if asset.quality_score is not None else "N/A"
         lines.append(
@@ -469,7 +519,7 @@ def _list_available_references(all_assets: list[Asset]) -> str:
         )
 
     # Also list assets without images so LLM knows what's NOT available
-    without_images = [a for a in all_assets if not a.reference_image_url]
+    without_images = [a for a in deduped if not a.reference_image_url]
     if without_images:
         lines.append("")
         lines.append("Assets WITHOUT reference images (cannot be selected):")

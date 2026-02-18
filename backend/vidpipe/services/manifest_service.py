@@ -580,10 +580,14 @@ async def load_manifest_assets(
     session: AsyncSession,
     manifest_id: uuid.UUID,
 ) -> list[Asset]:
-    """Load all assets for a manifest, ordered by quality score descending.
+    """Load canonical (non-inherited) assets for a manifest, ordered by quality score descending.
 
     Used for LLM context injection where highest-quality assets should
     appear first in the system prompt for better attention distribution.
+
+    Filters out inherited copies (created during fork) to avoid duplicate
+    tags in the asset registry. Inherited copies share the same manifest_id
+    but are marked with is_inherited=True.
 
     Args:
         session: Active database session
@@ -594,7 +598,7 @@ async def load_manifest_assets(
     """
     result = await session.execute(
         select(Asset)
-        .where(Asset.manifest_id == manifest_id)
+        .where(Asset.manifest_id == manifest_id, Asset.is_inherited == False)
         .order_by(Asset.quality_score.desc().nullslast())
     )
     return list(result.scalars().all())

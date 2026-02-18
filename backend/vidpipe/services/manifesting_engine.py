@@ -411,6 +411,32 @@ class ManifestingEngine:
 
         await self.session.flush()
 
+        # Step 3b: Generate face embeddings for uploaded CHARACTER assets
+        # These are full-body or portrait uploads (not face crops) that still
+        # need ArcFace embeddings for downstream face verification.
+        char_uploads_needing_emb = [
+            a for a in uploaded_assets
+            if a.asset_type == "CHARACTER"
+            and a.face_embedding is None
+        ]
+        for char_asset in char_uploads_needing_emb:
+            pattern = f"tmp/manifests/{manifest_id}/uploads/{char_asset.id}_*"
+            matches = glob(pattern)
+            if not matches:
+                continue
+            try:
+                embedding = await asyncio.to_thread(
+                    self.face_matcher.generate_embedding, matches[0]
+                )
+                char_asset.face_embedding = embedding.tobytes()
+                logger.info(f"Generated face embedding for CHARACTER upload {char_asset.manifest_tag}")
+            except ValueError:
+                logger.warning(
+                    f"No face detected in CHARACTER upload {char_asset.id}, skipping embedding"
+                )
+
+        await self.session.flush()
+
         # Step 4: Reverse-prompting (only assets without existing reverse_prompt)
         self.progress["current_step"] = "reverse_prompting"
         logger.info("Step 4: Running reverse-prompting")
@@ -755,6 +781,32 @@ class ManifestingEngine:
                     f"No face detected in new crop {face_asset.id}, reclassifying"
                 )
                 face_asset.is_face_crop = False
+
+        await self.session.flush()
+
+        # --- Step 4b: Generate face embeddings for new CHARACTER uploads ---
+        new_char_uploads_needing_emb = [
+            a for a in new_upload_assets
+            if a.asset_type == "CHARACTER"
+            and a.face_embedding is None
+        ]
+        for char_asset in new_char_uploads_needing_emb:
+            pattern = f"tmp/manifests/{manifest_id}/uploads/{char_asset.id}_*"
+            matches = glob(pattern)
+            if not matches:
+                continue
+            try:
+                embedding = await asyncio.to_thread(
+                    self.face_matcher.generate_embedding, matches[0]
+                )
+                char_asset.face_embedding = embedding.tobytes()
+                logger.info(
+                    f"Generated face embedding for new CHARACTER upload {char_asset.manifest_tag}"
+                )
+            except ValueError:
+                logger.warning(
+                    f"No face detected in new CHARACTER upload {char_asset.id}, skipping embedding"
+                )
 
         await self.session.flush()
 

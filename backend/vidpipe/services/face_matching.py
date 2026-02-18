@@ -47,6 +47,38 @@ class FaceMatchingService:
                 "install onnxruntime (CPU) as fallback."
             )
 
+    def generate_embedding_from_bytes(self, image_bytes: bytes) -> np.ndarray:
+        """Generate 512-dim ArcFace embedding from raw image bytes.
+
+        Args:
+            image_bytes: Raw image data (PNG, JPEG, etc.)
+
+        Returns:
+            Normalized 512-dim embedding as numpy array
+
+        Raises:
+            ValueError: If no face detected in image
+        """
+        self._load_model()
+
+        import io
+        import cv2
+        from PIL import Image
+
+        img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(img_pil)
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+        faces = self._app.get(img_bgr)
+
+        if not faces:
+            raise ValueError("No face detected in image bytes")
+
+        embedding = faces[0].embedding
+        normalized = embedding / np.linalg.norm(embedding)
+
+        return normalized
+
     def generate_embedding(self, face_crop_path: str) -> np.ndarray:
         """Generate 512-dim ArcFace embedding for face crop.
 

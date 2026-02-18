@@ -143,6 +143,42 @@ def _is_content_policy_operation(operation) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Transient gRPC operation error classification
+# ---------------------------------------------------------------------------
+_TRANSIENT_GRPC_CODES = {4, 8, 13, 14}  # DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, INTERNAL, UNAVAILABLE
+
+
+def _is_transient_operation(operation) -> bool:
+    """Return True if a completed Veo operation failed with a transient gRPC error.
+
+    These errors (DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, INTERNAL, UNAVAILABLE)
+    are server-side transient failures that warrant resubmission of the job.
+    """
+    error = getattr(operation, "error", None)
+    if error is None:
+        return False
+    code = getattr(error, "code", None)
+    if code is None:
+        return False
+    return code in _TRANSIENT_GRPC_CODES
+
+
+# ---------------------------------------------------------------------------
+# Retry-decorated polling RPC (guards operations.get against 429/5xx)
+# ---------------------------------------------------------------------------
+@retry(
+    stop=stop_after_attempt(7),
+    wait=wait_exponential(multiplier=2, min=4, max=120) + wait_random(0, 5),
+    retry=retry_if_exception(_is_retriable),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
+async def _poll_operation_get(client, operation_name: str):
+    """Fetch operation status with retry on transient HTTP errors (429/5xx)."""
+    op_obj = types.GenerateVideosOperation(name=operation_name)
+    return await client.aio.operations.get(operation=op_obj)
+
+
+# ---------------------------------------------------------------------------
 # Retry-decorated video submission
 # ---------------------------------------------------------------------------
 @retry(
@@ -226,15 +262,14 @@ async def _regenerate_end_keyframe_safe(
     Returns the new image bytes on success, None on failure.
     Updates the Keyframe record and file on disk in-place.
     """
-    from vidpipe.api.routes import IMAGE_CONDITIONED_MAP
     from vidpipe.pipeline.keyframes import _generate_image_conditioned
 
     image_model = project.image_model or settings.models.image_gen
-    conditioned_model = IMAGE_CONDITIONED_MAP.get(
-        image_model, settings.models.image_conditioned,
-    )
+    # Guard: Imagen models no longer supported — fall back to config default
+    if image_model.startswith("imagen-"):
+        image_model = settings.models.image_gen
     conditioned_client = get_vertex_client(
-        location=location_for_model(conditioned_model),
+        location=location_for_model(image_model),
     )
 
     style_label = project.style.replace("_", " ")
@@ -254,7 +289,7 @@ async def _regenerate_end_keyframe_safe(
             start_frame_bytes,
             conditioning_prompt,
             project.aspect_ratio,
-            conditioned_model,
+            image_model,
         )
 
         # Save to disk (overwrites existing file)
@@ -295,6 +330,7 @@ async def _poll_video_operation(
     Returns one of:
       "complete"        — video saved successfully
       "content_policy"  — failed due to content policy (caller should escalate)
+      "transient"       — transient server error (caller should resubmit)
       "timed_out"       — max polls exceeded
       "failed"          — non-policy failure
     """
@@ -302,8 +338,7 @@ async def _poll_video_operation(
     max_polls = settings.pipeline.video_poll_max
 
     for poll_attempt in range(clip.poll_count, max_polls):
-        op_obj = types.GenerateVideosOperation(name=clip.operation_name)
-        operation = await client.aio.operations.get(operation=op_obj)
+        operation = await _poll_operation_get(client, clip.operation_name)
         clip.poll_count = poll_attempt + 1
 
         if operation.done:
@@ -316,6 +351,18 @@ async def _poll_video_operation(
                 clip.error_message = error_msg
                 await session.commit()
                 return "content_policy"
+
+            # --- Transient server error check ---
+            if _is_transient_operation(operation):
+                error_msg = str(getattr(operation, "error", "Transient server error"))
+                logger.warning(
+                    f"Scene {scene.scene_index}: transient operation error "
+                    f"(code {operation.error.code}): {error_msg}"
+                )
+                clip.status = "failed"
+                clip.error_message = error_msg
+                await session.commit()
+                return "transient"
 
             if operation.response:
                 # Success: download video
@@ -392,6 +439,7 @@ async def _poll_and_collect_candidates(
     Returns (status, video_bytes_list) where status is one of:
       "complete"        — all surviving candidates downloaded
       "content_policy"  — zero candidates survived RAI filtering
+      "transient"       — transient server error (caller should resubmit)
       "timed_out"       — max polls exceeded
       "failed"          — non-policy failure
 
@@ -403,8 +451,7 @@ async def _poll_and_collect_candidates(
     max_polls = settings.pipeline.video_poll_max
 
     for poll_attempt in range(clip.poll_count, max_polls):
-        op_obj = types.GenerateVideosOperation(name=clip.operation_name)
-        operation = await client.aio.operations.get(operation=op_obj)
+        operation = await _poll_operation_get(client, clip.operation_name)
         clip.poll_count = poll_attempt + 1
 
         if operation.done:
@@ -427,17 +474,29 @@ async def _poll_and_collect_candidates(
                     clip.error_message = error_msg
                     await session.commit()
                     return "content_policy", []
-                else:
-                    # Non-policy failure
-                    clip.status = "failed"
-                    clip.error_message = (
-                        str(operation.error)
-                        if hasattr(operation, "error")
-                        else "Unknown error — no generated videos"
+
+                # Transient server error check
+                if _is_transient_operation(operation):
+                    error_msg = str(getattr(operation, "error", "Transient server error"))
+                    logger.warning(
+                        f"Scene {scene.scene_index}: transient operation error "
+                        f"(code {operation.error.code}): {error_msg}"
                     )
-                    scene.status = "failed"
+                    clip.status = "failed"
+                    clip.error_message = error_msg
                     await session.commit()
-                    return "failed", []
+                    return "transient", []
+
+                # Non-policy, non-transient failure
+                clip.status = "failed"
+                clip.error_message = (
+                    str(operation.error)
+                    if hasattr(operation, "error")
+                    else "Unknown error — no generated videos"
+                )
+                scene.status = "failed"
+                await session.commit()
+                return "failed", []
 
             # At least one candidate survived — partial RAI filter is OK
             if rai_filtered > 0:
@@ -783,7 +842,7 @@ async def _generate_video_for_scene(
 
     # Load scene manifest and select references (Phase 8)
     from vidpipe.db.models import SceneManifest as SceneManifestModel
-    from vidpipe.services.reference_selection import select_references_for_scene, get_primary_clean_reference
+    from vidpipe.services.reference_selection import select_references_for_scene
 
     # Initialize scene_manifest_row to None so it's accessible from both
     # completion paths (crash recovery resume and escalation loop).
@@ -876,6 +935,26 @@ async def _generate_video_for_scene(
             # LLM reference selection overrides Phase 8's deterministic selection
             if result.selected_reference_tags:
                 asset_map = {a.manifest_tag: a for a in all_assets}
+
+                # Post-LLM enforcement: ensure placed CHARACTER assets are in refs
+                placed_char_tags = {
+                    p["asset_tag"]
+                    for p in scene_manifest_row.manifest_json.get("placements", [])
+                    if "asset_tag" in p
+                    and asset_map.get(p["asset_tag"])
+                    and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
+                    and asset_map[p["asset_tag"]].reference_image_url
+                }
+                current_tags = list(result.selected_reference_tags)
+                missing_chars = placed_char_tags - set(current_tags)
+                if missing_chars:
+                    enforced = list(missing_chars) + current_tags
+                    result.selected_reference_tags = enforced[:3]
+                    logger.info(
+                        f"Scene {scene.scene_index}: enforced placed CHARACTER refs "
+                        f"{missing_chars} → {result.selected_reference_tags}"
+                    )
+
                 llm_selected = [
                     asset_map[tag]
                     for tag in result.selected_reference_tags
@@ -955,33 +1034,13 @@ async def _generate_video_for_scene(
             )
 
     # Build Veo reference images list (Phase 8)
+    from vidpipe.services.reference_selection import resolve_asset_image_bytes
     veo_ref_images = None
     if selected_refs:
         veo_ref_images = []
         for asset in selected_refs:
-            # Check for clean sheet override
-            clean_ref = await get_primary_clean_reference(session, asset.id)
-            img_url = clean_ref.clean_image_url if clean_ref else asset.reference_image_url
-
-            if img_url:
-                # Resolve API URLs to local file paths
-                if img_url.startswith("/api/assets/"):
-                    # Pattern: /api/assets/{asset_id}/image → search uploads/ and crops/
-                    manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
-                    resolved = None
-                    for subdir in ("uploads", "crops"):
-                        d = manifest_dir / subdir
-                        if d.exists():
-                            matches = list(d.glob(f"{asset.id}_*"))
-                            if matches:
-                                resolved = matches[0]
-                                break
-                    if not resolved:
-                        logger.warning(f"Reference image not found on disk for asset {asset.id}")
-                        continue
-                    ref_bytes = resolved.read_bytes()
-                else:
-                    ref_bytes = Path(img_url).read_bytes()
+            ref_bytes = await resolve_asset_image_bytes(session, asset)
+            if ref_bytes:
                 veo_ref_images.append(
                     types.VideoGenerationReferenceImage(
                         image=types.Image(
@@ -997,6 +1056,7 @@ async def _generate_video_for_scene(
 
     # ---- Escalating content-policy remediation loop ----
     max_levels = len(_VIDEO_SAFETY_PREFIXES)
+    max_transient_retries = settings.pipeline.video_transient_retries
     _pending_safety_regens = 0
 
     for safety_level in range(max_levels):
@@ -1035,114 +1095,147 @@ async def _generate_video_for_scene(
         # Phase 11: Determine candidate count for this submission
         candidate_count = project.candidate_count if project.quality_mode else 1
 
-        # Submit job (retries transient 429/5xx automatically)
-        try:
-            operation = await _submit_video_job(
-                client, video_model, video_prompt,
-                start_frame_bytes, end_frame_bytes, project,
-                reference_images=veo_ref_images,
-                candidate_count=candidate_count,
-            )
-        except Exception as e:
-            if (
-                _is_content_policy_exception(e)
-                and safety_level < max_levels - 1
-            ):
-                logger.warning(
-                    f"Scene {scene.scene_index}: submission rejected "
-                    f"(content policy) at level {safety_level}, escalating"
+        # ---- Inner transient-error retry loop ----
+        for transient_attempt in range(max_transient_retries):
+            if transient_attempt > 0:
+                # Exponential backoff between transient resubmissions: 15s, 30s, 60s, ...
+                backoff_seconds = 15 * (2 ** (transient_attempt - 1))
+                logger.info(
+                    f"Scene {scene.scene_index}: transient retry "
+                    f"{transient_attempt}/{max_transient_retries - 1}, "
+                    f"backing off {backoff_seconds}s"
                 )
-                continue  # try next safety level
-            # Fatal: transient retries exhausted or last safety level
-            logger.error(
-                f"Scene {scene.scene_index}: video submission failed: {e}"
-            )
+                await asyncio.sleep(backoff_seconds)
+
+                # Check for user-requested stop during backoff
+                await session.refresh(project)
+                if project.status == "stopped":
+                    from vidpipe.orchestrator.pipeline import PipelineStopped
+                    raise PipelineStopped("Pipeline stopped by user")
+
+            # Submit job (retries transient 429/5xx automatically)
+            try:
+                operation = await _submit_video_job(
+                    client, video_model, video_prompt,
+                    start_frame_bytes, end_frame_bytes, project,
+                    reference_images=veo_ref_images,
+                    candidate_count=candidate_count,
+                )
+            except Exception as e:
+                if (
+                    _is_content_policy_exception(e)
+                    and safety_level < max_levels - 1
+                ):
+                    logger.warning(
+                        f"Scene {scene.scene_index}: submission rejected "
+                        f"(content policy) at level {safety_level}, escalating"
+                    )
+                    break  # break inner, continue outer (escalate)
+                # Fatal: transient retries exhausted or last safety level
+                logger.error(
+                    f"Scene {scene.scene_index}: video submission failed: {e}"
+                )
+                if clip is None:
+                    clip = VideoClip(
+                        scene_id=scene.id,
+                        status="failed",
+                        source="generated",
+                        error_message=str(e),
+                    )
+                    session.add(clip)
+                else:
+                    clip.status = "failed"
+                    clip.error_message = str(e)
+                scene.status = "failed"
+                await session.commit()
+                return
+
+            # Create / update clip record (VGEN-03: persist before polling)
             if clip is None:
                 clip = VideoClip(
                     scene_id=scene.id,
-                    status="failed",
+                    operation_name=operation.name,
+                    status="polling",
+                    poll_count=0,
                     source="generated",
-                    error_message=str(e),
+                    veo_submission_count=1,
+                    safety_regen_count=_pending_safety_regens,
                 )
                 session.add(clip)
             else:
-                clip.status = "failed"
-                clip.error_message = str(e)
-            scene.status = "failed"
+                clip.operation_name = operation.name
+                clip.status = "polling"
+                clip.poll_count = 0
+                clip.error_message = None
+                clip.veo_submission_count = (clip.veo_submission_count or 0) + 1
             await session.commit()
-            return
 
-        # Create / update clip record (VGEN-03: persist before polling)
-        if clip is None:
-            clip = VideoClip(
-                scene_id=scene.id,
-                operation_name=operation.name,
-                status="polling",
-                poll_count=0,
-                source="generated",
-                veo_submission_count=1,
-                safety_regen_count=_pending_safety_regens,
-            )
-            session.add(clip)
-        else:
-            clip.operation_name = operation.name
-            clip.status = "polling"
-            clip.poll_count = 0
-            clip.error_message = None
-            clip.veo_submission_count = (clip.veo_submission_count or 0) + 1
-        await session.commit()
-
-        # Phase 11: Choose poll function based on mode
-        if project.quality_mode and project.candidate_count > 1:
-            poll_result, video_bytes_list = await _poll_and_collect_candidates(
-                session, clip, client, project, scene, file_mgr, selected_refs,
-            )
-        else:
-            poll_result = await _poll_video_operation(
-                session, clip, client, project, scene, file_mgr, selected_refs,
-            )
-            video_bytes_list = []  # Not used in standard mode
-
-        if poll_result == "complete":
-            if safety_level > 0:
-                logger.info(
-                    f"Scene {scene.scene_index}: succeeded at safety level "
-                    f"{safety_level}"
-                )
-            # Phase 11: Quality mode — save/score/select all candidates
+            # Phase 11: Choose poll function based on mode
             if project.quality_mode and project.candidate_count > 1:
-                await _handle_quality_mode_candidates(
-                    session, scene, project, clip, file_mgr,
-                    video_bytes_list,
-                    scene_manifest_row,
-                    base_video_prompt or scene.video_motion_prompt,
-                    all_assets,
-                    has_refs=bool(veo_ref_images),
+                poll_result, video_bytes_list = await _poll_and_collect_candidates(
+                    session, clip, client, project, scene, file_mgr, selected_refs,
                 )
             else:
-                # Standard mode: Phase 9 post-generation CV analysis
-                await _run_post_generation_analysis(
-                    session, scene, clip, project, scene_manifest_row,
+                poll_result = await _poll_video_operation(
+                    session, clip, client, project, scene, file_mgr, selected_refs,
                 )
-            return
-        elif poll_result == "content_policy":
-            # Reset scene status for next attempt
+                video_bytes_list = []  # Not used in standard mode
+
+            if poll_result == "complete":
+                if safety_level > 0 or transient_attempt > 0:
+                    logger.info(
+                        f"Scene {scene.scene_index}: succeeded at safety level "
+                        f"{safety_level}, transient attempt {transient_attempt}"
+                    )
+                # Phase 11: Quality mode — save/score/select all candidates
+                if project.quality_mode and project.candidate_count > 1:
+                    await _handle_quality_mode_candidates(
+                        session, scene, project, clip, file_mgr,
+                        video_bytes_list,
+                        scene_manifest_row,
+                        base_video_prompt or scene.video_motion_prompt,
+                        all_assets,
+                        has_refs=bool(veo_ref_images),
+                    )
+                else:
+                    # Standard mode: Phase 9 post-generation CV analysis
+                    await _run_post_generation_analysis(
+                        session, scene, clip, project, scene_manifest_row,
+                    )
+                return
+            elif poll_result == "content_policy":
+                # Reset scene status for next attempt — break to escalate
+                scene.status = "keyframes_done"
+                await session.commit()
+                break  # break inner, continue outer (escalate safety level)
+            elif poll_result == "transient":
+                # Resubmit at same safety level (inner loop continues)
+                scene.status = "keyframes_done"
+                await session.commit()
+                continue
+            else:
+                # timed_out or permanent failure — don't escalate or retry
+                return
+        else:
+            # Transient retries exhausted at this safety level — escalate
+            # to next level (prompt modification may help avoid the issue)
+            logger.warning(
+                f"Scene {scene.scene_index}: transient retries exhausted "
+                f"({max_transient_retries}) at safety level {safety_level}, escalating"
+            )
             scene.status = "keyframes_done"
             await session.commit()
-            continue  # try next safety level
-        else:
-            # timed_out or non-policy failure — don't escalate
-            return
+            continue  # next safety level
 
     # All safety levels exhausted
     logger.error(
-        f"Scene {scene.scene_index}: content policy remediation exhausted "
-        f"after {max_levels} levels"
+        f"Scene {scene.scene_index}: remediation exhausted "
+        f"after {max_levels} safety levels"
     )
     if clip:
         clip.status = "failed"
         clip.error_message = (
-            "Content policy violation persisted after all remediation attempts"
+            "Remediation exhausted after all safety levels and transient retries"
         )
     scene.status = "failed"
     await session.commit()

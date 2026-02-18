@@ -7,7 +7,9 @@ Spec reference: Phase 8 - Veo Reference Passthrough and Clean Sheets
 """
 
 import logging
+import re
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select
@@ -273,3 +275,63 @@ async def get_primary_clean_reference(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def resolve_asset_image_bytes(
+    session: AsyncSession,
+    asset: Asset,
+) -> Optional[bytes]:
+    """Resolve an asset's reference image to raw bytes.
+
+    Checks for a clean sheet override first, then falls back to
+    asset.reference_image_url.  Resolves ``/api/assets/...`` URLs to
+    local files under ``tmp/manifests/{manifest_id}/{uploads|crops}/``.
+
+    Returns None on any failure (soft failure — caller should skip).
+    """
+    try:
+        # Prefer clean sheet override
+        clean_ref = await get_primary_clean_reference(session, asset.id)
+        img_url = clean_ref.clean_image_url if clean_ref else asset.reference_image_url
+
+        if not img_url:
+            return None
+
+        # Resolve /api/assets/... URLs to local file paths
+        if img_url.startswith("/api/assets/"):
+            # Extract the primary asset UUID from the URL pattern:
+            # /api/assets/{uuid}/image  (or /api/assets/{uuid}/clean-image)
+            # This is needed because duplicate asset rows share the same
+            # reference_image_url pointing to the primary asset's file,
+            # but asset.id may differ from the primary.
+            url_match = re.search(
+                r"/api/assets/([0-9a-f-]{36})/", img_url
+            )
+            file_asset_id = url_match.group(1) if url_match else str(asset.id)
+
+            manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+            resolved = None
+            for subdir in ("uploads", "crops"):
+                d = manifest_dir / subdir
+                if d.exists():
+                    matches = list(d.glob(f"{file_asset_id}_*"))
+                    if matches:
+                        resolved = matches[0]
+                        break
+            if not resolved:
+                logger.warning(
+                    f"Reference image not found on disk for asset {asset.id} "
+                    f"(file_id={file_asset_id})"
+                )
+                return None
+            return resolved.read_bytes()
+        else:
+            p = Path(img_url)
+            if p.exists():
+                return p.read_bytes()
+            logger.warning(f"Reference image path does not exist: {img_url}")
+            return None
+
+    except Exception as e:
+        logger.warning(f"Failed to resolve reference image for asset {asset.id}: {e}")
+        return None

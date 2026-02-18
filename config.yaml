@@ -1,7 +1,6 @@
 models:
   storyboard_llm: "gemini-2.5-flash"
-  image_gen: "imagen-4.0-fast-generate-001"
-  image_conditioned: "gemini-2.5-flash-image"
+  image_gen: "gemini-2.5-flash-image"
   video_gen: "veo-3.1-fast-generate-001"
 
 pipeline:
@@ -16,6 +15,7 @@ pipeline:
   crossfade_seconds: 0.0
   retry_max_attempts: 5
   retry_base_delay: 2
+  video_transient_retries: 3
 
 storage:
   database_url: "sqlite+aiosqlite:///vidpipe.db"
@@ -31,3 +31,4 @@ cv_analysis:
   max_frames_per_clip: 8
   quality_gate_threshold: 5.0
   face_match_threshold: 0.6
+  keyframe_face_match_threshold: 0.45

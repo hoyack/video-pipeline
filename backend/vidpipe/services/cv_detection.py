@@ -96,6 +96,49 @@ class CVDetectionService:
 
         return results
 
+    def detect_faces_from_bytes(
+        self, image_bytes: bytes, confidence_threshold: float = 0.5
+    ) -> List[dict]:
+        """Detect faces from raw image bytes.
+
+        Converts bytes to PIL/numpy, runs YOLO, extracts face bboxes
+        from person detections using upper-40% logic.
+
+        Args:
+            image_bytes: Raw image data (PNG, JPEG, etc.)
+            confidence_threshold: Minimum confidence for detections (0.0-1.0)
+
+        Returns:
+            List of face dicts: [{"confidence": float, "bbox": [x1,y1,x2,y2]}, ...]
+        """
+        self._load_models()
+
+        import io
+        import numpy as np
+
+        img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(img_pil)
+
+        yolo_results = self._model.predict(
+            img_np, conf=confidence_threshold, device=self.device, verbose=False
+        )[0]
+
+        faces = []
+        for box in yolo_results.boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            bbox = box.xyxy[0].cpu().numpy().tolist()
+
+            class_name = yolo_results.names[cls_id]
+
+            if class_name == "person":
+                x1, y1, x2, y2 = bbox
+                face_height = (y2 - y1) * 0.4
+                face_bbox = [x1, y1, x2, y1 + face_height]
+                faces.append({"confidence": conf, "bbox": face_bbox})
+
+        return faces
+
     def save_crop(
         self,
         image_path: str,

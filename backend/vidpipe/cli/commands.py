@@ -49,10 +49,6 @@ _VIDEO_COST_PER_SECOND_AUDIO = {
     "veo-3.1-fast-generate-001": 0.15,
 }
 _IMAGE_COST_PER_IMAGE = {
-    "imagen-3.0-generate-002": 0.03,
-    "imagen-4.0-generate-001": 0.04,
-    "imagen-4.0-fast-generate-001": 0.02,
-    "imagen-4.0-ultra-generate-001": 0.06,
     "gemini-2.5-flash-image": 0.04,
     "gemini-3-pro-image-preview": 0.13,
 }
@@ -85,7 +81,7 @@ def generate(
     clip_duration: int = typer.Option(6, "--clip-duration", "-d", help="Target clip duration in seconds"),
     total_duration: int = typer.Option(30, "--total-duration", "-t", help="Total video duration in seconds"),
     text_model: str = typer.Option("gemini-2.5-flash", "--text-model", help="Text/storyboard model"),
-    image_model: str = typer.Option("imagen-4.0-fast-generate-001", "--image-model", help="Image generation model"),
+    image_model: str = typer.Option("gemini-2.5-flash-image", "--image-model", help="Image generation model"),
     video_model: str = typer.Option("veo-3.1-fast-generate-001", "--video-model", help="Video generation model"),
     enable_audio: bool = typer.Option(True, "--enable-audio/--no-audio", help="Enable audio generation (Veo 3+ only)"),
 ):

@@ -119,6 +119,18 @@ export function createManifest(body: CreateManifestRequest): Promise<ManifestLis
   });
 }
 
+/** POST /api/manifests/from-project — create manifest from project storyboard */
+export function importProjectToManifest(
+  projectId: string,
+  name?: string,
+): Promise<ManifestDetail> {
+  return request<ManifestDetail>("/api/manifests/from-project", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId, name }),
+  });
+}
+
 /** GET /api/manifests/{id} — get manifest with assets */
 export function getManifestDetail(manifestId: string): Promise<ManifestDetail> {
   return request<ManifestDetail>(`/api/manifests/${manifestId}`);

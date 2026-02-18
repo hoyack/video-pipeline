@@ -5,6 +5,7 @@ Handles manifest and asset lifecycle management including creation, updates,
 deletion, duplication, and asset tagging. All functions accept an AsyncSession
 parameter for transaction management by the caller.
 """
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Manifest, ManifestSnapshot, Project
+from vidpipe.db.models import Asset, Keyframe, Manifest, ManifestSnapshot, Project, Scene
 
 # Valid enum constants
 VALID_CATEGORIES = {"CHARACTERS", "ENVIRONMENT", "FULL_PRODUCTION", "STYLE_KIT", "BRAND_KIT", "CUSTOM"}
@@ -64,6 +65,153 @@ async def create_manifest(
     session.add(manifest)
     await session.flush()
     return manifest
+
+
+async def create_manifest_from_project(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    name: Optional[str] = None,
+) -> tuple[Manifest, list[Asset]]:
+    """Create a manifest pre-populated from a project's storyboard data.
+
+    Extracts characters, scene environments, and style guide from
+    storyboard_raw and creates corresponding assets.
+
+    Args:
+        session: Active database session
+        project_id: Source project UUID
+        name: Optional manifest name (defaults to truncated project prompt)
+
+    Returns:
+        Tuple of (created Manifest, list of created Assets)
+
+    Raises:
+        ValueError: If project not found or has no storyboard data
+    """
+    result = await session.execute(
+        select(Project).where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise ValueError(f"Project {project_id} not found")
+
+    if not project.storyboard_raw:
+        raise ValueError(f"Project {project_id} has no storyboard data")
+
+    storyboard = project.storyboard_raw
+
+    # Derive manifest name from project prompt if not provided
+    if not name:
+        prompt_text = project.prompt or "Untitled"
+        name = prompt_text[:80] + ("..." if len(prompt_text) > 80 else "")
+
+    manifest = await create_manifest(
+        session,
+        name=name,
+        description=f"Auto-imported from project {project_id}",
+        category="FULL_PRODUCTION",
+    )
+
+    assets_list: list[Asset] = []
+
+    # --- Characters ---
+    characters = storyboard.get("characters", [])
+    for char in characters:
+        char_name = char.get("name", "Unknown Character")
+        phys = char.get("physical_description", "")
+        cloth = char.get("clothing_description", "")
+        reverse_prompt = ". ".join(filter(None, [phys, cloth]))
+
+        asset = await create_asset(
+            session,
+            manifest_id=manifest.id,
+            name=char_name,
+            asset_type="CHARACTER",
+            description=f"Character from project import: {char_name}",
+        )
+        asset.source = "project_import"
+        if reverse_prompt:
+            asset.reverse_prompt = reverse_prompt
+        assets_list.append(asset)
+
+    # --- Environments (one per scene, using start keyframe) ---
+    scenes_data = storyboard.get("scenes", [])
+
+    # Query actual scenes + keyframes from the database for file paths
+    scene_result = await session.execute(
+        select(Scene)
+        .where(Scene.project_id == project_id)
+        .order_by(Scene.scene_index)
+    )
+    db_scenes = list(scene_result.scalars().all())
+
+    # Build map of scene_index -> start keyframe file_path
+    keyframe_map: dict[int, str] = {}
+    if db_scenes:
+        scene_ids = [s.id for s in db_scenes]
+        kf_result = await session.execute(
+            select(Keyframe).where(
+                Keyframe.scene_id.in_(scene_ids),
+                Keyframe.position == "start",
+            )
+        )
+        keyframes = kf_result.scalars().all()
+        scene_id_to_index = {s.id: s.scene_index for s in db_scenes}
+        for kf in keyframes:
+            idx = scene_id_to_index.get(kf.scene_id)
+            if idx is not None:
+                keyframe_map[idx] = kf.file_path
+
+    for i, scene_data in enumerate(scenes_data):
+        scene_desc = scene_data.get("scene_description", "")
+        start_prompt = scene_data.get("start_frame_prompt", "")
+
+        asset = await create_asset(
+            session,
+            manifest_id=manifest.id,
+            name=f"Scene {i + 1} Environment",
+            asset_type="ENVIRONMENT",
+            description=scene_desc or None,
+        )
+        asset.source = "project_import"
+        if start_prompt:
+            asset.reverse_prompt = start_prompt
+
+        # Copy keyframe image if available
+        src_path = keyframe_map.get(i)
+        if src_path and Path(src_path).exists():
+            dest_dir = Path("tmp/manifests") / str(manifest.id) / "uploads"
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = dest_dir / f"{asset.id}_{Path(src_path).name}"
+            shutil.copy2(src_path, dest_path)
+            asset.reference_image_url = f"/api/assets/{asset.id}/image"
+
+        assets_list.append(asset)
+
+    # --- Style guide ---
+    style_guide = storyboard.get("style_guide", {})
+    if style_guide:
+        parts = filter(None, [
+            style_guide.get("visual_style"),
+            style_guide.get("color_palette"),
+            style_guide.get("camera_style"),
+        ])
+        style_reverse_prompt = ". ".join(parts)
+
+        asset = await create_asset(
+            session,
+            manifest_id=manifest.id,
+            name="Visual Style",
+            asset_type="STYLE",
+            description="Style guide from project import",
+        )
+        asset.source = "project_import"
+        if style_reverse_prompt:
+            asset.reverse_prompt = style_reverse_prompt
+        assets_list.append(asset)
+
+    await session.flush()
+    return manifest, assets_list
 
 
 async def list_manifests(

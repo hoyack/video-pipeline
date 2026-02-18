@@ -18,6 +18,7 @@ import {
   reprocessAsset,
   uploadVideoForManifest,
   getExtractionProgress,
+  importProjectToManifest,
 } from "../api/client.ts";
 import { AssetUploader } from "./AssetUploader.tsx";
 import { AssetEditor } from "./AssetEditor.tsx";
@@ -91,6 +92,10 @@ export function ManifestCreator({
   const [extracting, setExtracting] = useState(false);
   const [extractionProgress, setExtractionProgress] =
     useState<ProcessingProgress | null>(null);
+
+  // Project import state
+  const [projectImportId, setProjectImportId] = useState("");
+  const [importing, setImporting] = useState(false);
 
   const isNewManifest = !manifestId;
 
@@ -280,6 +285,33 @@ export function ManifestCreator({
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`Failed to upload video: ${errorMessage}`);
       setExtracting(false);
+    }
+  };
+
+  const handleProjectImport = async () => {
+    const trimmedId = projectImportId.trim();
+    if (!trimmedId) return;
+
+    setError(null);
+    setImporting(true);
+
+    try {
+      const result = await importProjectToManifest(
+        trimmedId,
+        name || undefined,
+      );
+      setManifest(result);
+      setName(result.name);
+      setDescription(result.description || "");
+      setCategory(result.category);
+      setTags(result.tags ? result.tags.join(", ") : "");
+      setAssets(result.assets);
+      setProjectImportId("");
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(`Failed to import project: ${errorMessage}`);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -586,6 +618,35 @@ export function ManifestCreator({
             onVideoSelected={handleVideoSelected}
             disabled={saving}
           />
+        </div>
+      )}
+
+      {/* Import from Project */}
+      {!extracting && (
+        <div className="mb-8 rounded-lg border border-gray-700 bg-gray-900/50 p-4">
+          <h3 className="text-sm font-medium text-gray-300 mb-1">
+            Import from Project
+          </h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Paste a project ID to auto-create assets from its storyboard
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={projectImportId}
+              onChange={(e) => setProjectImportId(e.target.value)}
+              placeholder="Project ID (UUID)"
+              disabled={importing || saving}
+              className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-purple-500 outline-none disabled:opacity-50"
+            />
+            <button
+              onClick={handleProjectImport}
+              disabled={importing || saving || !projectImportId.trim()}
+              className="bg-purple-600 hover:bg-purple-500 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {importing ? "Importing..." : "Import"}
+            </button>
+          </div>
         </div>
       )}
 

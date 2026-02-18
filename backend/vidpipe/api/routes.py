@@ -388,6 +388,12 @@ class UpdateManifestRequest(BaseModel):
     tags: Optional[list[str]] = None
 
 
+class CreateManifestFromProjectRequest(BaseModel):
+    """Request schema for POST /api/manifests/from-project."""
+    project_id: str
+    name: Optional[str] = None
+
+
 class ManifestListItem(BaseModel):
     """Item in list response for GET /api/manifests."""
     manifest_id: str
@@ -1962,6 +1968,53 @@ async def create_manifest(request: CreateManifestRequest):
             await session.refresh(manifest)
             return _manifest_to_list_item(manifest)
         except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/manifests/from-project", status_code=201, response_model=ManifestDetailResponse)
+async def create_manifest_from_project(request: CreateManifestFromProjectRequest):
+    """Create a manifest pre-populated from a project's storyboard data."""
+    try:
+        project_id = uuid.UUID(request.project_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid project_id format")
+
+    async with async_session() as session:
+        try:
+            manifest, assets = await manifest_service.create_manifest_from_project(
+                session,
+                project_id=project_id,
+                name=request.name,
+            )
+            await session.commit()
+            await session.refresh(manifest)
+            for a in assets:
+                await session.refresh(a)
+
+            return ManifestDetailResponse(
+                manifest_id=str(manifest.id),
+                name=manifest.name,
+                description=manifest.description,
+                thumbnail_url=manifest.thumbnail_url,
+                category=manifest.category,
+                tags=manifest.tags,
+                status=manifest.status,
+                processing_progress=manifest.processing_progress,
+                contact_sheet_url=manifest.contact_sheet_url,
+                asset_count=manifest.asset_count,
+                total_processing_cost=manifest.total_processing_cost,
+                times_used=manifest.times_used,
+                last_used_at=manifest.last_used_at.isoformat() if manifest.last_used_at else None,
+                version=manifest.version,
+                parent_manifest_id=str(manifest.parent_manifest_id) if manifest.parent_manifest_id else None,
+                source_video_duration=manifest.source_video_duration,
+                created_at=manifest.created_at.isoformat(),
+                updated_at=manifest.updated_at.isoformat(),
+                assets=[_asset_to_response(a) for a in assets],
+            )
+        except ValueError as e:
+            if "not found" in str(e):
+                raise HTTPException(status_code=404, detail=str(e))
             raise HTTPException(status_code=422, detail=str(e))
 
 

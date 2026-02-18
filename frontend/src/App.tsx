@@ -72,6 +72,10 @@ function App() {
           onViewProgress={handleViewProgress}
           onForked={(newId) => navigateTo("progress", newId)}
           onViewProject={(id) => navigateTo("detail", id)}
+          onViewManifest={(manifestId) => {
+            setActiveManifestId(manifestId);
+            navigateTo("manifest-creator");
+          }}
         />
       )}
       {currentView === "dashboard" && <Dashboard />}

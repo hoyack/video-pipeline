@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import clsx from "clsx";
 import type { SceneDetail, SceneReference, CandidateScore } from "../api/types.ts";
 import { listCandidates, selectCandidate } from "../api/client.ts";
+import { CopyButton } from "./CopyButton.tsx";
+import { ImageLightbox } from "./ImageLightbox.tsx";
 
 function Dot({ filled, color }: { filled: boolean; color: string }) {
   return (
@@ -15,12 +17,15 @@ function Dot({ filled, color }: { filled: boolean; color: string }) {
   );
 }
 
-function PromptSection({ label, text }: { label: string; text: string }) {
+function PromptSection({ label, text, copyable }: { label: string; text: string; copyable?: boolean }) {
   return (
     <div className="mt-2">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-        {label}
-      </span>
+      <div className="flex items-center gap-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+          {label}
+        </span>
+        {copyable && <CopyButton text={text} />}
+      </div>
       <p className="mt-0.5 text-xs leading-relaxed text-gray-400">{text}</p>
     </div>
   );
@@ -31,11 +36,15 @@ export function SceneCard({
   defaultExpanded = false,
   projectId,
   qualityMode = false,
+  onViewManifest,
+  manifestId,
 }: {
   scene: SceneDetail;
   defaultExpanded?: boolean;
   projectId?: string;
   qualityMode?: boolean;
+  onViewManifest?: (manifestId: string) => void;
+  manifestId?: string | null;
 }) {
   const hasExpandableContent = !!(
     scene.start_frame_prompt ||
@@ -49,6 +58,7 @@ export function SceneCard({
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [candidates, setCandidates] = useState<CandidateScore[]>([]);
   const [candidatesLoaded, setCandidatesLoaded] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<{ src: string; title: string } | null>(null);
 
   useEffect(() => {
     if (qualityMode && projectId && expanded && !candidatesLoaded) {
@@ -61,6 +71,8 @@ export function SceneCard({
     }
   }, [qualityMode, projectId, expanded, candidatesLoaded, scene.scene_index]);
 
+  const sceneLabel = `Scene ${scene.scene_index + 1}`;
+
   return (
     <div
       className={clsx(
@@ -71,7 +83,7 @@ export function SceneCard({
     >
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-medium text-gray-400">
-          Scene {scene.scene_index + 1}
+          {sceneLabel}
         </span>
         <div className="flex items-center gap-1.5">
           {hasExpandableContent && (
@@ -117,9 +129,13 @@ export function SceneCard({
                   </span>
                   <img
                     src={scene.start_keyframe_url}
-                    alt={`Scene ${scene.scene_index + 1} start`}
-                    className="mt-0.5 w-full rounded border border-gray-700"
+                    alt={`${sceneLabel} start`}
+                    className="mt-0.5 w-full cursor-zoom-in rounded border border-gray-700 hover:border-gray-500 transition-colors"
                     loading="lazy"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLightboxImage({ src: scene.start_keyframe_url!, title: `${sceneLabel} — Start Keyframe` });
+                    }}
                   />
                 </div>
               )}
@@ -130,9 +146,13 @@ export function SceneCard({
                   </span>
                   <img
                     src={scene.end_keyframe_url}
-                    alt={`Scene ${scene.scene_index + 1} end`}
-                    className="mt-0.5 w-full rounded border border-gray-700"
+                    alt={`${sceneLabel} end`}
+                    className="mt-0.5 w-full cursor-zoom-in rounded border border-gray-700 hover:border-gray-500 transition-colors"
                     loading="lazy"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLightboxImage({ src: scene.end_keyframe_url!, title: `${sceneLabel} — End Keyframe` });
+                    }}
                   />
                 </div>
               )}
@@ -144,45 +164,57 @@ export function SceneCard({
               <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                 Identity References
               </span>
-              <div className="mt-1 flex gap-2">
-                {scene.selected_references.map((ref) => (
-                  <div
-                    key={ref.asset_id}
-                    className="flex items-center gap-1.5 rounded border border-gray-700 bg-gray-800/50 px-2 py-1"
-                    title={ref.name}
-                  >
-                    {(ref.thumbnail_url || ref.reference_image_url) && (
-                      <img
-                        src={ref.thumbnail_url || ref.reference_image_url || ""}
-                        alt={ref.manifest_tag}
-                        className="h-6 w-6 rounded object-cover"
-                        loading="lazy"
-                      />
-                    )}
-                    <span className="text-[10px] font-medium text-blue-400">
-                      {ref.manifest_tag}
-                    </span>
-                    {ref.quality_score != null && (
-                      <span className="text-[10px] text-gray-500">
-                        {ref.quality_score.toFixed(1)}
+              <div className="mt-1 flex flex-wrap gap-2">
+                {scene.selected_references.map((ref) => {
+                  const canNavigate = !!(onViewManifest && manifestId);
+                  return (
+                    <button
+                      key={ref.asset_id}
+                      className={clsx(
+                        "flex items-center gap-1.5 rounded border bg-gray-800/50 px-2 py-1",
+                        canNavigate
+                          ? "border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+                          : "border-gray-700 cursor-default",
+                      )}
+                      title={canNavigate ? `${ref.name} — Click to view manifest` : ref.name}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (canNavigate) onViewManifest!(manifestId!);
+                      }}
+                    >
+                      {(ref.thumbnail_url || ref.reference_image_url) && (
+                        <img
+                          src={ref.thumbnail_url || ref.reference_image_url || ""}
+                          alt={ref.manifest_tag}
+                          className="h-6 w-6 rounded object-cover"
+                          loading="lazy"
+                        />
+                      )}
+                      <span className="text-[10px] font-medium text-blue-400">
+                        {ref.manifest_tag}
                       </span>
-                    )}
-                  </div>
-                ))}
+                      {ref.quality_score != null && (
+                        <span className="text-[10px] text-gray-500">
+                          {ref.quality_score.toFixed(1)}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
           {scene.start_frame_prompt && (
-            <PromptSection label="Start Frame Prompt" text={scene.start_frame_prompt} />
+            <PromptSection label="Start Frame Prompt" text={scene.start_frame_prompt} copyable />
           )}
           {scene.end_frame_prompt && (
-            <PromptSection label="End Frame Prompt" text={scene.end_frame_prompt} />
+            <PromptSection label="End Frame Prompt" text={scene.end_frame_prompt} copyable />
           )}
           {scene.video_motion_prompt && (
-            <PromptSection label="Motion" text={scene.video_motion_prompt} />
+            <PromptSection label="Motion" text={scene.video_motion_prompt} copyable />
           )}
           {scene.transition_notes && (
-            <PromptSection label="Transition" text={scene.transition_notes} />
+            <PromptSection label="Transition" text={scene.transition_notes} copyable />
           )}
           {/* Quality Mode — Candidate Comparison (Phase 11) */}
           {candidates.length > 1 && (
@@ -291,6 +323,15 @@ export function SceneCard({
           KF start / KF end / clip
         </span>
       </div>
+
+      {/* Image Lightbox */}
+      {lightboxImage && (
+        <ImageLightbox
+          src={lightboxImage.src}
+          title={lightboxImage.title}
+          onClose={() => setLightboxImage(null)}
+        />
+      )}
     </div>
   );
 }

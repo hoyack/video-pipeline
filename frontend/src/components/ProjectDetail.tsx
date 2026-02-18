@@ -6,6 +6,54 @@ import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
 import { EditForkPanel } from "./EditForkPanel.tsx";
+import { CopyButton } from "./CopyButton.tsx";
+import type { SceneDetail } from "../api/types.ts";
+
+function CopyAllScenesButton({ scenes }: { scenes: SceneDetail[] }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    const text = scenes
+      .map((s) => {
+        const lines = [`Scene ${s.scene_index + 1}:`];
+        lines.push(`  Description: ${s.description}`);
+        if (s.start_frame_prompt) lines.push(`  Start Frame: ${s.start_frame_prompt}`);
+        if (s.end_frame_prompt) lines.push(`  End Frame: ${s.end_frame_prompt}`);
+        if (s.video_motion_prompt) lines.push(`  Motion: ${s.video_motion_prompt}`);
+        if (s.transition_notes) lines.push(`  Transition: ${s.transition_notes}`);
+        return lines.join("\n");
+      })
+      .join("\n\n");
+
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 rounded border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:border-gray-600 hover:text-gray-300 transition-colors"
+    >
+      {copied ? (
+        <>
+          <svg className="h-3 w-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          Copied!
+        </>
+      ) : (
+        <>
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          Copy All Scenes
+        </>
+      )}
+    </button>
+  );
+}
 
 function modelLabel(
   catalogs: { id: string; label: string }[][],
@@ -24,9 +72,10 @@ interface ProjectDetailProps {
   onViewProgress: (projectId: string) => void;
   onForked?: (newProjectId: string) => void;
   onViewProject?: (projectId: string) => void;
+  onViewManifest?: (manifestId: string) => void;
 }
 
-export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProject }: ProjectDetailProps) {
+export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProject, onViewManifest }: ProjectDetailProps) {
   const [detail, setDetail] = useState<ProjectDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +156,10 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
       {/* Header */}
       <div>
         <h1 className="mb-1 text-2xl font-bold text-white">Project Detail</h1>
-        <p className="text-sm text-gray-500 font-mono">{detail.project_id}</p>
+        <div className="flex items-center gap-1">
+          <p className="text-sm text-gray-500 font-mono">{detail.project_id}</p>
+          <CopyButton text={detail.project_id} />
+        </div>
         {detail.forked_from && (
           <p className="mt-1 text-xs text-gray-500">
             Forked from{" "}
@@ -193,7 +245,10 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
 
       {/* Prompt */}
       <div>
-        <span className="text-xs text-gray-500">Prompt</span>
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-gray-500">Prompt</span>
+          <CopyButton text={detail.prompt} />
+        </div>
         <p className="mt-1 text-sm leading-relaxed text-gray-300">
           {detail.prompt}
         </p>
@@ -234,9 +289,12 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
       {/* Scenes */}
       {detail.scenes.length > 0 && (
         <div>
-          <h2 className="mb-3 text-sm font-medium text-gray-400">
-            Scenes ({detail.scenes.length})
-          </h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-gray-400">
+              Scenes ({detail.scenes.length})
+            </h2>
+            <CopyAllScenesButton scenes={detail.scenes} />
+          </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {detail.scenes.map((scene) => (
               <SceneCard
@@ -245,6 +303,8 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
                 defaultExpanded
                 projectId={detail.project_id}
                 qualityMode={detail.quality_mode}
+                onViewManifest={onViewManifest}
+                manifestId={detail.manifest_id}
               />
             ))}
           </div>

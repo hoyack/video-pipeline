@@ -14,6 +14,14 @@ export interface CandidateScore {
   scoring_cost: number;
 }
 
+/** Ollama model entry stored in user settings */
+export interface OllamaModelEntry {
+  id: string;       // e.g. "ollama/llama3.1"
+  label: string;    // e.g. "Llama 3.1"
+  enabled: boolean;
+  vision: boolean;  // true if this model supports vision
+}
+
 /** Request body for POST /api/generate */
 export interface GenerateRequest {
   prompt: string;
@@ -28,6 +36,7 @@ export interface GenerateRequest {
   manifest_id?: string;
   quality_mode?: boolean;
   candidate_count?: number;
+  vision_model?: string;
 }
 
 /** Response from POST /api/generate */
@@ -99,6 +108,7 @@ export interface ProjectDetail {
   manifest_id?: string | null;
   quality_mode?: boolean;
   candidate_count?: number;
+  vision_model?: string | null;
 }
 
 /** Item in GET /api/projects list */
@@ -113,6 +123,7 @@ export interface ProjectListItem {
   image_model?: string | null;
   video_model?: string | null;
   audio_enabled?: boolean | null;
+  vision_model?: string | null;
 }
 
 /** Response from POST /api/projects/{id}/resume */
@@ -308,6 +319,10 @@ export interface UserSettingsResponse {
   comfyui_host: string | null;
   has_comfyui_key: boolean;
   comfyui_cost_per_second: number | null;
+  ollama_use_cloud: boolean;
+  has_ollama_key: boolean;
+  ollama_endpoint: string | null;
+  ollama_models: OllamaModelEntry[] | null;
 }
 
 /** Request body for PUT /api/settings */
@@ -326,6 +341,11 @@ export interface UserSettingsUpdate {
   comfyui_api_key?: string | null;
   clear_comfyui_key?: boolean;
   comfyui_cost_per_second?: number | null;
+  ollama_use_cloud?: boolean;
+  ollama_api_key?: string | null;
+  clear_ollama_key?: boolean;
+  ollama_endpoint?: string | null;
+  ollama_models?: OllamaModelEntry[] | null;
 }
 
 /** Lightweight response from GET /api/settings/models */
@@ -337,6 +357,7 @@ export interface EnabledModelsResponse {
   default_image_model: string | null;
   default_video_model: string | null;
   comfyui_cost_per_second: number | null;
+  ollama_models: OllamaModelEntry[] | null;
 }
 
 /** Processing progress response */

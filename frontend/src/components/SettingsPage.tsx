@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import clsx from "clsx";
 import { getSettings, updateSettings } from "../api/client.ts";
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from "../lib/constants.ts";
-import type { UserSettingsResponse } from "../api/types.ts";
+import type { UserSettingsResponse, OllamaModelEntry } from "../api/types.ts";
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<UserSettingsResponse | null>(null);
@@ -28,6 +28,14 @@ export function SettingsPage() {
   const [hasComfyuiKey, setHasComfyuiKey] = useState(false);
   const [comfyuiCostPerSecond, setComfyuiCostPerSecond] = useState("");
 
+  // Ollama form state
+  const [ollamaUseCloud, setOllamaUseCloud] = useState(false);
+  const [ollamaApiKey, setOllamaApiKey] = useState("");
+  const [hasOllamaKey, setHasOllamaKey] = useState(false);
+  const [ollamaEndpoint, setOllamaEndpoint] = useState("");
+  const [ollamaModels, setOllamaModels] = useState<OllamaModelEntry[]>([]);
+  const [newModelName, setNewModelName] = useState("");
+
   useEffect(() => {
     getSettings()
       .then((s) => {
@@ -47,6 +55,10 @@ export function SettingsPage() {
         setComfyuiCostPerSecond(
           s.comfyui_cost_per_second != null ? String(s.comfyui_cost_per_second) : ""
         );
+        setOllamaUseCloud(s.ollama_use_cloud);
+        setHasOllamaKey(s.has_ollama_key);
+        setOllamaEndpoint(s.ollama_endpoint ?? "");
+        setOllamaModels(s.ollama_models ?? []);
       })
       .catch(() => setFeedback({ type: "error", msg: "Failed to load settings" }))
       .finally(() => setLoading(false));
@@ -81,12 +93,18 @@ export function SettingsPage() {
         comfyui_host: comfyuiHost || null,
         comfyui_api_key: comfyuiApiKey || null,
         comfyui_cost_per_second: costVal ? parseFloat(costVal) : null,
+        ollama_use_cloud: ollamaUseCloud,
+        ollama_api_key: ollamaApiKey || null,
+        ollama_endpoint: ollamaEndpoint || null,
+        ollama_models: ollamaModels,
       });
       setSettings(res);
       setHasApiKey(res.has_api_key);
       setApiKey("");
       setHasComfyuiKey(res.has_comfyui_key);
       setComfyuiApiKey("");
+      setHasOllamaKey(res.has_ollama_key);
+      setOllamaApiKey("");
       setFeedback({ type: "success", msg: "Settings saved" });
     } catch (err) {
       setFeedback({ type: "error", msg: err instanceof Error ? err.message : "Save failed" });
@@ -145,6 +163,34 @@ export function SettingsPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleAddOllamaModel() {
+    const name = newModelName.trim();
+    if (!name) return;
+    const id = `ollama/${name}`;
+    if (ollamaModels.some((m) => m.id === id)) return; // duplicate guard
+    const label = name.split("/").pop() ?? name; // Use last segment as label
+    // Auto-detect vision from name (heuristic: contains "vision" or "llava")
+    const vision = /vision|llava/i.test(name);
+    setOllamaModels([...ollamaModels, { id, label, enabled: true, vision }]);
+    setNewModelName("");
+  }
+
+  function toggleOllamaModelEnabled(id: string) {
+    setOllamaModels(ollamaModels.map((m) =>
+      m.id === id ? { ...m, enabled: !m.enabled } : m
+    ));
+  }
+
+  function toggleOllamaModelVision(id: string) {
+    setOllamaModels(ollamaModels.map((m) =>
+      m.id === id ? { ...m, vision: !m.vision } : m
+    ));
+  }
+
+  function removeOllamaModel(id: string) {
+    setOllamaModels(ollamaModels.filter((m) => m.id !== id));
   }
 
   if (loading) {
@@ -308,6 +354,112 @@ export function SettingsPage() {
           <p className="mt-1 text-xs text-gray-500">
             Leave empty for $0.00. Used for cost estimation in the Generate form.
           </p>
+        </div>
+      </section>
+
+      {/* Ollama Configuration */}
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold text-white">Ollama Configuration</h2>
+
+        {/* Cloud vs Local toggle */}
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-300">Mode:</span>
+          <button onClick={() => setOllamaUseCloud(false)}
+            className={clsx("px-3 py-1 rounded text-sm", !ollamaUseCloud ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300")}>
+            Local
+          </button>
+          <button onClick={() => setOllamaUseCloud(true)}
+            className={clsx("px-3 py-1 rounded text-sm", ollamaUseCloud ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300")}>
+            Cloud
+          </button>
+        </div>
+
+        {/* API Key — only show in cloud mode */}
+        {ollamaUseCloud && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">API Key</label>
+            <input type="password" value={ollamaApiKey}
+              onChange={(e) => setOllamaApiKey(e.target.value)}
+              placeholder={hasOllamaKey ? "Key is set (leave blank to keep)" : "Enter Ollama API key"}
+              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            {hasOllamaKey && (
+              <span className="mt-1 text-xs text-green-400">API key is set</span>
+            )}
+          </div>
+        )}
+
+        {/* Endpoint URL */}
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-300">Endpoint URL</label>
+          <input type="text" value={ollamaEndpoint}
+            onChange={(e) => setOllamaEndpoint(e.target.value)}
+            placeholder={ollamaUseCloud ? "https://ollama.com" : "http://localhost:11434"}
+            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Leave empty for default. Local: http://localhost:11434, Cloud: https://ollama.com
+          </p>
+        </div>
+
+        {/* Model Management */}
+        <div>
+          <label className="mb-2 block text-sm font-medium text-gray-300">Models</label>
+          <div className="flex gap-2 mb-3">
+            <input type="text" value={newModelName}
+              onChange={(e) => setNewModelName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAddOllamaModel()}
+              placeholder="e.g. llama3.2-vision"
+              className="flex-1 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <button type="button" onClick={handleAddOllamaModel}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">
+              Add
+            </button>
+          </div>
+
+          {/* Model list */}
+          <div className="space-y-2">
+            {ollamaModels.map((m) => (
+              <div key={m.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-2.5">
+                <div className="flex items-center gap-3">
+                  <span className={clsx("text-sm font-medium", m.enabled ? "text-gray-200" : "text-gray-500")}>
+                    {m.label}
+                  </span>
+                  <span className="text-xs text-gray-600">{m.id}</span>
+                  {/* Vision toggle */}
+                  <button type="button"
+                    onClick={() => toggleOllamaModelVision(m.id)}
+                    className={clsx("px-2 py-0.5 rounded text-xs",
+                      m.vision ? "bg-purple-600/30 text-purple-300 border border-purple-600/50" : "bg-gray-800 text-gray-500"
+                    )}>
+                    vision
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Enable/disable toggle */}
+                  <button type="button" onClick={() => toggleOllamaModelEnabled(m.id)}
+                    className={clsx("relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                      m.enabled ? "bg-blue-600" : "bg-gray-700"
+                    )}>
+                    <span className={clsx("inline-block h-3 w-3 rounded-full bg-white transition-transform",
+                      m.enabled ? "translate-x-5" : "translate-x-1"
+                    )} />
+                  </button>
+                  {/* Remove button */}
+                  <button type="button" onClick={() => removeOllamaModel(m.id)}
+                    className="text-xs text-red-400 hover:text-red-300">
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+            {ollamaModels.length === 0 && (
+              <p className="text-xs text-gray-600 py-2">
+                No Ollama models added. Type a model name above and click Add.
+              </p>
+            )}
+          </div>
         </div>
       </section>
 

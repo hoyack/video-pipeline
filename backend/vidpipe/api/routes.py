@@ -212,6 +212,8 @@ class GenerateRequest(BaseModel):
     # Phase 11: Multi-Candidate Quality Mode
     quality_mode: bool = False
     candidate_count: int = 1
+    # Phase 13: LLM Provider Abstraction
+    vision_model: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -284,6 +286,8 @@ class ProjectDetail(BaseModel):
     # Phase 11: Multi-Candidate Quality Mode
     quality_mode: bool = False
     candidate_count: int = 1
+    # Phase 13: LLM Provider Abstraction
+    vision_model: Optional[str] = None
 
 
 class ProjectListItem(BaseModel):
@@ -301,6 +305,8 @@ class ProjectListItem(BaseModel):
     # Phase 11: Multi-Candidate Quality Mode
     quality_mode: bool = False
     candidate_count: int = 1
+    # Phase 13: LLM Provider Abstraction
+    vision_model: Optional[str] = None
 
 
 class ResumeResponse(BaseModel):
@@ -560,13 +566,17 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             detail=f"clip_duration {request.clip_duration} not supported for {request.video_model}. Allowed: {allowed}",
         )
 
-    # Validate model IDs
-    if request.text_model not in ALLOWED_TEXT_MODELS:
+    # Validate model IDs (ollama/ prefix accepted for text and vision models)
+    if not (request.text_model in ALLOWED_TEXT_MODELS or request.text_model.startswith("ollama/")):
         raise HTTPException(status_code=422, detail=f"Invalid text_model: {request.text_model}")
     if request.image_model not in ALLOWED_IMAGE_MODELS:
         raise HTTPException(status_code=422, detail=f"Invalid image_model: {request.image_model}")
     if request.video_model not in ALLOWED_VIDEO_MODELS:
         raise HTTPException(status_code=422, detail=f"Invalid video_model: {request.video_model}")
+    if request.vision_model is not None and not (
+        request.vision_model in ALLOWED_TEXT_MODELS or request.vision_model.startswith("ollama/")
+    ):
+        raise HTTPException(status_code=422, detail=f"Invalid vision_model: {request.vision_model}")
 
     # Validate audio: reject enable_audio=True for models without audio support
     if request.enable_audio and request.video_model not in AUDIO_CAPABLE_MODELS:
@@ -597,6 +607,7 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             image_model=request.image_model,
             video_model=request.video_model,
             audio_enabled=request.enable_audio,
+            vision_model=request.vision_model,
             seed=random.randint(0, 2**32 - 1),
             quality_mode=request.quality_mode,
             candidate_count=request.candidate_count if request.quality_mode else 1,
@@ -797,6 +808,7 @@ async def get_project_detail(project_id: uuid.UUID):
             manifest_id=str(project.manifest_id) if project.manifest_id else None,
             quality_mode=project.quality_mode,
             candidate_count=project.candidate_count,
+            vision_model=project.vision_model,
         )
 
 
@@ -821,6 +833,7 @@ async def list_projects():
                 image_model=p.image_model,
                 video_model=p.video_model,
                 audio_enabled=p.audio_enabled,
+                vision_model=p.vision_model,
             )
             for p in projects
         ]
@@ -2574,6 +2587,11 @@ class UserSettingsResponse(BaseModel):
     comfyui_host: Optional[str] = None
     has_comfyui_key: bool = False
     comfyui_cost_per_second: Optional[float] = None
+    # Phase 13: Ollama configuration
+    ollama_use_cloud: bool = False
+    has_ollama_key: bool = False
+    ollama_endpoint: Optional[str] = None
+    ollama_models: Optional[list] = None
 
 
 class UserSettingsUpdate(BaseModel):
@@ -2592,6 +2610,12 @@ class UserSettingsUpdate(BaseModel):
     comfyui_api_key: Optional[str] = None
     clear_comfyui_key: bool = False
     comfyui_cost_per_second: Optional[float] = None
+    # Phase 13: Ollama configuration
+    ollama_use_cloud: Optional[bool] = None
+    ollama_api_key: Optional[str] = None
+    clear_ollama_key: Optional[bool] = None
+    ollama_endpoint: Optional[str] = None
+    ollama_models: Optional[list] = None
 
 
 class EnabledModelsResponse(BaseModel):
@@ -2603,6 +2627,8 @@ class EnabledModelsResponse(BaseModel):
     default_image_model: Optional[str] = None
     default_video_model: Optional[str] = None
     comfyui_cost_per_second: Optional[float] = None
+    # Phase 13: Ollama models for dynamic model list
+    ollama_models: Optional[list] = None
 
 
 @router.get("/settings")
@@ -2628,6 +2654,10 @@ async def get_settings() -> UserSettingsResponse:
             comfyui_host=settings.comfyui_host,
             has_comfyui_key=bool(settings.comfyui_api_key),
             comfyui_cost_per_second=settings.comfyui_cost_per_second,
+            ollama_use_cloud=bool(settings.ollama_use_cloud),
+            has_ollama_key=bool(settings.ollama_api_key),
+            ollama_endpoint=settings.ollama_endpoint,
+            ollama_models=settings.ollama_models,
         )
 
 
@@ -2688,6 +2718,18 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
         if body.comfyui_cost_per_second is not None:
             settings.comfyui_cost_per_second = body.comfyui_cost_per_second
 
+        # Phase 13: Ollama fields
+        if body.ollama_use_cloud is not None:
+            settings.ollama_use_cloud = body.ollama_use_cloud
+        if body.clear_ollama_key:
+            settings.ollama_api_key = None
+        elif body.ollama_api_key is not None:
+            settings.ollama_api_key = body.ollama_api_key
+        if body.ollama_endpoint is not None:
+            settings.ollama_endpoint = body.ollama_endpoint or None
+        if body.ollama_models is not None:
+            settings.ollama_models = body.ollama_models
+
         await session.commit()
         await session.refresh(settings)
 
@@ -2704,6 +2746,10 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             comfyui_host=settings.comfyui_host,
             has_comfyui_key=bool(settings.comfyui_api_key),
             comfyui_cost_per_second=settings.comfyui_cost_per_second,
+            ollama_use_cloud=bool(settings.ollama_use_cloud),
+            has_ollama_key=bool(settings.ollama_api_key),
+            ollama_endpoint=settings.ollama_endpoint,
+            ollama_models=settings.ollama_models,
         )
 
 
@@ -2725,4 +2771,5 @@ async def get_enabled_models() -> EnabledModelsResponse:
             default_image_model=settings.default_image_model,
             default_video_model=settings.default_video_model,
             comfyui_cost_per_second=settings.comfyui_cost_per_second,
+            ollama_models=settings.ollama_models,
         )

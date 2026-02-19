@@ -75,6 +75,12 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE user_settings ADD COLUMN comfyui_host VARCHAR(500)",
         "ALTER TABLE user_settings ADD COLUMN comfyui_api_key TEXT",
         "ALTER TABLE user_settings ADD COLUMN comfyui_cost_per_second REAL",
+        # Phase 13: LLM Provider Abstraction & Ollama Integration
+        "ALTER TABLE user_settings ADD COLUMN ollama_use_cloud INTEGER DEFAULT 0",
+        "ALTER TABLE user_settings ADD COLUMN ollama_api_key TEXT",
+        "ALTER TABLE user_settings ADD COLUMN ollama_endpoint VARCHAR(500)",
+        "ALTER TABLE user_settings ADD COLUMN ollama_models TEXT",  # JSON stored as TEXT in SQLite
+        "ALTER TABLE projects ADD COLUMN vision_model VARCHAR(100)",
     ]
     for sql in migrations:
         try:

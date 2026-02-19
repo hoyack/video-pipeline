@@ -179,6 +179,9 @@ class Project(Base):
     quality_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     candidate_count: Mapped[int] = mapped_column(Integer, default=1)
 
+    # Phase 13: LLM Provider Abstraction
+    vision_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -396,6 +399,13 @@ class UserSettings(Base):
     comfyui_host: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     comfyui_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     comfyui_cost_per_second: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Phase 13: Ollama configuration
+    ollama_use_cloud: Mapped[bool] = mapped_column(Boolean, default=False)
+    ollama_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ollama_endpoint: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    ollama_models: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # ^ list of {"id": "ollama/llama3.1", "label": "Llama 3.1", "enabled": true, "vision": false}
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

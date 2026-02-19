@@ -11,6 +11,7 @@ This module implements KEYF-01 through KEYF-06 requirements:
 
 import asyncio
 import logging
+from typing import Optional
 
 import numpy as np
 from google.genai import types
@@ -29,6 +30,7 @@ from tenacity import (
 from vidpipe.config import settings
 from vidpipe.db.models import Project, Scene, Keyframe
 from vidpipe.services.file_manager import FileManager
+from vidpipe.services.llm import LLMAdapter
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 
 logger = logging.getLogger(__name__)
@@ -360,7 +362,11 @@ async def _generate_image_comfyui(
     return image_bytes
 
 
-async def generate_keyframes(session: AsyncSession, project: Project) -> None:
+async def generate_keyframes(
+    session: AsyncSession,
+    project: Project,
+    text_adapter: Optional[LLMAdapter] = None,
+) -> None:
     """Generate keyframes sequentially with visual continuity across scenes.
 
     Implements sequential keyframe generation where:
@@ -371,6 +377,8 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
     Args:
         session: Database session for persisting keyframes
         project: Project containing scenes to generate keyframes for
+        text_adapter: Optional LLMAdapter for prompt rewriting. If None,
+            PromptRewriterService falls back to get_adapter("gemini-2.5-flash").
 
     Process:
         1. Query scenes ordered by scene_index
@@ -508,7 +516,7 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
                         if prev_sm:
                             previous_cv = prev_sm.cv_analysis_json
 
-                    rewriter = PromptRewriterService()
+                    rewriter = PromptRewriterService(text_adapter=text_adapter)
                     result = await rewriter.rewrite_keyframe_prompt(
                         scene=scene,
                         scene_manifest_json=scene_manifest_row.manifest_json,

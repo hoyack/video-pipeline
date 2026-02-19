@@ -1,48 +1,31 @@
-"""Reverse-prompting service using Gemini vision API.
+"""Reverse-prompting service using the LLM adapter vision interface.
 
 This module provides AI-powered analysis of asset images to generate
 recreation prompts and visual descriptions suitable for video generation.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Optional
 
-from google import genai
-from google.genai.types import GenerateContentConfig, Part
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-from vidpipe.services.vertex_client import get_vertex_client
+from vidpipe.services.llm import get_adapter, LLMAdapter
+from vidpipe.schemas.llm_vision import ReversePromptOutput
 
 logger = logging.getLogger(__name__)
 
 
 class ReversePromptService:
-    """Gemini vision-based reverse-prompting service."""
+    """Adapter-based reverse-prompting service."""
 
-    def __init__(self, client: Optional[genai.Client] = None):
-        """Initialize service with optional client.
+    def __init__(self, vision_adapter: Optional[LLMAdapter] = None):
+        """Initialize service with optional adapter.
 
         Args:
-            client: Optional genai.Client. If None, gets default via get_vertex_client()
+            vision_adapter: Optional LLMAdapter. If None, gets default via
+                get_adapter("gemini-2.5-flash") on first use.
         """
-        self._client = client
+        self._adapter = vision_adapter
 
-    @property
-    def client(self) -> genai.Client:
-        """Lazy-load client on first use."""
-        if self._client is None:
-            self._client = get_vertex_client()
-        return self._client
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        before_sleep=lambda retry_state: logger.warning(
-            f"Reverse-prompt retry {retry_state.attempt_number}/3: {retry_state.outcome.exception()}"
-        ),
-    )
     async def reverse_prompt_asset(
         self, image_path: str, asset_type: str, user_name: str = ""
     ) -> dict:
@@ -76,34 +59,18 @@ class ReversePromptService:
             f"User-provided name: {user_name}" if user_name else "No name provided."
         )
 
-        # Call Gemini vision API
-        response = await self.client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                f"{system_prompt}\n\n{user_context}",
-            ],
-            config=GenerateContentConfig(
-                temperature=0.4,  # Lower temp for consistency
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "object",
-                    "properties": {
-                        "reverse_prompt": {"type": "string"},
-                        "visual_description": {"type": "string"},
-                        "quality_score": {"type": "number"},
-                        "suggested_name": {"type": "string"},
-                    },
-                    "required": [
-                        "reverse_prompt",
-                        "visual_description",
-                        "quality_score",
-                    ],
-                },
-            ),
+        # Use adapter (fall back to gemini-2.5-flash for backward compat)
+        adapter = self._adapter or get_adapter("gemini-2.5-flash")
+        result = await adapter.analyze_image(
+            image_bytes=image_bytes,
+            prompt=f"{system_prompt}\n\n{user_context}",
+            schema=ReversePromptOutput,
+            mime_type=mime_type,
+            temperature=0.4,
+            max_retries=3,
         )
 
-        return json.loads(response.text)
+        return result.model_dump()
 
     def _get_system_prompt(self, asset_type: str) -> str:
         """Return type-specific system prompt for reverse-prompting.

@@ -21,10 +21,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.db.models import Asset, AssetAppearance
+from vidpipe.schemas.llm_vision import SemanticAnalysisOutput
 from vidpipe.services.clip_embedding_service import CLIPEmbeddingService
 from vidpipe.services.cv_detection import CVDetectionService
 from vidpipe.services.face_matching import FaceMatchingService
 from vidpipe.services.frame_sampler import extract_frames, sample_video_frames
+from vidpipe.services.llm import get_adapter, LLMAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +77,14 @@ class CVAnalysisResult(BaseModel):
 class CVAnalysisService:
     """Orchestrates post-generation CV analysis on keyframes and video clips."""
 
-    def __init__(self):
-        """Initialize service. Child services are lazy-loaded on first use."""
+    def __init__(self, vision_adapter: Optional[LLMAdapter] = None):
+        """Initialize service. Child services are lazy-loaded on first use.
+
+        Args:
+            vision_adapter: Optional LLMAdapter for semantic analysis.
+                If None, falls back to get_adapter("gemini-2.5-flash").
+        """
+        self._vision_adapter = vision_adapter
         self._cv_service: Optional[CVDetectionService] = None
         self._face_service: Optional[FaceMatchingService] = None
         self._clip_service: Optional[CLIPEmbeddingService] = None
@@ -300,13 +308,14 @@ class CVAnalysisService:
             f"{(time.time() - t3) * 1000:.0f}ms for {len(clip_embeddings)} frames"
         )
 
-        # ── Step 5: Gemini Vision semantic analysis ───────────────────────────
+        # ── Step 5: Vision semantic analysis ─────────────────────────────────
         if scene_manifest_json is not None:
             semantic = await self._run_semantic_analysis(
                 frame_paths=frame_paths,
                 detections=frame_detections,
                 scene_manifest_json=scene_manifest_json,
                 face_matches=face_matches,
+                vision_adapter=self._vision_adapter,
             )
             result.semantic_analysis = semantic
 
@@ -335,46 +344,43 @@ class CVAnalysisService:
         detections: list[FrameDetection],
         scene_manifest_json: dict,
         face_matches: list[FaceMatchResult],
+        vision_adapter: Optional[LLMAdapter] = None,
     ) -> Optional[SemanticAnalysis]:
-        """Run Gemini Vision semantic analysis on sampled frames.
+        """Run LLM Vision semantic analysis on sampled frames.
 
-        Builds a multi-modal prompt with sampled frames, detection context,
-        and manifest expectations. Returns structured SemanticAnalysis or
-        None on failure.
+        Uses the first sampled frame with full detection context in the text
+        prompt (all frames' context is embedded in the text, not as image parts).
+        Returns structured SemanticAnalysis or None on failure.
 
         Args:
             frame_paths: Paths to extracted frames
             detections: YOLO detection results per frame
             scene_manifest_json: Scene manifest dict with expected assets
             face_matches: Face matching results
+            vision_adapter: Optional LLMAdapter for vision. Falls back to
+                get_adapter("gemini-2.5-flash") if None.
 
         Returns:
             SemanticAnalysis or None if API call fails
         """
-        import json as _json
-
-        from tenacity import retry, stop_after_attempt, wait_exponential
-
-        from vidpipe.services.vertex_client import get_vertex_client
-
         try:
-            from google.genai.types import GenerateContentConfig, Part
-        except ImportError:
-            logger.warning("google-genai not available; skipping semantic analysis")
-            return None
+            adapter = vision_adapter or get_adapter("gemini-2.5-flash")
 
-        @retry(
-            stop=stop_after_attempt(2),
-            wait=wait_exponential(multiplier=1, min=2, max=8),
-            before_sleep=lambda rs: logger.warning(
-                f"Semantic analysis retry {rs.attempt_number}/2: "
-                f"{rs.outcome.exception()}"
-            ),
-        )
-        async def _call_gemini() -> SemanticAnalysis:
-            client = get_vertex_client()
+            # Read first frame bytes
+            if not frame_paths:
+                return None
+            first_frame_path = frame_paths[0]
+            try:
+                first_frame_bytes = Path(first_frame_path).read_bytes()
+            except Exception as exc:
+                logger.warning(f"Could not load first frame for semantic analysis: {exc}")
+                return None
 
-            # Build detection summary for context
+            suffix = Path(first_frame_path).suffix.lower()
+            mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+            mime_type = mime_map.get(suffix, "image/jpeg")
+
+            # Build detection summary for context (all frames, not just first)
             total_objects = sum(len(fd.objects) for fd in detections)
             total_faces = sum(len(fd.faces) for fd in detections)
             matched_faces = sum(1 for m in face_matches if not m.is_new)
@@ -400,88 +406,30 @@ class CVAnalysisService:
                 f"Shot type: {shot_type}."
             )
 
-            # Build content parts: sampled frames + text prompt
-            content_parts = []
-
-            # Include up to 4 frames to control token usage
-            for frame_path in frame_paths[:4]:
-                try:
-                    img_bytes = Path(frame_path).read_bytes()
-                    suffix = Path(frame_path).suffix.lower()
-                    mime_map = {
-                        ".jpg": "image/jpeg",
-                        ".jpeg": "image/jpeg",
-                        ".png": "image/png",
-                    }
-                    mime_type = mime_map.get(suffix, "image/jpeg")
-                    content_parts.append(
-                        Part.from_bytes(data=img_bytes, mime_type=mime_type)
-                    )
-                except Exception as exc:
-                    logger.warning(f"Could not load frame for semantic analysis: {exc}")
-
-            # Add text prompt
-            content_parts.append(
-                f"""Analyze these frames from a generated video scene.
-
-{manifest_summary}
-
-Detection results: {detection_summary}
-
-Evaluate and return a JSON object with:
-1. manifest_adherence (0-10): How well does the scene match the manifest expectations?
-2. visual_quality (0-10): How visually coherent and high-quality is the scene?
-3. continuity_issues: List of specific continuity problems noticed (empty list if none).
-4. new_entities_description: List of new/unexpected entities seen (objects, characters not in manifest).
-5. overall_scene_description: One-sentence description of what is happening in the scene.
-"""
+            full_prompt = (
+                f"Analyze this frame from a generated video scene.\n\n"
+                f"{manifest_summary}\n\n"
+                f"Detection results: {detection_summary}\n\n"
+                f"[Analysis of {len(frame_paths)} sampled frames — showing representative first frame]\n\n"
+                f"Evaluate and return a JSON object with:\n"
+                f"1. manifest_adherence (0-10): How well does the scene match the manifest expectations?\n"
+                f"2. visual_quality (0-10): How visually coherent and high-quality is the scene?\n"
+                f"3. continuity_issues: List of specific continuity problems noticed (empty list if none).\n"
+                f"4. new_entities_description: List of new/unexpected entities seen (objects, characters not in manifest).\n"
+                f"5. overall_scene_description: One-sentence description of what is happening in the scene.\n"
             )
 
-            response_schema = {
-                "type": "object",
-                "properties": {
-                    "manifest_adherence": {"type": "number"},
-                    "visual_quality": {"type": "number"},
-                    "continuity_issues": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "new_entities_description": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                    },
-                    "overall_scene_description": {"type": "string"},
-                },
-                "required": [
-                    "manifest_adherence",
-                    "visual_quality",
-                    "continuity_issues",
-                    "new_entities_description",
-                    "overall_scene_description",
-                ],
-            }
-
-            response = await client.aio.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=content_parts,
-                config=GenerateContentConfig(
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                    response_schema=response_schema,
-                ),
+            result = await adapter.analyze_image(
+                image_bytes=first_frame_bytes,
+                prompt=full_prompt,
+                schema=SemanticAnalysisOutput,
+                mime_type=mime_type,
+                temperature=0.2,
+                max_retries=2,
             )
 
-            data = _json.loads(response.text)
-            return SemanticAnalysis(
-                manifest_adherence=float(data.get("manifest_adherence", 0.0)),
-                visual_quality=float(data.get("visual_quality", 0.0)),
-                continuity_issues=data.get("continuity_issues", []),
-                new_entities_description=data.get("new_entities_description", []),
-                overall_scene_description=data.get("overall_scene_description", ""),
-            )
+            return SemanticAnalysis(**result.model_dump())
 
-        try:
-            return await _call_gemini()
         except Exception as exc:
             logger.warning(
                 f"Semantic analysis failed (non-fatal): {exc}. "

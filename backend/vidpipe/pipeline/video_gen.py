@@ -43,6 +43,7 @@ from vidpipe.services.candidate_scoring import CandidateScoringService
 from vidpipe.services.cv_analysis_service import CVAnalysisService
 from vidpipe.services.entity_extraction import identify_new_entities, extract_and_register_new_entities
 from vidpipe.services.file_manager import FileManager
+from vidpipe.services.llm import get_adapter, LLMAdapter
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services import manifest_service
 
@@ -579,6 +580,8 @@ async def _handle_quality_mode_candidates(
     video_prompt: str,
     all_assets: list,
     has_refs: bool = False,
+    scoring_service: Optional[CandidateScoringService] = None,
+    cv_service: Optional[CVAnalysisService] = None,
 ) -> None:
     """Save all candidate videos, score them, and auto-select the best one.
 
@@ -630,11 +633,11 @@ async def _handle_quality_mode_candidates(
                 previous_clip_path = prev_clip.local_path
 
     # Step 4: Score all candidates
-    scoring_service = _get_candidate_scoring_service()
+    effective_scoring_service = scoring_service or _get_candidate_scoring_service()
     # Build candidates_info list (score_all_candidates expects dicts with "local_path")
     candidates_info = [{"local_path": cand.local_path} for cand in candidate_records]
 
-    score_results = await scoring_service.score_all_candidates(
+    score_results = await effective_scoring_service.score_all_candidates(
         candidates_info=candidates_info,
         scene_index=scene.scene_index,
         scene_manifest_json=scene_manifest_row.manifest_json if scene_manifest_row else None,
@@ -676,7 +679,7 @@ async def _handle_quality_mode_candidates(
     await session.commit()
 
     # Step 8: Run CV analysis on selected candidate only
-    await _run_post_generation_analysis(session, scene, clip, project, scene_manifest_row)
+    await _run_post_generation_analysis(session, scene, clip, project, scene_manifest_row, cv_service=cv_service)
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +691,7 @@ async def _run_post_generation_analysis(
     clip: VideoClip,
     project: Project,
     scene_manifest_row,  # SceneManifest | None (imported inline to avoid circular)
+    cv_service: Optional[CVAnalysisService] = None,
 ) -> None:
     """Run CV analysis on completed video clip for progressive enrichment.
 
@@ -707,7 +711,8 @@ async def _run_post_generation_analysis(
         if not clip.local_path:
             return
 
-        cv_service = _get_cv_analysis_service()
+        # Use provided service or fall back to adapter-unaware singleton for backward compat
+        effective_cv_service = cv_service or _get_cv_analysis_service()
 
         # Load all manifest assets for face matching and entity extraction
         all_assets = await manifest_service.load_manifest_assets(
@@ -733,8 +738,8 @@ async def _run_post_generation_analysis(
         # session.rollback() would expire every ORM object in the session
         # (regardless of expire_on_commit) and break the caller's scene loop.
         async with session.begin_nested():
-            # Step 5: Run full CV analysis (frame sampling, YOLO, face match, CLIP, Gemini)
-            analysis_result = await cv_service.analyze_generated_content(
+            # Step 5: Run full CV analysis (frame sampling, YOLO, face match, CLIP, vision LLM)
+            analysis_result = await effective_cv_service.analyze_generated_content(
                 scene_index=scene.scene_index,
                 keyframe_paths=keyframe_paths,
                 clip_path=clip.local_path,
@@ -745,7 +750,7 @@ async def _run_post_generation_analysis(
             )
 
             # Step 6: Track appearances — persist AssetAppearance records
-            await cv_service.track_appearances(
+            await effective_cv_service.track_appearances(
                 session, project.id, scene.scene_index, analysis_result
             )
 
@@ -788,16 +793,33 @@ async def _run_post_generation_analysis(
 # ---------------------------------------------------------------------------
 # Main per-scene video generation with escalating remediation
 # ---------------------------------------------------------------------------
-async def generate_videos(session: AsyncSession, project: Project) -> None:
+async def generate_videos(
+    session: AsyncSession,
+    project: Project,
+    text_adapter: Optional[LLMAdapter] = None,
+    vision_adapter: Optional[LLMAdapter] = None,
+) -> None:
     """Generate video clips for all scenes using Veo or ComfyUI.
 
     Implements VGEN-01 through VGEN-07.
     Routes to ComfyUI when video_model is in COMFYUI_VIDEO_MODELS.
+
+    Args:
+        session: Database session for persisting clips and candidates
+        project: Project containing scenes to generate videos for
+        text_adapter: Optional LLMAdapter for prompt rewriting. If None,
+            PromptRewriterService falls back to get_adapter("gemini-2.5-flash").
+        vision_adapter: Optional LLMAdapter for CV analysis and candidate scoring.
+            If None, services fall back to get_adapter("gemini-2.5-flash").
     """
     video_model = project.video_model or settings.models.video_gen
     is_comfyui = video_model in COMFYUI_VIDEO_MODELS
     client = None if is_comfyui else get_vertex_client(location=location_for_model(video_model))
     file_mgr = FileManager()
+
+    # Instantiate per-call services with vision_adapter instead of adapter-unaware singletons
+    cv_service = CVAnalysisService(vision_adapter=vision_adapter)
+    scoring_service = CandidateScoringService(vision_adapter=vision_adapter)
 
     # Query scenes ready for video generation
     result = await session.execute(
@@ -822,6 +844,9 @@ async def generate_videos(session: AsyncSession, project: Project) -> None:
         else:
             await _generate_video_for_scene(
                 session, scene, file_mgr, client, project, video_model,
+                cv_service=cv_service,
+                scoring_service=scoring_service,
+                text_adapter=text_adapter,
             )
 
     # Update project status
@@ -1083,6 +1108,9 @@ async def _generate_video_for_scene(
     client,
     project: Project,
     video_model: str,
+    cv_service: Optional[CVAnalysisService] = None,
+    scoring_service: Optional[CandidateScoringService] = None,
+    text_adapter: Optional[LLMAdapter] = None,
 ) -> None:
     """Generate video clip for a single scene with escalating content-policy
     remediation and transient-error retry.
@@ -1191,7 +1219,7 @@ async def _generate_video_for_scene(
                     previous_cv = prev_sm.cv_analysis_json
 
             # all_assets already loaded above in Phase 8 block
-            rewriter = PromptRewriterService()
+            rewriter = PromptRewriterService(text_adapter=text_adapter)
             result = await rewriter.rewrite_video_prompt(
                 scene=scene,
                 scene_manifest_json=scene_manifest_row.manifest_json,
@@ -1280,6 +1308,8 @@ async def _generate_video_for_scene(
                     base_video_prompt or scene.video_motion_prompt,
                     all_assets,
                     has_refs=bool(selected_refs),
+                    scoring_service=scoring_service,
+                    cv_service=cv_service,
                 )
                 return
             elif poll_result != "content_policy":
@@ -1298,7 +1328,7 @@ async def _generate_video_for_scene(
                 if poll_result == "complete":
                     # Phase 9: Post-generation CV analysis for progressive enrichment
                     await _run_post_generation_analysis(
-                        session, scene, clip, project, scene_manifest_row,
+                        session, scene, clip, project, scene_manifest_row, cv_service=cv_service,
                     )
                 return  # complete, failed, or timed_out
             # Content policy → fall through to escalation loop
@@ -1470,11 +1500,13 @@ async def _generate_video_for_scene(
                         base_video_prompt or scene.video_motion_prompt,
                         all_assets,
                         has_refs=bool(veo_ref_images),
+                        scoring_service=scoring_service,
+                        cv_service=cv_service,
                     )
                 else:
                     # Standard mode: Phase 9 post-generation CV analysis
                     await _run_post_generation_analysis(
-                        session, scene, clip, project, scene_manifest_row,
+                        session, scene, clip, project, scene_manifest_row, cv_service=cv_service,
                     )
                 return
             elif poll_result == "content_policy":

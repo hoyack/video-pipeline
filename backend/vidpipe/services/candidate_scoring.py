@@ -15,6 +15,9 @@ import tempfile
 import os
 from typing import Optional
 
+from vidpipe.schemas.llm_vision import VisualPromptScoreOutput
+from vidpipe.services.llm import get_adapter, LLMAdapter
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -114,8 +117,14 @@ class CandidateScoringService:
     not installed.
     """
 
-    def __init__(self):
-        """Initialize service. Child services are lazy-loaded on first use."""
+    def __init__(self, vision_adapter: Optional[LLMAdapter] = None):
+        """Initialize service. Child services are lazy-loaded on first use.
+
+        Args:
+            vision_adapter: Optional LLMAdapter for visual/prompt scoring.
+                If None, falls back to get_adapter("gemini-2.5-flash").
+        """
+        self._vision_adapter = vision_adapter
         self._cv_service = None
         self._clip_service = None
 
@@ -322,18 +331,15 @@ class CandidateScoringService:
         tmp_dir: str,
         scoring_details: dict,
     ) -> tuple[float, float, float]:
-        """Score visual quality and prompt adherence via a single Gemini Flash call.
+        """Score visual quality and prompt adherence via a single LLM adapter call.
 
         Returns:
             Tuple of (visual_quality_score, prompt_adherence_score, cost_estimate).
             Scores are in [0, 10]. Cost estimate is in USD.
         """
-        from google.genai import types as genai_types
-        from vidpipe.services.vertex_client import get_vertex_client
-
         default_visual = 5.0
         default_prompt_adh = 5.0
-        cost_estimate = 0.01  # ~$0.01 per Gemini Flash call
+        cost_estimate = 0.01  # ~$0.01 per LLM call
 
         try:
             # Extract first frame as JPEG bytes
@@ -341,14 +347,13 @@ class CandidateScoringService:
             await asyncio.to_thread(_extract_first_frame, clip_path, first_frame_path)
             frame_bytes = await asyncio.to_thread(_frame_to_jpeg_bytes, first_frame_path)
 
-            client = get_vertex_client()
+            adapter = self._vision_adapter or get_adapter("gemini-2.5-flash")
 
             system_prompt = (
                 "You are a professional video quality assessor. "
                 "Analyze the provided video frame and return a JSON object with two scores (0-10):\n"
                 "- visual_quality: Rate the sharpness, coherence, absence of artifacts, and compositional quality.\n"
                 "- prompt_adherence: Rate how well this frame matches the scene description provided.\n"
-                "Respond ONLY with valid JSON: {\"visual_quality\": N, \"prompt_adherence\": N}"
             )
 
             user_prompt = (
@@ -356,50 +361,26 @@ class CandidateScoringService:
                 "Rate this frame's visual_quality and prompt_adherence (0-10 each)."
             )
 
-            response = await client.aio.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[
-                    genai_types.Content(
-                        role="user",
-                        parts=[
-                            genai_types.Part(
-                                inline_data=genai_types.Blob(
-                                    mime_type="image/jpeg",
-                                    data=frame_bytes,
-                                )
-                            ),
-                            genai_types.Part(text=user_prompt),
-                        ],
-                    )
-                ],
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                ),
+            result = await adapter.analyze_image(
+                image_bytes=frame_bytes,
+                prompt=f"{system_prompt}\n\n{user_prompt}",
+                schema=VisualPromptScoreOutput,
+                mime_type="image/jpeg",
+                temperature=0.1,
+                max_retries=2,
             )
 
-            # Parse JSON response
-            import json
-            raw_text = response.text.strip()
-            parsed = json.loads(raw_text)
+            visual_quality = max(0.0, min(10.0, result.visual_quality))
+            prompt_adherence = max(0.0, min(10.0, result.prompt_adherence))
 
-            visual_quality = float(parsed.get("visual_quality", default_visual))
-            prompt_adherence = float(parsed.get("prompt_adherence", default_prompt_adh))
-
-            # Clamp to [0, 10]
-            visual_quality = max(0.0, min(10.0, visual_quality))
-            prompt_adherence = max(0.0, min(10.0, prompt_adherence))
-
-            scoring_details["visual_quality_source"] = "gemini_flash"
-            scoring_details["prompt_adherence_source"] = "gemini_flash"
-            scoring_details["gemini_raw_response"] = raw_text[:500]  # truncate for storage
+            scoring_details["visual_quality_source"] = "llm_adapter"
+            scoring_details["prompt_adherence_source"] = "llm_adapter"
 
             return visual_quality, prompt_adherence, cost_estimate
 
         except Exception as e:
-            logger.warning(f"Gemini visual/prompt scoring failed: {e}. Using defaults.")
-            scoring_details["gemini_scoring_error"] = str(e)
+            logger.warning(f"LLM visual/prompt scoring failed: {e}. Using defaults.")
+            scoring_details["llm_scoring_error"] = str(e)
             return default_visual, default_prompt_adh, 0.0
 
     async def score_all_candidates(

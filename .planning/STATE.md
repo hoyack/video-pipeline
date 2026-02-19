@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 13 of 13 (LLM Provider Abstraction + Ollama Integration) — IN PROGRESS
-Plan: 1 of 3 complete
-Status: 13-01 complete — LLM adapter package (VertexAI + Ollama), vision schemas, DB columns, settings API
-Last activity: 2026-02-19 — Completed 13-01 (LLM adapter abstraction layer, DB schema extensions)
+Phase: 13 of 13 (LLM Provider Abstraction + Ollama Integration) — COMPLETE
+Plan: 3 of 3 complete
+Status: 13-03 complete — Frontend Ollama Settings UI, vision_model dropdown, OllamaModelEntry types
+Last activity: 2026-02-19 — Completed 13-03 (Ollama Settings section + GenerateForm vision_model)
 
-Progress: [██████████] 100% (12 of 12 prior phases complete, 35 of 37 plans complete)
+Progress: [██████████] 100% (13 of 13 phases complete, 37 of 37 plans complete)
 
 ## Performance Metrics
 
@@ -39,11 +39,11 @@ Progress: [██████████] 100% (12 of 12 prior phases complete,
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
 | 11-multi-candidate-quality-mode | 3/3 | 14.0 min | 4.7 min |
 | 12-fork-system-integration-with-manifests | 3/3 | 7.0 min | 2.3 min |
-| 13-llm-provider-abstraction-ollama | 1/3 | 5.0 min | 5.0 min |
+| 13-llm-provider-abstraction-ollama | 3/3 | 8.0 min | 2.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 11-03 (8.0min), 12-01 (2.0min), 12-02 (3.0min), 12-03 (2.0min), 13-01 (5.0min)
-- Trend: Phase 13 adapter layer complete in single plan — 6 new files, DB migrations, API extensions
+- Last 5 plans: 12-02 (3.0min), 12-03 (2.0min), 13-01 (5.0min), 13-02 (unknown), 13-03 (3.0min)
+- Trend: Phase 13 complete — LLM abstraction layer, adapter migration, and full frontend Ollama UI
 
 *Updated after each plan completion*
 
@@ -198,6 +198,10 @@ Recent decisions affecting current work:
 - **13-01:** ollama_use_cloud flag: True = cloud endpoint + api_key, False = localhost (or custom endpoint) with no auth key
 - **13-01:** vision_model accepted in GenerateRequest + Project for per-project LLM routing (separate from text_model for storyboarding)
 - **13-01:** GenerateRequest validation accepts "ollama/" prefix for text_model and vision_model (dynamic model IDs from user Ollama config)
+- **13-03:** Empty string sentinel for visionModel state — JSON.stringify omits undefined, backend uses text_model as fallback
+- **13-03:** allTextModels/allVisionModels via useMemo merge static Gemini catalog with dynamic Ollama models from settings
+- **13-03:** Auto-detect vision flag via /vision|llava/i heuristic on model name; users can toggle manually
+- **13-03:** Gemini text models appear in both Text Model and Vision Model groups (all support multimodal)
 
 ### Roadmap Evolution
 
@@ -224,5 +228,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-19 (execution)
-Stopped at: Completed 13-01-PLAN.md (LLM adapter package + DB schema extensions + settings API)
+Stopped at: Completed 13-03-PLAN.md (Frontend Ollama UI + vision_model dropdown — Phase 13 COMPLETE)
 Resume file: None

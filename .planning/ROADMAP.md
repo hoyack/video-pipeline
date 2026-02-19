@@ -26,7 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 10: Adaptive Prompt Rewriting** - Dynamic prompt enrichment with continuity checking and LLM rewriter (completed 2026-02-17)
 - [x] **Phase 11: Multi-Candidate Quality Mode** - sampleCount configuration, composite scoring pipeline, candidate comparison UI (completed 2026-02-17)
 - [x] **Phase 12: Fork System Integration with Manifests** - Asset/manifest inheritance, incremental manifesting on fork (completed 2026-02-17)
-- [ ] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring
+- [x] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring (completed 2026-02-19)
 
 ## Phase Details
 
@@ -277,5 +277,5 @@ Plans:
 
 Plans:
 - [x] 13-01-PLAN.md — LLM adapter package (base, VertexAI, Ollama, registry), vision schemas, DB schema, settings API
-- [ ] 13-02-PLAN.md — Call-site migration (storyboard, prompt rewriter, reverse-prompt, CV analysis, candidate scoring), orchestrator wiring, route validation
-- [ ] 13-03-PLAN.md — Frontend Ollama settings UI, model management, GenerateForm vision_model dropdown
+- [x] 13-02-PLAN.md — Call-site migration (storyboard, prompt rewriter, reverse-prompt, CV analysis, candidate scoring), orchestrator wiring, route validation
+- [x] 13-03-PLAN.md — Frontend Ollama settings UI, model management, GenerateForm vision_model dropdown

@@ -202,6 +202,8 @@ Recent decisions affecting current work:
 - **13-03:** allTextModels/allVisionModels via useMemo merge static Gemini catalog with dynamic Ollama models from settings
 - **13-03:** Auto-detect vision flag via /vision|llava/i heuristic on model name; users can toggle manually
 - **13-03:** Gemini text models appear in both Text Model and Vision Model groups (all support multimodal)
+- [Phase 13]: cv_analysis_service uses first frame only for adapter.analyze_image() — single-image adapter interface, full detection context in text prompt
+- [Phase 13]: Per-call CVAnalysisService/CandidateScoringService in generate_videos() — enables vision_adapter to flow through correctly, module-level singletons retained but unused from main path
 
 ### Roadmap Evolution
 

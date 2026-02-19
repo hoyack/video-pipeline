@@ -26,6 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 10: Adaptive Prompt Rewriting** - Dynamic prompt enrichment with continuity checking and LLM rewriter (completed 2026-02-17)
 - [x] **Phase 11: Multi-Candidate Quality Mode** - sampleCount configuration, composite scoring pipeline, candidate comparison UI (completed 2026-02-17)
 - [x] **Phase 12: Fork System Integration with Manifests** - Asset/manifest inheritance, incremental manifesting on fork (completed 2026-02-17)
+- [ ] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring
 
 ## Phase Details
 
@@ -85,7 +86,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
+Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 13
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -101,6 +102,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 12
 | 10. Adaptive Prompt Rewriting | 0/2 | Complete    | 2026-02-17 |
 | 11. Multi-Candidate Quality Mode | 0/3 | Complete    | 2026-02-17 |
 | 12. Fork System Integration | 0/3 | Complete    | 2026-02-17 |
+| 13. LLM Provider Abstraction | 0/3 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -257,3 +259,23 @@ Plans:
 - [ ] 12-01-PLAN.md — DB migration, Asset inheritance ORM fields, ForkRequest/AssetChanges schemas, ProjectDetail manifest_id
 - [ ] 12-02-PLAN.md — Fork endpoint asset copy, scene manifest inheritance, invalidation extension, incremental manifesting
 - [ ] 12-03-PLAN.md — Frontend TypeScript types, API client, EditForkPanel asset management UI
+
+### Phase 13: LLM Provider Abstraction & Ollama Integration
+**Goal**: Abstract all LLM text/vision calls behind a provider adapter interface, extract existing Vertex AI/Gemini calls into a Vertex adapter, implement an Ollama adapter for text and vision models, add settings UI for Ollama configuration (API key, cloud/local toggle, endpoint, model management), and wire the pipeline to route through the correct adapter based on selected model provider
+**Depends on**: Phase 3 (core pipeline), independent of Phases 4-12 (manifest/CV features)
+**Requirements**: LLMA-01, LLMA-02, LLMA-03, LLMA-04, LLMA-05, LLMA-06, LLMA-07
+**Success Criteria** (what must be TRUE):
+  1. `LLMAdapter` abstract base class defines text generation (with structured JSON output) and vision analysis interfaces
+  2. `VertexAIAdapter` wraps existing `get_vertex_client()` calls; all current Gemini text/vision call sites route through it with zero behavior change
+  3. `OllamaAdapter` implements text generation and vision analysis using Ollama API (both local and cloud endpoints)
+  4. Settings UI shows Ollama section: API key input, cloud/local toggle (local disables API key), endpoint URL, model add/remove/toggle
+  5. Custom Ollama models added via input box appear in the text/vision model lists and can be toggled on/off or removed
+  6. GenerateForm supports separate text_model and vision_model selection; pipeline routes storyboard through text adapter and image analysis through vision adapter
+  7. Existing Vertex AI/Gemini pipeline works identically when Gemini models are selected (no regression)
+  8. Provider detection automatic: model ID prefix or provider registry determines which adapter handles each call
+**Plans:** 3 plans in 2 waves
+
+Plans:
+- [ ] 13-01-PLAN.md — LLM adapter package (base, VertexAI, Ollama, registry), vision schemas, DB schema, settings API
+- [ ] 13-02-PLAN.md — Call-site migration (storyboard, prompt rewriter, reverse-prompt, CV analysis, candidate scoring), orchestrator wiring, route validation
+- [ ] 13-03-PLAN.md — Frontend Ollama settings UI, model management, GenerateForm vision_model dropdown

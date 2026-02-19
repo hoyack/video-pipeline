@@ -33,6 +33,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   const [videoModel, setVideoModel] = useState(VIDEO_MODELS[0].id);
   const [enableAudio, setEnableAudio] = useState(true);
   const [selectedManifestId, setSelectedManifestId] = useState<string | null>(null);
+  const [visionModel, setVisionModel] = useState<string>("");
   const [qualityMode, setQualityMode] = useState(false);
   const [candidateCount, setCandidateCount] = useState(2);
   const [submitting, setSubmitting] = useState(false);
@@ -71,10 +72,28 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
     return VIDEO_MODELS.filter((m) => enabled.has(m.id));
   }, [modelSettings]);
 
+  // Merge Ollama text models (enabled, any) into text model list
+  const allTextModels = useMemo(() => {
+    const base = filteredTextModels;
+    const ollamaText = (modelSettings?.ollama_models ?? [])
+      .filter((m) => m.enabled)
+      .map((m) => ({ id: m.id, label: `${m.label} (Ollama)`, costPerCall: 0 }));
+    return [...base, ...ollamaText];
+  }, [filteredTextModels, modelSettings]);
+
+  // Vision models: Gemini text models (they all support vision) + Ollama vision models
+  const allVisionModels = useMemo(() => {
+    const base = filteredTextModels; // Gemini text models work for vision too
+    const ollamaVision = (modelSettings?.ollama_models ?? [])
+      .filter((m) => m.enabled && m.vision)
+      .map((m) => ({ id: m.id, label: `${m.label} (Ollama)`, costPerCall: 0 }));
+    return [...base, ...ollamaVision];
+  }, [filteredTextModels, modelSettings]);
+
   // Ensure selected models are still valid after filtering
   useEffect(() => {
-    if (filteredTextModels.length > 0 && !filteredTextModels.find((m) => m.id === textModel)) {
-      setTextModel(filteredTextModels[0].id);
+    if (allTextModels.length > 0 && !allTextModels.find((m) => m.id === textModel)) {
+      setTextModel(allTextModels[0].id);
     }
     if (filteredImageModels.length > 0 && !filteredImageModels.find((m) => m.id === imageModel)) {
       setImageModel(filteredImageModels[0].id);
@@ -82,7 +101,10 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
     if (filteredVideoModels.length > 0 && !filteredVideoModels.find((m) => m.id === videoModel)) {
       setVideoModel(filteredVideoModels[0].id);
     }
-  }, [filteredTextModels, filteredImageModels, filteredVideoModels]);
+    if (visionModel && allVisionModels.length > 0 && !allVisionModels.find((m) => m.id === visionModel)) {
+      setVisionModel("");
+    }
+  }, [allTextModels, filteredImageModels, filteredVideoModels, allVisionModels]);
 
   const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel) ?? VIDEO_MODELS[0];
   const allowedDurations = selectedVideoModel.allowedDurations;
@@ -138,6 +160,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         manifest_id: selectedManifestId ?? undefined,
         quality_mode: qualityMode,
         candidate_count: qualityMode ? candidateCount : undefined,
+        vision_model: visionModel || undefined,
       });
       onGenerated(res.project_id);
     } catch (err) {
@@ -278,7 +301,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
             Text Model
           </label>
           <div className="flex flex-wrap gap-2">
-            {filteredTextModels.map((m) => (
+            {allTextModels.map((m) => (
               <button
                 key={m.id}
                 type="button"
@@ -286,6 +309,45 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
                 className={clsx(
                   "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
                   textModel === m.id
+                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Vision Model */}
+        <div>
+          <label className="mb-2 block text-sm font-medium text-gray-300">
+            Vision Model
+            <span className="ml-2 text-xs text-gray-500 font-normal">
+              For image analysis, reverse-prompting, and scoring
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setVisionModel("")}
+              className={clsx(
+                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                visionModel === ""
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+              )}
+            >
+              Same as Text
+            </button>
+            {allVisionModels.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setVisionModel(m.id)}
+                className={clsx(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                  visionModel === m.id
                     ? "border-blue-500 bg-blue-500/20 text-blue-300"
                     : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
                 )}

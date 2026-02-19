@@ -1,9 +1,7 @@
 import { useState, useEffect } from "react";
-import clsx from "clsx";
-import { ManifestCard } from "./ManifestCard.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
-import { listManifests, getManifestDetail } from "../api/client.ts";
-import type { ManifestListItem, ManifestDetail } from "../api/types.ts";
+import { getManifestDetail, listManifests } from "../api/client.ts";
+import type { ManifestDetail, ManifestListItem } from "../api/types.ts";
 
 interface ManifestSelectorProps {
   selectedManifestId: string | null;
@@ -14,34 +12,32 @@ export function ManifestSelector({
   selectedManifestId,
   onManifestSelect,
 }: ManifestSelectorProps) {
-  const [mode, setMode] = useState<"existing" | "quick">("existing");
-  const [manifests, setManifests] = useState<ManifestListItem[]>([]);
-  const [loading, setLoading] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<ManifestDetail | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [manifests, setManifests] = useState<ManifestListItem[]>([]);
+  const [fetchingList, setFetchingList] = useState(false);
+  const [search, setSearch] = useState("");
 
-  // Fetch READY manifests on mount
-  useEffect(() => {
-    async function fetchManifests() {
-      setLoading(true);
-      try {
-        const data = await listManifests({
-          sort_by: "last_used_at",
-          sort_order: "desc",
-        });
-        // Filter to READY only (backend doesn't filter by status yet)
-        const readyManifests = data.filter((m) => m.status === "READY");
-        setManifests(readyManifests);
-      } catch (err) {
-        console.error("Failed to load manifests:", err);
-        setManifests([]);
-      } finally {
-        setLoading(false);
-      }
+  const openPicker = async () => {
+    setShowPicker(true);
+    setSearch("");
+    setFetchingList(true);
+    try {
+      const items = await listManifests({ sort_by: "updated_at", sort_order: "desc" });
+      setManifests(items.filter((m) => m.status === "READY"));
+    } catch (err) {
+      console.error("Failed to fetch manifests:", err);
+      setManifests([]);
+    } finally {
+      setFetchingList(false);
     }
-    fetchManifests();
-  }, []);
+  };
 
-  // Fetch detail when selection changes
+  const filteredManifests = manifests.filter((m) =>
+    m.name.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  // Fetch detail when external selection changes (e.g. initial value)
   useEffect(() => {
     if (!selectedManifestId) {
       setSelectedDetail(null);
@@ -49,137 +45,164 @@ export function ManifestSelector({
     }
     async function fetchDetail() {
       try {
-        const detail = await getManifestDetail(selectedManifestId);
+        const detail = await getManifestDetail(selectedManifestId!);
         setSelectedDetail(detail);
       } catch (err) {
-        console.error("Failed to load manifest detail:", err);
+        console.error("Failed to load manifest:", err);
         setSelectedDetail(null);
+        onManifestSelect(null);
       }
     }
     fetchDetail();
   }, [selectedManifestId]);
 
-  // Clear selection when switching to quick mode
-  function handleModeChange(newMode: "existing" | "quick") {
-    setMode(newMode);
-    if (newMode === "quick") {
-      onManifestSelect(null);
-    }
+  const handleRemove = () => {
+    setSelectedDetail(null);
+    onManifestSelect(null);
+  };
+
+  // Show selected manifest card
+  if (selectedDetail) {
+    return (
+      <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+        <div className="flex items-start justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h4 className="truncate font-semibold text-gray-100">{selectedDetail.name}</h4>
+              <StatusBadge status={selectedDetail.status} />
+            </div>
+            <p className="text-sm text-gray-400">
+              {selectedDetail.asset_count} assets | {selectedDetail.category} | v{selectedDetail.version}
+            </p>
+            {selectedDetail.description && (
+              <p className="mt-1 line-clamp-2 text-sm text-gray-500">{selectedDetail.description}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleRemove}
+            className="ml-3 flex-shrink-0 rounded-full p-1 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
+            title="Remove manifest"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
+        </div>
+        {/* Asset thumbnails */}
+        {selectedDetail.assets.length > 0 && (
+          <div className="mt-3 flex gap-2 overflow-x-auto">
+            {selectedDetail.assets
+              .filter((a) => a.reference_image_url)
+              .slice(0, 5)
+              .map((asset) => (
+                <div key={asset.asset_id} className="flex-shrink-0">
+                  <img
+                    src={asset.reference_image_url!}
+                    alt={asset.name}
+                    className="h-12 w-12 rounded object-cover"
+                  />
+                  <p className="mt-0.5 text-center text-[10px] text-gray-500">{asset.manifest_tag}</p>
+                </div>
+              ))}
+            {selectedDetail.assets.filter((a) => a.reference_image_url).length > 5 && (
+              <span className="flex h-12 w-12 items-center justify-center rounded bg-gray-800 text-xs text-gray-400">
+                +{selectedDetail.assets.filter((a) => a.reference_image_url).length - 5}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Show picker UI
+  if (!showPicker) {
+    return (
+      <button
+        type="button"
+        onClick={openPicker}
+        className="flex items-center gap-2 rounded-lg border border-dashed border-gray-700 px-4 py-3 text-sm text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-300"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+          <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+        </svg>
+        Add
+      </button>
+    );
   }
 
   return (
-    <div className="space-y-4">
-      {/* Radio toggle */}
-      <div className="flex gap-2">
+    <div className="rounded-lg border border-gray-700 bg-gray-900">
+      {/* Search filter */}
+      <div className="flex items-center gap-2 border-b border-gray-700 p-2">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter by name..."
+          autoFocus
+          className="flex-1 rounded border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-blue-500"
+        />
         <button
           type="button"
-          onClick={() => handleModeChange("existing")}
-          className={clsx(
-            "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-            mode === "existing"
-              ? "border-blue-500 bg-blue-500/20 text-blue-300"
-              : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-          )}
+          onClick={() => setShowPicker(false)}
+          className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
+          title="Cancel"
         >
-          Select Existing
-        </button>
-        <button
-          type="button"
-          onClick={() => handleModeChange("quick")}
-          className={clsx(
-            "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-            mode === "quick"
-              ? "border-blue-500 bg-blue-500/20 text-blue-300"
-              : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-          )}
-        >
-          Quick Upload (inline)
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+            <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+          </svg>
         </button>
       </div>
 
-      {/* Content area */}
-      {mode === "existing" ? (
-        selectedDetail ? (
-          // Selected manifest preview
-          <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h4 className="font-semibold text-gray-100">{selectedDetail.name}</h4>
-                <p className="text-sm text-gray-400">
-                  {selectedDetail.asset_count} assets | {selectedDetail.category} | v{selectedDetail.version}
-                </p>
-                {selectedDetail.description && (
-                  <p className="mt-1 line-clamp-2 text-sm text-gray-500">{selectedDetail.description}</p>
-                )}
-              </div>
-              <StatusBadge status={selectedDetail.status} />
-            </div>
-            {/* Key asset thumbnails - show first 5 assets with images */}
-            {selectedDetail.assets.length > 0 && (
-              <div className="mt-3 flex gap-2 overflow-x-auto">
-                {selectedDetail.assets
-                  .filter((a) => a.reference_image_url)
-                  .slice(0, 5)
-                  .map((asset) => (
-                    <div key={asset.asset_id} className="flex-shrink-0">
-                      <img
-                        src={asset.reference_image_url!}
-                        alt={asset.name}
-                        className="h-12 w-12 rounded object-cover"
-                      />
-                      <p className="mt-0.5 text-center text-[10px] text-gray-500">{asset.manifest_tag}</p>
-                    </div>
-                  ))}
-                {selectedDetail.assets.filter((a) => a.reference_image_url).length > 5 && (
-                  <span className="flex h-12 w-12 items-center justify-center rounded bg-gray-800 text-xs text-gray-400">
-                    +{selectedDetail.assets.filter((a) => a.reference_image_url).length - 5}
-                  </span>
-                )}
-              </div>
-            )}
-            <button
-              onClick={() => onManifestSelect(null)}
-              className="mt-3 text-sm text-gray-400 hover:text-gray-300"
-            >
-              Change Manifest
-            </button>
+      {/* List */}
+      <div className="max-h-64 overflow-y-auto">
+        {fetchingList ? (
+          <div className="flex items-center justify-center py-6 text-sm text-gray-500">
+            <svg className="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            Loading...
+          </div>
+        ) : filteredManifests.length === 0 ? (
+          <div className="py-6 text-center text-sm text-gray-500">
+            {search ? "No manifests match your filter" : "No ready manifests found"}
           </div>
         ) : (
-          // Manifest selection grid
-          <div>
-            {loading ? (
-              <p className="text-sm text-gray-500">Loading manifests...</p>
-            ) : manifests.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                No ready manifests found. Create one in the Manifest Library first.
-              </p>
-            ) : (
-              <div className="grid max-h-64 grid-cols-2 gap-3 overflow-y-auto">
-                {manifests.slice(0, 6).map((m) => (
-                  <button
-                    key={m.manifest_id}
-                    type="button"
-                    onClick={() => onManifestSelect(m.manifest_id)}
-                    className="text-left"
-                  >
-                    <ManifestCard manifest={m} compact />
-                  </button>
-                ))}
+          filteredManifests.map((m) => (
+            <button
+              key={m.manifest_id}
+              type="button"
+              onClick={() => {
+                onManifestSelect(m.manifest_id);
+                setShowPicker(false);
+              }}
+              className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-800"
+            >
+              {m.thumbnail_url ? (
+                <img src={m.thumbnail_url} alt="" className="h-8 w-8 flex-shrink-0 rounded object-cover" />
+              ) : (
+                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-gray-800 text-xs text-gray-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                    <path fillRule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-1.91 1.909-4.97-4.969a.75.75 0 00-1.06 0L2.5 11.06z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-gray-200">{m.name}</span>
+                  <StatusBadge status={m.status} />
+                </div>
+                <p className="text-xs text-gray-500">
+                  {m.asset_count} asset{m.asset_count !== 1 ? "s" : ""} · {m.category}
+                </p>
               </div>
-            )}
-          </div>
-        )
-      ) : (
-        // Quick Upload placeholder
-        <div className="rounded-lg border border-dashed border-gray-700 bg-gray-900/50 p-6 text-center">
-          <p className="text-sm text-gray-400">
-            Upload reference images inline. An auto-manifest will be created behind the scenes.
-          </p>
-          <p className="mt-1 text-xs text-gray-600">
-            (Upload UI coming in a future phase — for now, generate without a manifest)
-          </p>
-        </div>
-      )}
+            </button>
+          ))
+        )}
+      </div>
     </div>
   );
 }

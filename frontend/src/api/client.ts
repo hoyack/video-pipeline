@@ -18,6 +18,9 @@ import type {
   AssetResponse,
   ProcessingProgress,
   CandidateScore,
+  UserSettingsResponse,
+  UserSettingsUpdate,
+  EnabledModelsResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -270,6 +273,25 @@ export async function fetchManifestAssets(manifestId: string): Promise<AssetResp
   if (!res.ok) throw new ApiError(res.status, await res.text());
   const data = await res.json();
   return data.assets;
+}
+
+/** GET /api/settings — get user settings */
+export function getSettings(): Promise<UserSettingsResponse> {
+  return request<UserSettingsResponse>("/api/settings");
+}
+
+/** PUT /api/settings — update user settings */
+export function updateSettings(body: UserSettingsUpdate): Promise<UserSettingsResponse> {
+  return request<UserSettingsResponse>("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** GET /api/settings/models — lightweight enabled models for GenerateForm */
+export function getEnabledModels(): Promise<EnabledModelsResponse> {
+  return request<EnabledModelsResponse>("/api/settings/models");
 }
 
 export { ApiError };

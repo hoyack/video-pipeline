@@ -346,3 +346,59 @@ class PipelineRun(Base):
     total_duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     total_api_cost_estimate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     log: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# User Settings (single-user, no auth)
+# ---------------------------------------------------------------------------
+
+DEFAULT_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+
+class User(Base):
+    """Single default user for settings storage."""
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), default="default")
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class UserSettings(Base):
+    """Per-user settings with model enable/disable and GCP credentials."""
+    __tablename__ = "user_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), unique=True, index=True
+    )
+
+    # Enabled models per category — null = all enabled (zero-config default)
+    enabled_text_models: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    enabled_image_models: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    enabled_video_models: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+
+    # Default model selections
+    default_text_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    default_image_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    default_video_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # GCP configuration
+    gcp_project_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    gcp_location: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    vertex_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # ComfyUI configuration
+    comfyui_host: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    comfyui_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    comfyui_cost_per_second: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )

@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from google.genai import types
 from vidpipe.db import async_session
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel, GenerationCandidate
+from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import SceneSchema
@@ -47,6 +47,7 @@ ALLOWED_TEXT_MODELS = {
 ALLOWED_IMAGE_MODELS = {
     "gemini-2.5-flash-image",
     "gemini-3-pro-image-preview",
+    "qwen-fast",
 }
 ALLOWED_VIDEO_MODELS = {
     "veo-2.0-generate-001",
@@ -56,10 +57,12 @@ ALLOWED_VIDEO_MODELS = {
     "veo-3.1-generate-001",
     "veo-3.1-fast-generate-preview",
     "veo-3.1-fast-generate-001",
+    "wan-2.2-ref-i2v",
+    "wan-2.2-i2v",
 }
 
 # Video models that support audio generation
-AUDIO_CAPABLE_MODELS = ALLOWED_VIDEO_MODELS - {"veo-2.0-generate-001"}
+AUDIO_CAPABLE_MODELS = ALLOWED_VIDEO_MODELS - {"veo-2.0-generate-001", "wan-2.2-ref-i2v", "wan-2.2-i2v"}
 
 # Allowed clip durations per video model
 ALLOWED_DURATIONS: dict[str, list[int]] = {
@@ -70,6 +73,8 @@ ALLOWED_DURATIONS: dict[str, list[int]] = {
     "veo-3.1-generate-001": [4, 6, 8],
     "veo-3.1-fast-generate-preview": [4, 6, 8],
     "veo-3.1-fast-generate-001": [4, 6, 8],
+    "wan-2.2-ref-i2v": [5],
+    "wan-2.2-i2v": [5],
 }
 
 # ---------------------------------------------------------------------------
@@ -86,6 +91,7 @@ TEXT_MODEL_COST: dict[str, float] = {
 IMAGE_MODEL_COST: dict[str, float] = {
     "gemini-2.5-flash-image": 0.04,
     "gemini-3-pro-image-preview": 0.13,
+    "qwen-fast": 0.0,
 }
 
 VIDEO_MODEL_COST_SILENT: dict[str, float] = {
@@ -96,6 +102,8 @@ VIDEO_MODEL_COST_SILENT: dict[str, float] = {
     "veo-3.1-generate-001": 0.40,
     "veo-3.1-fast-generate-preview": 0.10,
     "veo-3.1-fast-generate-001": 0.10,
+    "wan-2.2-ref-i2v": 0.0,
+    "wan-2.2-i2v": 0.0,
 }
 
 VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
@@ -106,6 +114,8 @@ VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
     "veo-3.1-generate-001": 0.40,
     "veo-3.1-fast-generate-preview": 0.15,
     "veo-3.1-fast-generate-001": 0.15,
+    "wan-2.2-ref-i2v": 0.0,
+    "wan-2.2-i2v": 0.0,
 }
 
 
@@ -2544,3 +2554,175 @@ async def select_candidate(project_id: str, scene_idx: int, candidate_id: str):
 
         await session.commit()
         return {"selected": candidate_id, "selected_by": "user"}
+
+
+# ============================================================================
+# User Settings
+# ============================================================================
+
+class UserSettingsResponse(BaseModel):
+    """Response schema for GET /api/settings."""
+    enabled_text_models: Optional[list[str]] = None
+    enabled_image_models: Optional[list[str]] = None
+    enabled_video_models: Optional[list[str]] = None
+    default_text_model: Optional[str] = None
+    default_image_model: Optional[str] = None
+    default_video_model: Optional[str] = None
+    gcp_project_id: Optional[str] = None
+    gcp_location: Optional[str] = None
+    has_api_key: bool = False
+    comfyui_host: Optional[str] = None
+    has_comfyui_key: bool = False
+    comfyui_cost_per_second: Optional[float] = None
+
+
+class UserSettingsUpdate(BaseModel):
+    """Request schema for PUT /api/settings."""
+    enabled_text_models: Optional[list[str]] = None
+    enabled_image_models: Optional[list[str]] = None
+    enabled_video_models: Optional[list[str]] = None
+    default_text_model: Optional[str] = None
+    default_image_model: Optional[str] = None
+    default_video_model: Optional[str] = None
+    gcp_project_id: Optional[str] = None
+    gcp_location: Optional[str] = None
+    vertex_api_key: Optional[str] = None
+    clear_api_key: bool = False
+    comfyui_host: Optional[str] = None
+    comfyui_api_key: Optional[str] = None
+    clear_comfyui_key: bool = False
+    comfyui_cost_per_second: Optional[float] = None
+
+
+class EnabledModelsResponse(BaseModel):
+    """Lightweight response for GenerateForm model filtering."""
+    enabled_text_models: Optional[list[str]] = None
+    enabled_image_models: Optional[list[str]] = None
+    enabled_video_models: Optional[list[str]] = None
+    default_text_model: Optional[str] = None
+    default_image_model: Optional[str] = None
+    default_video_model: Optional[str] = None
+    comfyui_cost_per_second: Optional[float] = None
+
+
+@router.get("/settings")
+async def get_settings() -> UserSettingsResponse:
+    """Get current user settings."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+        )
+        settings = result.scalar_one_or_none()
+        if not settings:
+            return UserSettingsResponse()
+        return UserSettingsResponse(
+            enabled_text_models=settings.enabled_text_models,
+            enabled_image_models=settings.enabled_image_models,
+            enabled_video_models=settings.enabled_video_models,
+            default_text_model=settings.default_text_model,
+            default_image_model=settings.default_image_model,
+            default_video_model=settings.default_video_model,
+            gcp_project_id=settings.gcp_project_id,
+            gcp_location=settings.gcp_location,
+            has_api_key=bool(settings.vertex_api_key),
+            comfyui_host=settings.comfyui_host,
+            has_comfyui_key=bool(settings.comfyui_api_key),
+            comfyui_cost_per_second=settings.comfyui_cost_per_second,
+        )
+
+
+@router.put("/settings")
+async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
+    """Update user settings."""
+    # Validate model IDs if provided
+    if body.enabled_text_models is not None:
+        invalid = set(body.enabled_text_models) - ALLOWED_TEXT_MODELS
+        if invalid:
+            raise HTTPException(400, f"Invalid text model IDs: {invalid}")
+    if body.enabled_image_models is not None:
+        invalid = set(body.enabled_image_models) - ALLOWED_IMAGE_MODELS
+        if invalid:
+            raise HTTPException(400, f"Invalid image model IDs: {invalid}")
+    if body.enabled_video_models is not None:
+        invalid = set(body.enabled_video_models) - ALLOWED_VIDEO_MODELS
+        if invalid:
+            raise HTTPException(400, f"Invalid video model IDs: {invalid}")
+    if body.default_text_model and body.default_text_model not in ALLOWED_TEXT_MODELS:
+        raise HTTPException(400, f"Invalid default text model: {body.default_text_model}")
+    if body.default_image_model and body.default_image_model not in ALLOWED_IMAGE_MODELS:
+        raise HTTPException(400, f"Invalid default image model: {body.default_image_model}")
+    if body.default_video_model and body.default_video_model not in ALLOWED_VIDEO_MODELS:
+        raise HTTPException(400, f"Invalid default video model: {body.default_video_model}")
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+        )
+        settings = result.scalar_one_or_none()
+        if not settings:
+            raise HTTPException(500, "Default user settings not found")
+
+        # Update all fields from the request body
+        settings.enabled_text_models = body.enabled_text_models
+        settings.enabled_image_models = body.enabled_image_models
+        settings.enabled_video_models = body.enabled_video_models
+        settings.default_text_model = body.default_text_model
+        settings.default_image_model = body.default_image_model
+        settings.default_video_model = body.default_video_model
+        settings.gcp_project_id = body.gcp_project_id
+        settings.gcp_location = body.gcp_location
+
+        # Only overwrite API key if explicitly provided (non-empty string)
+        if body.clear_api_key:
+            settings.vertex_api_key = None
+        elif body.vertex_api_key:
+            settings.vertex_api_key = body.vertex_api_key
+
+        # ComfyUI fields
+        if body.comfyui_host is not None:
+            settings.comfyui_host = body.comfyui_host or None
+        if body.clear_comfyui_key:
+            settings.comfyui_api_key = None
+        elif body.comfyui_api_key:
+            settings.comfyui_api_key = body.comfyui_api_key
+        if body.comfyui_cost_per_second is not None:
+            settings.comfyui_cost_per_second = body.comfyui_cost_per_second
+
+        await session.commit()
+        await session.refresh(settings)
+
+        return UserSettingsResponse(
+            enabled_text_models=settings.enabled_text_models,
+            enabled_image_models=settings.enabled_image_models,
+            enabled_video_models=settings.enabled_video_models,
+            default_text_model=settings.default_text_model,
+            default_image_model=settings.default_image_model,
+            default_video_model=settings.default_video_model,
+            gcp_project_id=settings.gcp_project_id,
+            gcp_location=settings.gcp_location,
+            has_api_key=bool(settings.vertex_api_key),
+            comfyui_host=settings.comfyui_host,
+            has_comfyui_key=bool(settings.comfyui_api_key),
+            comfyui_cost_per_second=settings.comfyui_cost_per_second,
+        )
+
+
+@router.get("/settings/models")
+async def get_enabled_models() -> EnabledModelsResponse:
+    """Lightweight endpoint for GenerateForm model filtering."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+        )
+        settings = result.scalar_one_or_none()
+        if not settings:
+            return EnabledModelsResponse()
+        return EnabledModelsResponse(
+            enabled_text_models=settings.enabled_text_models,
+            enabled_image_models=settings.enabled_image_models,
+            enabled_video_models=settings.enabled_video_models,
+            default_text_model=settings.default_text_model,
+            default_image_model=settings.default_image_model,
+            default_video_model=settings.default_video_model,
+            comfyui_cost_per_second=settings.comfyui_cost_per_second,
+        )

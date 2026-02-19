@@ -9,9 +9,37 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown
-from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference, AssetAppearance
+from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference, AssetAppearance, DEFAULT_USER_ID
 
 logger = logging.getLogger(__name__)
+
+
+async def _seed_default_user(conn) -> None:
+    """Idempotent: ensure default user + settings rows exist.
+
+    Uses .hex (no dashes) to match SQLAlchemy's Uuid storage format in SQLite.
+    """
+    import uuid as _uuid
+    uid = DEFAULT_USER_ID.hex  # 32-char hex, no dashes — matches SQLAlchemy Uuid type
+    uid_dashed = str(DEFAULT_USER_ID)  # clean up any rows from old dashed format
+
+    # Remove stale rows inserted with dashed UUID format
+    await conn.execute(text("DELETE FROM user_settings WHERE user_id = :uid"), {"uid": uid_dashed})
+    await conn.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": uid_dashed})
+
+    row = await conn.execute(text("SELECT id FROM users WHERE id = :uid"), {"uid": uid})
+    if row.fetchone() is None:
+        await conn.execute(
+            text("INSERT INTO users (id, name) VALUES (:uid, 'default')"),
+            {"uid": uid},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO user_settings (id, user_id) VALUES (:sid, :uid)"
+            ),
+            {"sid": _uuid.uuid4().hex, "uid": uid},
+        )
+        logger.info("Seeded default user %s", uid)
 
 
 async def _run_migrations(conn) -> None:
@@ -37,6 +65,16 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE assets ADD COLUMN clip_embedding BLOB",
         "ALTER TABLE scene_manifests ADD COLUMN cv_analysis_json TEXT",
         "ALTER TABLE scene_manifests ADD COLUMN continuity_score REAL",
+        # Phase 10: Adaptive Prompt Rewriting
+        "ALTER TABLE scene_manifests ADD COLUMN rewritten_keyframe_prompt TEXT",
+        "ALTER TABLE scene_manifests ADD COLUMN rewritten_video_prompt TEXT",
+        # Phase 11: Multi-Candidate Quality Mode
+        "ALTER TABLE projects ADD COLUMN quality_mode INTEGER DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN candidate_count INTEGER DEFAULT 1",
+        # ComfyUI integration
+        "ALTER TABLE user_settings ADD COLUMN comfyui_host VARCHAR(500)",
+        "ALTER TABLE user_settings ADD COLUMN comfyui_api_key TEXT",
+        "ALTER TABLE user_settings ADD COLUMN comfyui_cost_per_second REAL",
     ]
     for sql in migrations:
         try:
@@ -51,6 +89,7 @@ async def init_database():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _run_migrations(conn)
+        await _seed_default_user(conn)
 
 
 __all__ = [

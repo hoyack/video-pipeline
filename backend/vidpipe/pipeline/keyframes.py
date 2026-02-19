@@ -34,6 +34,11 @@ from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# ComfyUI image models (routed to ComfyUI instead of Vertex AI)
+# ---------------------------------------------------------------------------
+COMFYUI_IMAGE_MODELS = {"qwen-fast"}
+
+# ---------------------------------------------------------------------------
 # Identity emphasis escalation prefixes for face verification retry
 # ---------------------------------------------------------------------------
 _IDENTITY_EMPHASIS_PREFIXES = [
@@ -290,6 +295,71 @@ async def _verify_keyframe_faces(
         return True, 0.0, f"verification_error: {e}"
 
 
+async def _generate_image_comfyui(
+    comfy_client,
+    prompt: str,
+    seed: int,
+    width: int = 1328,
+    height: int = 1328,
+) -> bytes:
+    """Generate an image via ComfyUI Cloud using the Qwen txt2img workflow.
+
+    Builds the workflow, queues it, polls until success, then downloads
+    the output image.
+
+    Args:
+        comfy_client: ComfyUIClient instance
+        prompt: Text description for image generation
+        seed: Random seed for reproducibility
+        width: Image width (default 1328, Qwen native)
+        height: Image height (default 1328, Qwen native)
+
+    Returns:
+        PNG image data as bytes
+
+    Raises:
+        RuntimeError: On ComfyUI job failure or timeout
+        ValueError: If no image output found in history
+    """
+    from vidpipe.services.comfyui_client import (
+        build_qwen_txt2img_workflow,
+        find_comfyui_image_output,
+    )
+
+    workflow = build_qwen_txt2img_workflow(
+        prompt=prompt, width=width, height=height, seed=seed,
+    )
+    prompt_id = await comfy_client.queue_prompt(workflow)
+    logger.info(f"ComfyUI Qwen txt2img queued: prompt_id={prompt_id}")
+
+    # Poll until completion (check for "success", not "completed")
+    max_polls = 120
+    poll_interval = 3
+    for attempt in range(max_polls):
+        await asyncio.sleep(poll_interval)
+        status, error_msg = await comfy_client.poll_status(prompt_id)
+        if status == "success":
+            break
+        if status in ("error", "failed", "cancelled"):
+            raise RuntimeError(
+                f"ComfyUI job {prompt_id} failed: status={status}, error={error_msg}"
+            )
+        # Still pending/in_progress — keep polling
+    else:
+        raise RuntimeError(
+            f"ComfyUI job {prompt_id} timed out after {max_polls * poll_interval}s"
+        )
+
+    # Fetch history and extract output image
+    history = await comfy_client.get_history(prompt_id)
+    filename, subfolder = find_comfyui_image_output(history, prompt_id)
+    image_bytes = await comfy_client.download_output(filename, subfolder)
+    logger.info(
+        f"ComfyUI Qwen txt2img complete: {filename} ({len(image_bytes)} bytes)"
+    )
+    return image_bytes
+
+
 async def generate_keyframes(session: AsyncSession, project: Project) -> None:
     """Generate keyframes sequentially with visual continuity across scenes.
 
@@ -353,8 +423,15 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
         if parts:
             style_prefix = ". ".join(parts) + ". "
 
-    # All Gemini now — same client for text-to-image and conditioned generation
-    image_client = get_vertex_client(location=location_for_model(image_model))
+    # Route to ComfyUI or Vertex AI based on model
+    is_comfyui = image_model in COMFYUI_IMAGE_MODELS
+    comfy_client = None
+    image_client = None
+    if is_comfyui:
+        from vidpipe.services.comfyui_client import get_comfyui_client
+        comfy_client = await get_comfyui_client()
+    else:
+        image_client = get_vertex_client(location=location_for_model(image_model))
     file_mgr = FileManager()
 
     # Query scenes ordered by scene_index for sequential processing
@@ -520,11 +597,16 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
                     _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                     + enriched_prompt
                 )
-                start_frame_bytes = await _generate_image_from_text(
-                    image_client, prompt_with_emphasis, project.aspect_ratio, image_model,
-                    seed=project.seed,
-                    reference_images=ref_image_bytes_list or None,
-                )
+                if is_comfyui:
+                    start_frame_bytes = await _generate_image_comfyui(
+                        comfy_client, prompt_with_emphasis, seed=project.seed,
+                    )
+                else:
+                    start_frame_bytes = await _generate_image_from_text(
+                        image_client, prompt_with_emphasis, project.aspect_ratio, image_model,
+                        seed=project.seed,
+                        reference_images=ref_image_bytes_list or None,
+                    )
                 # Verify face match if placed chars exist and not final attempt
                 if placed_char_assets and identity_level < _max_identity_retries:
                     passed, sim, detail = await _verify_keyframe_faces(
@@ -590,11 +672,18 @@ async def generate_keyframes(session: AsyncSession, project: Project) -> None:
                 _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                 + conditioning_prompt
             )
-            end_frame_bytes = await _generate_image_conditioned(
-                image_client, start_frame_bytes, prompt_with_emphasis,
-                project.aspect_ratio, image_model,
-                reference_images=ref_image_bytes_list or None,
-            )
+            if is_comfyui:
+                # ComfyUI text-only: no image conditioning, use offset seed
+                end_frame_bytes = await _generate_image_comfyui(
+                    comfy_client, prompt_with_emphasis,
+                    seed=project.seed + scene.scene_index + 1000,
+                )
+            else:
+                end_frame_bytes = await _generate_image_conditioned(
+                    image_client, start_frame_bytes, prompt_with_emphasis,
+                    project.aspect_ratio, image_model,
+                    reference_images=ref_image_bytes_list or None,
+                )
             if placed_char_assets and identity_level < _max_identity_retries:
                 passed, sim, detail = await _verify_keyframe_faces(
                     end_frame_bytes, placed_char_assets,

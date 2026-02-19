@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type View = "generate" | "progress" | "list" | "detail" | "dashboard" | "manifests" | "manifest-creator";
+export type View = "generate" | "progress" | "list" | "detail" | "dashboard" | "manifests" | "manifest-creator" | "settings";
 
 interface LayoutProps {
   currentView: View;
@@ -13,6 +13,7 @@ const NAV_ITEMS: { view: View; label: string }[] = [
   { view: "list", label: "Projects" },
   { view: "manifests", label: "Manifests" },
   { view: "dashboard", label: "Dashboard" },
+  { view: "settings", label: "Settings" },
 ];
 
 export function Layout({ currentView, onNavigate, children }: LayoutProps) {

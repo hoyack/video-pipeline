@@ -46,6 +46,12 @@ from vidpipe.services.file_manager import FileManager
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services import manifest_service
 
+# ---------------------------------------------------------------------------
+# ComfyUI model IDs (routed to ComfyUI instead of Veo)
+# ---------------------------------------------------------------------------
+COMFYUI_VIDEO_MODELS = {"wan-2.2-ref-i2v", "wan-2.2-i2v"}
+
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -262,15 +268,12 @@ async def _regenerate_end_keyframe_safe(
     Returns the new image bytes on success, None on failure.
     Updates the Keyframe record and file on disk in-place.
     """
-    from vidpipe.pipeline.keyframes import _generate_image_conditioned
+    from vidpipe.pipeline.keyframes import _generate_image_conditioned, COMFYUI_IMAGE_MODELS, _generate_image_comfyui
 
     image_model = project.image_model or settings.models.image_gen
     # Guard: Imagen models no longer supported — fall back to config default
     if image_model.startswith("imagen-"):
         image_model = settings.models.image_gen
-    conditioned_client = get_vertex_client(
-        location=location_for_model(image_model),
-    )
 
     style_label = project.style.replace("_", " ")
     conditioning_prompt = (
@@ -284,13 +287,24 @@ async def _regenerate_end_keyframe_safe(
     )
 
     try:
-        end_frame_bytes = await _generate_image_conditioned(
-            conditioned_client,
-            start_frame_bytes,
-            conditioning_prompt,
-            project.aspect_ratio,
-            image_model,
-        )
+        if image_model in COMFYUI_IMAGE_MODELS:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            comfy_client = await get_comfyui_client()
+            end_frame_bytes = await _generate_image_comfyui(
+                comfy_client, conditioning_prompt,
+                seed=project.seed + scene.scene_index + 2000,
+            )
+        else:
+            conditioned_client = get_vertex_client(
+                location=location_for_model(image_model),
+            )
+            end_frame_bytes = await _generate_image_conditioned(
+                conditioned_client,
+                start_frame_bytes,
+                conditioning_prompt,
+                project.aspect_ratio,
+                image_model,
+            )
 
         # Save to disk (overwrites existing file)
         end_file_path = file_mgr.save_keyframe(
@@ -775,12 +789,14 @@ async def _run_post_generation_analysis(
 # Main per-scene video generation with escalating remediation
 # ---------------------------------------------------------------------------
 async def generate_videos(session: AsyncSession, project: Project) -> None:
-    """Generate video clips for all scenes using Veo.
+    """Generate video clips for all scenes using Veo or ComfyUI.
 
     Implements VGEN-01 through VGEN-07.
+    Routes to ComfyUI when video_model is in COMFYUI_VIDEO_MODELS.
     """
     video_model = project.video_model or settings.models.video_gen
-    client = get_vertex_client(location=location_for_model(video_model))
+    is_comfyui = video_model in COMFYUI_VIDEO_MODELS
+    client = None if is_comfyui else get_vertex_client(location=location_for_model(video_model))
     file_mgr = FileManager()
 
     # Query scenes ready for video generation
@@ -799,13 +815,265 @@ async def generate_videos(session: AsyncSession, project: Project) -> None:
             from vidpipe.orchestrator.pipeline import PipelineStopped
             raise PipelineStopped("Pipeline stopped by user")
 
-        await _generate_video_for_scene(
-            session, scene, file_mgr, client, project, video_model,
-        )
+        if is_comfyui:
+            await _generate_video_comfyui(
+                session, scene, file_mgr, project, video_model,
+            )
+        else:
+            await _generate_video_for_scene(
+                session, scene, file_mgr, client, project, video_model,
+            )
 
     # Update project status
     project.status = "stitching"
     await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI video generation path
+# ---------------------------------------------------------------------------
+async def _generate_video_comfyui(
+    session: AsyncSession,
+    scene: Scene,
+    file_mgr: FileManager,
+    project: Project,
+    video_model: str,
+) -> None:
+    """Generate video clip for a single scene via ComfyUI Cloud.
+
+    Uses ComfyUIVideoAdapter which handles image upload, workflow building,
+    status normalization, and result download.
+
+    Simplified path compared to Veo:
+    - No RAI escalation (Wan 2.2 has no content-policy filter)
+    - No multi-candidate quality mode
+    - Single output per run
+    - Idempotent resume via operation_name prefix "comfyui:"
+    """
+    from vidpipe.db.models import SceneManifest as SceneManifestModel
+    from vidpipe.services.comfyui_client import get_comfyui_client
+    from vidpipe.services.comfyui_adapter import ComfyUIVideoAdapter
+
+    is_i2v = video_model == "wan-2.2-i2v"
+
+    # Load keyframes
+    kf_result = await session.execute(
+        select(Keyframe)
+        .where(Keyframe.scene_id == scene.id)
+        .order_by(Keyframe.position)
+    )
+    keyframes = kf_result.scalars().all()
+    start_kf = next((k for k in keyframes if k.position == "start"), None)
+    end_kf = next((k for k in keyframes if k.position == "end"), None)
+    if is_i2v:
+        if start_kf is None:
+            raise ValueError(
+                f"Scene {scene.scene_index} missing start keyframe — cannot generate video"
+            )
+    else:
+        if start_kf is None or end_kf is None:
+            missing = [p for p, kf in [("start", start_kf), ("end", end_kf)] if kf is None]
+            raise ValueError(
+                f"Scene {scene.scene_index} missing {' and '.join(missing)} "
+                f"keyframe(s) — cannot generate video"
+            )
+
+    start_frame_bytes = Path(start_kf.file_path).read_bytes()
+    end_frame_bytes = Path(end_kf.file_path).read_bytes() if end_kf else None
+
+    # Load scene manifest for prompt rewriting and char refs
+    scene_manifest_row = None
+    if project.manifest_id:
+        sm_result = await session.execute(
+            select(SceneManifestModel).where(
+                SceneManifestModel.project_id == project.id,
+                SceneManifestModel.scene_index == scene.scene_index,
+            )
+        )
+        scene_manifest_row = sm_result.scalar_one_or_none()
+
+    # Build video prompt
+    video_prompt = scene.video_motion_prompt
+    if scene_manifest_row and scene_manifest_row.rewritten_video_prompt:
+        video_prompt = scene_manifest_row.rewritten_video_prompt
+
+    # Check for existing VideoClip (idempotent resume)
+    clip_result = await session.execute(
+        select(VideoClip).where(VideoClip.scene_id == scene.id)
+    )
+    clip = clip_result.scalar_one_or_none()
+
+    # Build adapter from DB settings
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    us_result = await session.execute(
+        select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+    )
+    user_settings = us_result.scalar_one_or_none()
+    comfy_host = user_settings.comfyui_host if user_settings else None
+    comfy_key = user_settings.comfyui_api_key if user_settings else None
+    comfy_client = await get_comfyui_client(host=comfy_host, api_key=comfy_key)
+    adapter = ComfyUIVideoAdapter(comfy_client)
+
+    # If clip exists with comfyui: prefix and is polling, resume poll
+    if clip and clip.status == "polling" and clip.operation_name and clip.operation_name.startswith("comfyui:"):
+        logger.info(
+            "Scene %d: resuming ComfyUI poll for %s",
+            scene.scene_index, clip.operation_name,
+        )
+    else:
+        # Fresh submission via adapter
+        logger.info("Scene %d: submitting to ComfyUI", scene.scene_index)
+
+        # Load character reference images (if manifest project)
+        char_ref_bytes: list[bytes] = []
+        if project.manifest_id:
+            char_ref_bytes = await _load_char_ref_images(session, project)
+
+        operation_id = await adapter.submit(
+            video_prompt=video_prompt,
+            start_frame_bytes=start_frame_bytes,
+            end_frame_bytes=end_frame_bytes,
+            char_ref_bytes=char_ref_bytes,
+            aspect_ratio=project.aspect_ratio,
+            seed=project.seed or 0,
+            scene_index=scene.scene_index,
+            video_model=video_model,
+        )
+
+        # Create/update clip record (persist before polling for crash recovery)
+        if clip is None:
+            clip = VideoClip(
+                scene_id=scene.id,
+                operation_name=operation_id,
+                status="polling",
+                poll_count=0,
+                source="generated",
+                veo_submission_count=1,
+            )
+            session.add(clip)
+        else:
+            clip.operation_name = operation_id
+            clip.status = "polling"
+            clip.poll_count = 0
+            clip.error_message = None
+        await session.commit()
+
+    # --- Poll loop (adapter normalizes status to "completed"/"failed"/"running") ---
+    poll_interval = settings.pipeline.video_poll_interval
+    max_polls = settings.pipeline.video_poll_max
+
+    for poll_attempt in range(clip.poll_count, max_polls):
+        status, error_msg = await adapter.poll(clip.operation_name)
+        clip.poll_count = poll_attempt + 1
+
+        if status == "completed":
+            # Download via adapter (handles history parsing + download)
+            try:
+                video_bytes, duration = await adapter.download(clip.operation_name)
+            except Exception as e:
+                clip.status = "failed"
+                clip.error_message = f"Video download failed: {e}"
+                scene.status = "failed"
+                await session.commit()
+                logger.error("Scene %d: ComfyUI download failed: %s", scene.scene_index, e)
+                return
+
+            # Save clip to disk
+            file_path = file_mgr.save_clip(
+                project.id, scene.scene_index, video_bytes,
+            )
+            clip.local_path = str(file_path)
+            clip.status = "complete"
+            clip.duration_seconds = duration
+            clip.source = "generated"
+            scene.status = "video_done"
+            await session.commit()
+
+            # Post-generation CV analysis (reuse existing)
+            await _run_post_generation_analysis(
+                session, scene, clip, project, scene_manifest_row,
+            )
+
+            logger.info("Scene %d: ComfyUI video complete", scene.scene_index)
+            return
+
+        elif status == "failed":
+            clip.status = "failed"
+            clip.error_message = error_msg or "ComfyUI job failed"
+            scene.status = "failed"
+            await session.commit()
+            logger.error("Scene %d: ComfyUI job failed: %s", scene.scene_index, error_msg)
+            return
+
+        # Still running — sleep and continue
+        await session.commit()
+        await asyncio.sleep(poll_interval)
+
+        # Check for user-requested stop
+        await session.refresh(project)
+        if project.status == "stopped":
+            from vidpipe.orchestrator.pipeline import PipelineStopped
+            raise PipelineStopped("Pipeline stopped by user")
+
+    # Timed out
+    clip.status = "timed_out"
+    clip.error_message = (
+        f"ComfyUI operation did not complete after {max_polls * poll_interval} seconds"
+    )
+    scene.status = "timed_out"
+    await session.commit()
+    logger.error("Scene %d: ComfyUI poll timed out", scene.scene_index)
+
+
+async def _load_char_ref_images(
+    session: AsyncSession, project: Project
+) -> list[bytes]:
+    """Load up to 2 CHARACTER asset reference images from the manifest.
+
+    Returns a list of image bytes (0-2 items).
+    """
+    if not project.manifest_id:
+        return []
+
+    from vidpipe.db.models import Asset
+    result = await session.execute(
+        select(Asset).where(
+            Asset.manifest_id == project.manifest_id,
+            Asset.asset_type == "CHARACTER",
+            Asset.reference_image_url != None,
+            Asset.is_inherited == False,
+        ).order_by(Asset.sort_order).limit(2)
+    )
+    assets = result.scalars().all()
+
+    char_refs: list[bytes] = []
+    for asset in assets:
+        image_path = _resolve_asset_image_path(asset)
+        if image_path and image_path.exists():
+            char_refs.append(image_path.read_bytes())
+        else:
+            logger.warning(
+                f"Character reference image not found for asset {asset.id}: "
+                f"url={asset.reference_image_url}"
+            )
+    return char_refs
+
+
+def _resolve_asset_image_path(asset) -> Optional[Path]:
+    """Resolve an asset's reference image to its on-disk path.
+
+    Asset images live at tmp/manifests/{manifest_id}/{uploads|crops}/{asset_id}_*.
+    The reference_image_url is an API route (/api/assets/{id}/image), not a
+    filesystem path, so we locate the file using the same logic as the API route.
+    """
+    manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+    for subdir in ("uploads", "crops"):
+        d = manifest_dir / subdir
+        if d.exists():
+            matches = list(d.glob(f"{asset.id}_*"))
+            if matches:
+                return matches[0]
+    return None
 
 
 async def _generate_video_for_scene(
@@ -834,8 +1102,14 @@ async def _generate_video_for_scene(
         .order_by(Keyframe.position)
     )
     keyframes = result.scalars().all()
-    start_kf = next(k for k in keyframes if k.position == "start")
-    end_kf = next(k for k in keyframes if k.position == "end")
+    start_kf = next((k for k in keyframes if k.position == "start"), None)
+    end_kf = next((k for k in keyframes if k.position == "end"), None)
+    if start_kf is None or end_kf is None:
+        missing = [p for p, kf in [("start", start_kf), ("end", end_kf)] if kf is None]
+        raise ValueError(
+            f"Scene {scene.scene_index} missing {' and '.join(missing)} "
+            f"keyframe(s) — cannot generate video"
+        )
 
     start_frame_bytes = Path(start_kf.file_path).read_bytes()
     end_frame_bytes = Path(end_kf.file_path).read_bytes()

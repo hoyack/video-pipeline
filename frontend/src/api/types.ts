@@ -294,6 +294,51 @@ export interface UpdateAssetRequest {
   visual_description?: string;
 }
 
+/** Response from GET /api/settings */
+export interface UserSettingsResponse {
+  enabled_text_models: string[] | null;
+  enabled_image_models: string[] | null;
+  enabled_video_models: string[] | null;
+  default_text_model: string | null;
+  default_image_model: string | null;
+  default_video_model: string | null;
+  gcp_project_id: string | null;
+  gcp_location: string | null;
+  has_api_key: boolean;
+  comfyui_host: string | null;
+  has_comfyui_key: boolean;
+  comfyui_cost_per_second: number | null;
+}
+
+/** Request body for PUT /api/settings */
+export interface UserSettingsUpdate {
+  enabled_text_models?: string[] | null;
+  enabled_image_models?: string[] | null;
+  enabled_video_models?: string[] | null;
+  default_text_model?: string | null;
+  default_image_model?: string | null;
+  default_video_model?: string | null;
+  gcp_project_id?: string | null;
+  gcp_location?: string | null;
+  vertex_api_key?: string | null;
+  clear_api_key?: boolean;
+  comfyui_host?: string | null;
+  comfyui_api_key?: string | null;
+  clear_comfyui_key?: boolean;
+  comfyui_cost_per_second?: number | null;
+}
+
+/** Lightweight response from GET /api/settings/models */
+export interface EnabledModelsResponse {
+  enabled_text_models: string[] | null;
+  enabled_image_models: string[] | null;
+  enabled_video_models: string[] | null;
+  default_text_model: string | null;
+  default_image_model: string | null;
+  default_video_model: string | null;
+  comfyui_cost_per_second: number | null;
+}
+
 /** Processing progress response */
 export interface ProcessingProgress {
   status: "processing" | "complete" | "error" | "not_started";

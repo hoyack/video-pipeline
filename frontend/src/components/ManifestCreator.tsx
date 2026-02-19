@@ -97,6 +97,68 @@ export function ManifestCreator({
   const [projectImportId, setProjectImportId] = useState("");
   const [importing, setImporting] = useState(false);
 
+  // Lightbox state for Stage 3 image preview
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxName, setLightboxName] = useState("");
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const CopyIcon = ({ size = 14 }: { size?: number }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+
+  const SaveIcon = ({ size = 14 }: { size?: number }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  );
+
+  const CheckIcon = ({ size = 14 }: { size?: number }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+
+  const copyText = (text: string, fieldKey: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldKey);
+    setTimeout(() => setCopiedField(null), 1500);
+  };
+
+  const copyImage = async (imageUrl: string, fieldKey: string) => {
+    try {
+      const res = await fetch(imageUrl);
+      const blob = await res.blob();
+      // Convert to PNG for clipboard compatibility
+      const pngBlob = blob.type === "image/png"
+        ? blob
+        : await new Promise<Blob>((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement("canvas");
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              canvas.getContext("2d")!.drawImage(img, 0, 0);
+              canvas.toBlob((b) => resolve(b!), "image/png");
+            };
+            img.crossOrigin = "anonymous";
+            img.src = URL.createObjectURL(blob);
+          });
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": pngBlob }),
+      ]);
+      setCopiedField(fieldKey);
+      setTimeout(() => setCopiedField(null), 1500);
+    } catch {
+      // Fallback: open in new tab if clipboard write fails
+      window.open(imageUrl, "_blank");
+    }
+  };
+
   const isNewManifest = !manifestId;
 
   // Determine current stage based on manifest status
@@ -219,7 +281,15 @@ export function ManifestCreator({
               .filter(Boolean)
           : undefined,
       });
-      setManifest(newManifest as unknown as ManifestDetail);
+      setManifest({
+        ...newManifest,
+        assets: [],
+        processing_progress: null,
+        contact_sheet_url: null,
+        total_processing_cost: 0,
+        parent_manifest_id: null,
+        source_video_duration: null,
+      });
       return newManifest.manifest_id;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -881,16 +951,42 @@ export function ManifestCreator({
             >
               <div className="flex gap-4">
                 {/* Thumbnail */}
-                <div className="flex-shrink-0">
+                <div className="flex-shrink-0 space-y-1.5">
                   {asset.reference_image_url ? (
                     <img
                       src={asset.reference_image_url}
                       alt={asset.name}
-                      className="w-32 h-32 object-cover rounded border border-gray-700"
+                      onClick={() => {
+                        setLightboxUrl(asset.reference_image_url);
+                        setLightboxName(asset.name);
+                      }}
+                      className="w-32 h-32 object-cover rounded border border-gray-700 cursor-pointer transition-opacity hover:opacity-80"
+                      title="Click to enlarge"
                     />
                   ) : (
                     <div className="w-32 h-32 bg-gray-800 rounded border border-gray-700 flex items-center justify-center text-gray-600 text-xs">
                       No image
+                    </div>
+                  )}
+                  {/* Image action buttons */}
+                  {asset.reference_image_url && (
+                    <div className="flex gap-1.5 justify-center">
+                      <button
+                        onClick={() => copyImage(asset.reference_image_url!, `img-${asset.asset_id}`)}
+                        className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+                        title="Copy image to clipboard"
+                      >
+                        {copiedField === `img-${asset.asset_id}` ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                      </button>
+                      <a
+                        href={asset.reference_image_url}
+                        download={`${asset.name}.png`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+                        title="Download image"
+                      >
+                        <SaveIcon size={12} />
+                      </a>
                     </div>
                   )}
                 </div>
@@ -969,16 +1065,27 @@ export function ManifestCreator({
                       <label className="text-xs font-medium text-gray-400">
                         Reverse Prompt
                       </label>
-                      <button
-                        onClick={() =>
-                          toggleFieldEdit(asset.asset_id, "reverse_prompt")
-                        }
-                        className="text-xs text-blue-400 hover:text-blue-300"
-                      >
-                        {isFieldEditing(asset.asset_id, "reverse_prompt")
-                          ? "Save"
-                          : "Edit"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {asset.reverse_prompt && (
+                          <button
+                            onClick={() => copyText(asset.reverse_prompt!, `rp-${asset.asset_id}`)}
+                            className="text-gray-500 hover:text-gray-300 transition-colors"
+                            title="Copy reverse prompt"
+                          >
+                            {copiedField === `rp-${asset.asset_id}` ? <CheckIcon /> : <CopyIcon />}
+                          </button>
+                        )}
+                        <button
+                          onClick={() =>
+                            toggleFieldEdit(asset.asset_id, "reverse_prompt")
+                          }
+                          className="text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          {isFieldEditing(asset.asset_id, "reverse_prompt")
+                            ? "Save"
+                            : "Edit"}
+                        </button>
+                      </div>
                     </div>
                     {isFieldEditing(asset.asset_id, "reverse_prompt") ? (
                       <textarea
@@ -1008,16 +1115,27 @@ export function ManifestCreator({
                       <label className="text-xs font-medium text-gray-400">
                         Visual Description
                       </label>
-                      <button
-                        onClick={() =>
-                          toggleFieldEdit(asset.asset_id, "visual_description")
-                        }
-                        className="text-xs text-blue-400 hover:text-blue-300"
-                      >
-                        {isFieldEditing(asset.asset_id, "visual_description")
-                          ? "Save"
-                          : "Edit"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {asset.visual_description && (
+                          <button
+                            onClick={() => copyText(asset.visual_description!, `vd-${asset.asset_id}`)}
+                            className="text-gray-500 hover:text-gray-300 transition-colors"
+                            title="Copy visual description"
+                          >
+                            {copiedField === `vd-${asset.asset_id}` ? <CheckIcon /> : <CopyIcon />}
+                          </button>
+                        )}
+                        <button
+                          onClick={() =>
+                            toggleFieldEdit(asset.asset_id, "visual_description")
+                          }
+                          className="text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          {isFieldEditing(asset.asset_id, "visual_description")
+                            ? "Save"
+                            : "Edit"}
+                        </button>
+                      </div>
                     </div>
                     {isFieldEditing(asset.asset_id, "visual_description") ? (
                       <textarea
@@ -1120,6 +1238,57 @@ export function ManifestCreator({
       {currentStage === 1 && renderStage1()}
       {currentStage === 2 && renderStage2()}
       {currentStage === 3 && renderStage3()}
+
+      {/* Image lightbox modal */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80"
+          onClick={() => setLightboxUrl(null)}
+        >
+          {/* Close button - top right of viewport */}
+          <button
+            onClick={() => setLightboxUrl(null)}
+            className="absolute top-4 right-4 rounded-full bg-gray-900/80 p-2 text-gray-300 backdrop-blur transition-colors hover:bg-gray-800 hover:text-white"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
+
+          {/* Image */}
+          <div
+            className="flex items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightboxUrl}
+              alt={lightboxName}
+              className="max-h-[80vh] max-w-[90vw] rounded-lg object-contain"
+            />
+          </div>
+
+          {/* Toolbar below image */}
+          <div
+            className="mt-3 flex items-center gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="text-sm text-gray-400">{lightboxName}</span>
+            <button
+              onClick={() => copyImage(lightboxUrl!, "lightbox-img")}
+              className="flex items-center gap-1.5 rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-gray-700"
+            >
+              {copiedField === "lightbox-img" ? <><CheckIcon /> Copied</> : <><CopyIcon /> Copy Image</>}
+            </button>
+            <a
+              href={lightboxUrl}
+              download={`${lightboxName}.png`}
+              className="flex items-center gap-1.5 rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-gray-700"
+            >
+              <SaveIcon /> Download
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

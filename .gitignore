@@ -46,10 +46,15 @@ tmp/
 # Credentials
 *.json
 !config.json
+!backend/vidpipe/services/comfyui_templates/*.json
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
+
+# Media assets (avoid accidental commits of generated content)
+*.png
+*.mp4
 
 # OS
 .DS_Store

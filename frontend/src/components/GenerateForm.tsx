@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
-import { generateVideo } from "../api/client.ts";
+import { generateVideo, getEnabledModels } from "../api/client.ts";
 import { ManifestSelector } from "./ManifestSelector.tsx";
+import type { EnabledModelsResponse } from "../api/types.ts";
 import {
   STYLE_OPTIONS,
   ASPECT_RATIOS,
@@ -36,12 +37,71 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   const [candidateCount, setCandidateCount] = useState(2);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelSettings, setModelSettings] = useState<EnabledModelsResponse | null>(null);
+
+  // Fetch enabled models from settings on mount
+  useEffect(() => {
+    getEnabledModels()
+      .then((ms) => {
+        setModelSettings(ms);
+        // Apply defaults from settings
+        if (ms.default_text_model) setTextModel(ms.default_text_model);
+        if (ms.default_image_model) setImageModel(ms.default_image_model);
+        if (ms.default_video_model) setVideoModel(ms.default_video_model);
+      })
+      .catch(() => {/* settings not available — use all models */});
+  }, []);
+
+  // Filter models based on settings (null = all enabled)
+  const filteredTextModels = useMemo(() => {
+    if (!modelSettings?.enabled_text_models) return TEXT_MODELS;
+    const enabled = new Set(modelSettings.enabled_text_models);
+    return TEXT_MODELS.filter((m) => enabled.has(m.id));
+  }, [modelSettings]);
+
+  const filteredImageModels = useMemo(() => {
+    if (!modelSettings?.enabled_image_models) return IMAGE_MODELS;
+    const enabled = new Set(modelSettings.enabled_image_models);
+    return IMAGE_MODELS.filter((m) => enabled.has(m.id));
+  }, [modelSettings]);
+
+  const filteredVideoModels = useMemo(() => {
+    if (!modelSettings?.enabled_video_models) return VIDEO_MODELS;
+    const enabled = new Set(modelSettings.enabled_video_models);
+    return VIDEO_MODELS.filter((m) => enabled.has(m.id));
+  }, [modelSettings]);
+
+  // Ensure selected models are still valid after filtering
+  useEffect(() => {
+    if (filteredTextModels.length > 0 && !filteredTextModels.find((m) => m.id === textModel)) {
+      setTextModel(filteredTextModels[0].id);
+    }
+    if (filteredImageModels.length > 0 && !filteredImageModels.find((m) => m.id === imageModel)) {
+      setImageModel(filteredImageModels[0].id);
+    }
+    if (filteredVideoModels.length > 0 && !filteredVideoModels.find((m) => m.id === videoModel)) {
+      setVideoModel(filteredVideoModels[0].id);
+    }
+  }, [filteredTextModels, filteredImageModels, filteredVideoModels]);
 
   const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel) ?? VIDEO_MODELS[0];
   const allowedDurations = selectedVideoModel.allowedDurations;
   const sceneCount = Math.ceil(totalDuration / clipDuration);
   const audioActive = enableAudio && selectedVideoModel.supportsAudio;
-  const cost = estimateCost(totalDuration, clipDuration, textModel, imageModel, videoModel, audioActive);
+
+  // Override ComfyUI cost from user settings if configured
+  const comfyuiCostOverride = modelSettings?.comfyui_cost_per_second;
+  const effectiveCost = useMemo(() => {
+    const base = estimateCost(totalDuration, clipDuration, textModel, imageModel, videoModel, audioActive);
+    if (videoModel === "wan-2.2-ref-i2v" && comfyuiCostOverride != null && comfyuiCostOverride > 0) {
+      // wan-2.2-ref-i2v has costPerSecond=0, so base has $0 video cost.
+      // Add the user-configured ComfyUI rate on top.
+      const scenes = Math.ceil(totalDuration / clipDuration);
+      return base + scenes * clipDuration * comfyuiCostOverride;
+    }
+    return base;
+  }, [totalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, comfyuiCostOverride]);
+  const cost = effectiveCost;
 
   function handleVideoModelChange(id: string) {
     setVideoModel(id);
@@ -87,9 +147,11 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
     }
   }
 
-  const videoCostPerSecond = audioActive
-    ? selectedVideoModel.costPerSecondAudio
-    : selectedVideoModel.costPerSecond;
+  const videoCostPerSecond = videoModel === "wan-2.2-ref-i2v" && comfyuiCostOverride != null
+    ? comfyuiCostOverride
+    : audioActive
+      ? selectedVideoModel.costPerSecondAudio
+      : selectedVideoModel.costPerSecond;
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto max-w-2xl space-y-6">
@@ -216,7 +278,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
             Text Model
           </label>
           <div className="flex flex-wrap gap-2">
-            {TEXT_MODELS.map((m) => (
+            {filteredTextModels.map((m) => (
               <button
                 key={m.id}
                 type="button"
@@ -240,7 +302,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
             Image Model
           </label>
           <div className="flex flex-wrap gap-2">
-            {IMAGE_MODELS.map((m) => (
+            {filteredImageModels.map((m) => (
               <button
                 key={m.id}
                 type="button"
@@ -264,7 +326,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
             Video Model
           </label>
           <div className="flex flex-wrap gap-2">
-            {VIDEO_MODELS.map((m) => (
+            {filteredVideoModels.map((m) => (
               <button
                 key={m.id}
                 type="button"

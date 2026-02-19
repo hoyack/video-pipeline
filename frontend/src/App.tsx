@@ -8,6 +8,7 @@ import { ProjectDetail } from "./components/ProjectDetail.tsx";
 import { Dashboard } from "./components/Dashboard.tsx";
 import { ManifestLibrary } from "./components/ManifestLibrary.tsx";
 import { ManifestCreator } from "./components/ManifestCreator.tsx";
+import { SettingsPage } from "./components/SettingsPage.tsx";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("generate");
@@ -99,6 +100,7 @@ function App() {
           }}
         />
       )}
+      {currentView === "settings" && <SettingsPage />}
     </Layout>
   );
 }

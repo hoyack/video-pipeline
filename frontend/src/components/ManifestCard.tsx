@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ManifestListItem } from "../api/types.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
 
@@ -20,6 +21,14 @@ export function ManifestCard({
 }: ManifestCardProps) {
   const visibleTags = manifest.tags?.slice(0, 3) ?? [];
   const remainingTagCount = (manifest.tags?.length ?? 0) - visibleTags.length;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyId = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(manifest.manifest_id);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div
@@ -57,6 +66,22 @@ export function ManifestCard({
           <span className="text-gray-500">v{manifest.version}</span>
         )}
       </div>
+
+      {/* Manifest ID with copy - hidden in compact mode */}
+      {!compact && (
+        <div className="mb-2 flex items-center gap-1.5">
+          <span className="font-mono text-xs text-gray-600">
+            {manifest.manifest_id.slice(0, 8)}...
+          </span>
+          <button
+            onClick={handleCopyId}
+            className="text-xs text-gray-600 transition-colors hover:text-gray-400"
+            title="Copy manifest ID"
+          >
+            {copied ? "Copied!" : "Copy ID"}
+          </button>
+        </div>
+      )}
 
       {/* Tags - hidden in compact mode */}
       {!compact && manifest.tags && manifest.tags.length > 0 && (

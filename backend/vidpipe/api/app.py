@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from vidpipe import validate_dependencies
 from vidpipe.db import init_database, shutdown
+from vidpipe.services.comfyui_client import close_comfyui_client
 from vidpipe.api.routes import router
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Video Pipeline API...")
+    await close_comfyui_client()
     await shutdown()
     logger.info("API shutdown complete")
 

@@ -10,19 +10,19 @@ Spec reference: STOR-01 through STOR-05
 
 import json
 import logging
+from typing import Optional
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, retry_if_exception_type
 
-from google.genai import types
 from vidpipe.config import settings
 from vidpipe.db.models import Project, Scene
 from vidpipe.db.models import SceneManifest as SceneManifestModel
 from vidpipe.db.models import SceneAudioManifest as SceneAudioManifestModel
 from vidpipe.schemas.storyboard import StoryboardOutput
 from vidpipe.schemas.storyboard_enhanced import EnhancedStoryboardOutput
+from vidpipe.services.llm import get_adapter, LLMAdapter
 from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry
-from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -165,8 +165,12 @@ Bad example: "A blonde woman in anime style turns around in a congressional hear
 GOAL: Ensure all scenes maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 
 
-async def generate_storyboard(session: AsyncSession, project: Project) -> None:
-    """Generate storyboard from project prompt using Gemini structured output.
+async def generate_storyboard(
+    session: AsyncSession,
+    project: Project,
+    text_adapter: Optional[LLMAdapter] = None,
+) -> None:
+    """Generate storyboard from project prompt using LLM structured output.
 
     Transforms project.prompt into structured storyboard with:
     - StyleGuide stored in project.style_guide
@@ -179,13 +183,14 @@ async def generate_storyboard(session: AsyncSession, project: Project) -> None:
     Args:
         session: AsyncSession for database operations
         project: Project instance with prompt to transform
+        text_adapter: Optional LLMAdapter. If None, one is created from project.text_model.
 
     Raises:
         json.JSONDecodeError: If JSON parsing fails after retries
         ValidationError: If Pydantic validation fails after retries
     """
     model_id = project.text_model or settings.models.storyboard_llm
-    client = get_vertex_client(location=location_for_model(model_id))
+    adapter = text_adapter or get_adapter(model_id)
 
     style_label = project.style.replace("_", " ")
 
@@ -244,19 +249,14 @@ async def generate_storyboard(session: AsyncSession, project: Project) -> None:
         # Determine response schema based on manifest mode
         response_schema = EnhancedStoryboardOutput if use_manifests else StoryboardOutput
 
-        # Call Gemini with structured output constraint
-        response = await client.aio.models.generate_content(
-            model=model_id,
-            contents=[full_prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=response_schema,
-                temperature=max(0.0, temperature)  # Ensure non-negative
-            )
+        # Call LLM adapter with structured output constraint
+        # max_retries=1 so temperature reduction (outer retry) works correctly
+        storyboard = await adapter.generate_text(
+            prompt=full_prompt,
+            schema=response_schema,
+            temperature=max(0.0, temperature),
+            max_retries=1,
         )
-
-        # Parse and validate response
-        storyboard = response_schema.model_validate_json(response.text)
         return storyboard
 
     # Execute with retry logic

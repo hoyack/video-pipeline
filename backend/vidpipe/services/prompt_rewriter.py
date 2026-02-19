@@ -21,12 +21,9 @@ import asyncio
 import logging
 from typing import Optional
 
-from google.genai import types
-from tenacity import retry, stop_after_attempt, retry_if_exception_type
-
 from vidpipe.db.models import Asset, Scene
 from vidpipe.schemas.prompt_rewrite import RewrittenKeyframePromptOutput, RewrittenVideoPromptOutput
-from vidpipe.services.vertex_client import get_vertex_client
+from vidpipe.services.llm import get_adapter, LLMAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -98,18 +95,11 @@ class PromptRewriterService:
     for video generation (separate calls with different formula).
     """
 
-    # Rate limiting: 5 concurrent Gemini rewriter requests (matches Phase 5 pattern)
+    # Rate limiting: 5 concurrent LLM rewriter requests (matches Phase 5 pattern)
     _semaphore = asyncio.Semaphore(5)
 
-    def __init__(self):
-        self._client = None
-
-    @property
-    def client(self):
-        """Lazy-init Vertex AI client (singleton via get_vertex_client)."""
-        if self._client is None:
-            self._client = get_vertex_client()
-        return self._client
+    def __init__(self, text_adapter: Optional[LLMAdapter] = None):
+        self._adapter = text_adapter
 
     async def rewrite_keyframe_prompt(
         self,
@@ -179,7 +169,7 @@ class PromptRewriterService:
             )
 
     async def _call_rewriter(self, system_prompt: str, user_context: str, schema):
-        """Call Gemini 2.5 Flash with structured output schema.
+        """Call LLM adapter with structured output schema.
 
         Retries up to 3 times on any exception. Temperature 0.4 (lower than
         storyboard's 0.7 — less creative, more precise reference injection).
@@ -195,20 +185,14 @@ class PromptRewriterService:
         Raises:
             Exception: After 3 retry attempts exhausted
         """
-        @retry(stop=stop_after_attempt(3), retry=retry_if_exception_type(Exception))
-        async def _attempt():
-            response = await self.client.aio.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[f"{system_prompt}\n\n{user_context}"],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=schema,
-                    temperature=0.4,
-                )
-            )
-            return schema.model_validate_json(response.text)
-
-        return await _attempt()
+        adapter = self._adapter or get_adapter("gemini-2.5-flash")
+        result = await adapter.generate_text(
+            prompt=f"{system_prompt}\n\n{user_context}",
+            schema=schema,
+            temperature=0.4,
+            max_retries=3,
+        )
+        return result
 
     # -----------------------------------------------------------------------
     # Context assembly

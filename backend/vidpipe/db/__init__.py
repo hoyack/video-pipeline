@@ -81,6 +81,7 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE user_settings ADD COLUMN ollama_endpoint VARCHAR(500)",
         "ALTER TABLE user_settings ADD COLUMN ollama_models TEXT",  # JSON stored as TEXT in SQLite
         "ALTER TABLE projects ADD COLUMN vision_model VARCHAR(100)",
+        "ALTER TABLE projects ADD COLUMN deleted_at TIMESTAMP",
     ]
     for sql in migrations:
         try:

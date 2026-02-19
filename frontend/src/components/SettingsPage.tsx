@@ -5,7 +5,7 @@ import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from "../lib/constants.ts";
 import type { UserSettingsResponse, OllamaModelEntry } from "../api/types.ts";
 
 export function SettingsPage() {
-  const [settings, setSettings] = useState<UserSettingsResponse | null>(null);
+  const [, setSettings] = useState<UserSettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);

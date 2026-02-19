@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import clsx from "clsx";
-import type { SceneDetail, SceneReference, CandidateScore } from "../api/types.ts";
+import type { SceneDetail, CandidateScore } from "../api/types.ts";
 import { listCandidates, selectCandidate } from "../api/client.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { ImageLightbox } from "./ImageLightbox.tsx";

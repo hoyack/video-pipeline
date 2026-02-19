@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
-import { forkProject, fetchManifestAssets } from "../api/client.ts";
+import { forkProject, fetchManifestAssets, getEnabledModels } from "../api/client.ts";
 import type { ProjectDetail } from "../api/types.ts";
-import type { ForkRequest, AssetResponse, AssetChanges, ModifiedAsset, NewForkUpload } from "../api/types.ts";
+import type { ForkRequest, AssetResponse, ModifiedAsset, NewForkUpload, EnabledModelsResponse } from "../api/types.ts";
 import {
   STYLE_OPTIONS,
   ASPECT_RATIOS,
@@ -34,6 +34,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
   const [textModel, setTextModel] = useState(detail.text_model ?? TEXT_MODELS[0].id);
   const [imageModel, setImageModel] = useState(detail.image_model ?? IMAGE_MODELS[0].id);
   const [videoModel, setVideoModel] = useState(detail.video_model ?? VIDEO_MODELS[0].id);
+  const [visionModel, setVisionModel] = useState(detail.vision_model ?? "");
   const [enableAudio, setEnableAudio] = useState(detail.audio_enabled ?? false);
 
   // Scene edits: { sceneIndex: { field: value } }
@@ -45,6 +46,50 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Model settings (Ollama models, enabled filters)
+  const [modelSettings, setModelSettings] = useState<EnabledModelsResponse | null>(null);
+
+  useEffect(() => {
+    getEnabledModels()
+      .then(setModelSettings)
+      .catch(() => {});
+  }, []);
+
+  const filteredTextModels = useMemo(() => {
+    if (!modelSettings?.enabled_text_models) return TEXT_MODELS;
+    const enabled = new Set(modelSettings.enabled_text_models);
+    return TEXT_MODELS.filter((m) => enabled.has(m.id));
+  }, [modelSettings]);
+
+  const filteredImageModels = useMemo(() => {
+    if (!modelSettings?.enabled_image_models) return IMAGE_MODELS;
+    const enabled = new Set(modelSettings.enabled_image_models);
+    return IMAGE_MODELS.filter((m) => enabled.has(m.id));
+  }, [modelSettings]);
+
+  const filteredVideoModels = useMemo(() => {
+    if (!modelSettings?.enabled_video_models) return VIDEO_MODELS;
+    const enabled = new Set(modelSettings.enabled_video_models);
+    return VIDEO_MODELS.filter((m) => enabled.has(m.id));
+  }, [modelSettings]);
+
+  const allTextModels = useMemo(() => {
+    const base = filteredTextModels;
+    const ollamaText = (modelSettings?.ollama_models ?? [])
+      .filter((m) => m.enabled)
+      .map((m) => ({ id: m.id, label: `${m.label} (Ollama)`, costPerCall: 0 }));
+    return [...base, ...ollamaText];
+  }, [filteredTextModels, modelSettings]);
+
+  // Vision models: Gemini text models (they all support vision) + Ollama vision models
+  const allVisionModels = useMemo(() => {
+    const base = filteredTextModels;
+    const ollamaVision = (modelSettings?.ollama_models ?? [])
+      .filter((m) => m.enabled && m.vision)
+      .map((m) => ({ id: m.id, label: `${m.label} (Ollama)`, costPerCall: 0 }));
+    return [...base, ...ollamaVision];
+  }, [filteredTextModels, modelSettings]);
 
   // Asset management state (Phase 12)
   const [assets, setAssets] = useState<AssetResponse[]>([]);
@@ -177,7 +222,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
       const existing = prev[assetId]?.changes || {};
       const updated = { ...existing, [field]: value };
       // Remove field if back to original
-      if (value === original) delete updated[field];
+      if (value === original) delete (updated as Record<string, string>)[field];
       if (Object.keys(updated).length === 0) {
         const next = { ...prev };
         delete next[assetId];
@@ -226,6 +271,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     if (textModel !== (detail.text_model ?? TEXT_MODELS[0].id)) req.text_model = textModel;
     if (imageModel !== (detail.image_model ?? IMAGE_MODELS[0].id)) req.image_model = imageModel;
     if (videoModel !== (detail.video_model ?? VIDEO_MODELS[0].id)) req.video_model = videoModel;
+    if ((visionModel || undefined) !== (detail.vision_model || undefined)) req.vision_model = visionModel || undefined;
     if (enableAudio !== (detail.audio_enabled ?? false)) req.audio_enabled = enableAudio;
 
     if (Object.keys(sceneEdits).length > 0) {
@@ -397,7 +443,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
         <div>
           <label className="mb-2 block text-sm font-medium text-gray-300">Text Model</label>
           <div className="flex flex-wrap gap-2">
-            {TEXT_MODELS.map((m) => (
+            {allTextModels.map((m) => (
               <button
                 key={m.id}
                 type="button"
@@ -416,9 +462,47 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
         </div>
 
         <div>
+          <label className="mb-2 block text-sm font-medium text-gray-300">
+            Vision Model
+            <span className="ml-2 text-xs text-gray-500 font-normal">
+              For image analysis, reverse-prompting, and scoring
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setVisionModel("")}
+              className={clsx(
+                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                visionModel === ""
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+              )}
+            >
+              Same as Text
+            </button>
+            {allVisionModels.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setVisionModel(m.id)}
+                className={clsx(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                  visionModel === m.id
+                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
           <label className="mb-2 block text-sm font-medium text-gray-300">Image Model</label>
           <div className="flex flex-wrap gap-2">
-            {IMAGE_MODELS.map((m) => (
+            {filteredImageModels.map((m) => (
               <button
                 key={m.id}
                 type="button"
@@ -439,7 +523,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
         <div>
           <label className="mb-2 block text-sm font-medium text-gray-300">Video Model</label>
           <div className="flex flex-wrap gap-2">
-            {VIDEO_MODELS.map((m) => (
+            {filteredVideoModels.map((m) => (
               <button
                 key={m.id}
                 type="button"

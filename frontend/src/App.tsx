@@ -11,7 +11,7 @@ import { ManifestCreator } from "./components/ManifestCreator.tsx";
 import { SettingsPage } from "./components/SettingsPage.tsx";
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>("generate");
+  const [currentView, setCurrentView] = useState<View>("list");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeManifestId, setActiveManifestId] = useState<string | null>(null);
 
@@ -65,7 +65,10 @@ function App() {
         />
       )}
       {currentView === "list" && (
-        <ProjectList onSelectProject={handleSelectProject} />
+        <ProjectList
+          onSelectProject={handleSelectProject}
+          onNewProject={() => navigateTo("generate")}
+        />
       )}
       {currentView === "detail" && activeProjectId && (
         <ProjectDetail

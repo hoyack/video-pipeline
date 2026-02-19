@@ -99,7 +99,16 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
       setImageModel(filteredImageModels[0].id);
     }
     if (filteredVideoModels.length > 0 && !filteredVideoModels.find((m) => m.id === videoModel)) {
-      setVideoModel(filteredVideoModels[0].id);
+      const newModel = filteredVideoModels[0];
+      setVideoModel(newModel.id);
+      const full = VIDEO_MODELS.find((m) => m.id === newModel.id) ?? VIDEO_MODELS[0];
+      if (!full.allowedDurations.includes(clipDuration)) {
+        const nearest = full.allowedDurations.reduce((a, b) =>
+          Math.abs(b - clipDuration) < Math.abs(a - clipDuration) ? b : a
+        );
+        setClipDuration(nearest);
+      }
+      setEnableAudio(full.supportsAudio);
     }
     if (visionModel && allVisionModels.length > 0 && !allVisionModels.find((m) => m.id === visionModel)) {
       setVisionModel("");
@@ -108,6 +117,17 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
 
   const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel) ?? VIDEO_MODELS[0];
   const allowedDurations = selectedVideoModel.allowedDurations;
+
+  // Snap clip duration if current value isn't allowed by selected video model
+  useEffect(() => {
+    if (!allowedDurations.includes(clipDuration)) {
+      const nearest = allowedDurations.reduce((a, b) =>
+        Math.abs(b - clipDuration) < Math.abs(a - clipDuration) ? b : a
+      );
+      setClipDuration(nearest);
+    }
+  }, [allowedDurations, clipDuration]);
+
   const sceneCount = Math.ceil(totalDuration / clipDuration);
   const audioActive = enableAudio && selectedVideoModel.supportsAudio;
 

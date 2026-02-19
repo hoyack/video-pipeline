@@ -124,6 +124,17 @@ export interface ProjectListItem {
   video_model?: string | null;
   audio_enabled?: boolean | null;
   vision_model?: string | null;
+  style: string;
+  aspect_ratio: string;
+  thumbnail_url?: string | null;
+}
+
+/** Paginated response envelope for GET /api/projects */
+export interface PaginatedProjects {
+  items: ProjectListItem[];
+  total: number;
+  page: number;
+  per_page: number;
 }
 
 /** Response from POST /api/projects/{id}/resume */
@@ -175,6 +186,7 @@ export interface ForkRequest {
   image_model?: string;
   video_model?: string;
   audio_enabled?: boolean;
+  vision_model?: string;
   scene_edits?: Record<number, Record<string, string>>;
   deleted_scenes?: number[];
   clear_keyframes?: number[];

@@ -13,10 +13,9 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import case, func as sa_func, select
+from sqlalchemy import and_ as sa_and, case, func as sa_func, select
 from sqlalchemy.orm import selectinload
 
-from google.genai import types
 from vidpipe.db import async_session
 from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID
 from vidpipe.orchestrator.pipeline import run_pipeline
@@ -24,7 +23,6 @@ from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import SceneSchema
 from vidpipe.schemas.storyboard_enhanced import EnhancedSceneSchema
 from vidpipe.services.file_manager import FileManager
-from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services import manifest_service
 from vidpipe.workers.processing_tasks import process_manifest_task, extract_video_frames_task, TASK_STATUS
 
@@ -307,6 +305,17 @@ class ProjectListItem(BaseModel):
     candidate_count: int = 1
     # Phase 13: LLM Provider Abstraction
     vision_model: Optional[str] = None
+    style: str = ""
+    aspect_ratio: str = ""
+    thumbnail_url: Optional[str] = None
+
+
+class PaginatedProjects(BaseModel):
+    """Paginated response envelope for GET /api/projects."""
+    items: list[ProjectListItem]
+    total: int
+    page: int
+    per_page: int
 
 
 class ResumeResponse(BaseModel):
@@ -814,31 +823,90 @@ async def get_project_detail(project_id: uuid.UUID):
         )
 
 
-@router.get("/projects", response_model=list[ProjectListItem])
-async def list_projects():
-    """List all projects ordered by creation date (newest first)."""
+@router.get("/projects", response_model=PaginatedProjects)
+async def list_projects(
+    page: int = 1,
+    per_page: int = 10,
+    view: Optional[str] = None,
+    status: Optional[str] = None,
+):
+    """List projects with server-side pagination (newest first).
+
+    Query params:
+      - page: 1-based page number (default 1)
+      - per_page: items per page, must be 10, 50, or 100 (default 10)
+      - view: "cards" to include thumbnail_url (avoids extra query for list view)
+      - status: filter by project status (e.g. "complete", "failed", "stopped")
+    """
+    if per_page not in (10, 50, 100):
+        per_page = 10
+    if page < 1:
+        page = 1
+
+    VALID_STATUSES = {"pending", "storyboarding", "keyframing", "video_gen", "stitching", "complete", "failed", "stopped"}
+
     async with async_session() as session:
+        filters = [Project.deleted_at.is_(None)]
+        if status and status in VALID_STATUSES:
+            filters.append(Project.status == status)
+        base_filter = filters[0] if len(filters) == 1 else sa_and(*filters)
+
+        # Total count
+        count_result = await session.execute(
+            select(sa_func.count(Project.id)).where(base_filter)
+        )
+        total = count_result.scalar() or 0
+
+        # Paginated projects
         result = await session.execute(
-            select(Project).order_by(Project.created_at.desc())
+            select(Project)
+            .where(base_filter)
+            .order_by(Project.created_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
         )
         projects = result.scalars().all()
 
-        return [
-            ProjectListItem(
-                project_id=str(p.id),
-                prompt=p.prompt,
-                status=p.status,
-                created_at=p.created_at.isoformat(),
-                total_duration=p.total_duration,
-                clip_duration=p.target_clip_duration,
-                text_model=p.text_model,
-                image_model=p.image_model,
-                video_model=p.video_model,
-                audio_enabled=p.audio_enabled,
-                vision_model=p.vision_model,
+        # Build thumbnail map when cards view requested
+        thumbnail_map: dict[str, str] = {}
+        if view == "cards" and projects:
+            project_ids = [p.id for p in projects]
+            thumb_q = await session.execute(
+                select(Scene.project_id, Keyframe.id)
+                .join(Scene, Keyframe.scene_id == Scene.id)
+                .where(Scene.project_id.in_(project_ids))
+                .where(Scene.scene_index == 0)
+                .where(Keyframe.position == "start")
             )
-            for p in projects
-        ]
+            for row in thumb_q:
+                pid_str = str(row[0])
+                if pid_str not in thumbnail_map:
+                    thumbnail_map[pid_str] = f"/api/keyframes/{row[1]}"
+
+        return PaginatedProjects(
+            items=[
+                ProjectListItem(
+                    project_id=str(p.id),
+                    prompt=p.prompt,
+                    status=p.status,
+                    created_at=p.created_at.isoformat(),
+                    total_duration=p.total_duration,
+                    clip_duration=p.target_clip_duration,
+                    text_model=p.text_model,
+                    image_model=p.image_model,
+                    video_model=p.video_model,
+                    audio_enabled=p.audio_enabled,
+                    vision_model=p.vision_model,
+                    style=p.style,
+                    aspect_ratio=p.aspect_ratio,
+                    thumbnail_url=thumbnail_map.get(str(p.id)),
+                )
+                for p in projects
+            ],
+            total=total,
+            page=page,
+            per_page=per_page,
+        )
 
 
 @router.post("/projects/{project_id}/resume", status_code=202, response_model=ResumeResponse)
@@ -910,6 +978,45 @@ async def stop_project(project_id: uuid.UUID):
     return StopResponse(project_id=str(project_id), status="stopped")
 
 
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: uuid.UUID):
+    """Soft-delete a project: sets deleted_at, removes disk assets.
+
+    Only terminal-status projects (complete, failed, stopped) can be deleted.
+    DB records are preserved for cost tracking.
+    """
+    DELETABLE_STATUSES = {"complete", "failed", "stopped"}
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+
+        if not project or project.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if project.status not in DELETABLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete project with status '{project.status}'. Stop it first.",
+            )
+
+        project.deleted_at = sa_func.now()
+        await session.commit()
+
+    # Remove disk assets (keyframes, clips, output) after commit
+    try:
+        project_dir = FileManager().base_dir / str(project_id)
+        if project_dir.exists():
+            shutil.rmtree(project_dir)
+            logger.info(f"Removed disk assets for project {project_id}")
+    except Exception:
+        logger.warning(f"Failed to remove disk assets for project {project_id}", exc_info=True)
+
+    return {"status": "deleted", "project_id": str(project_id)}
+
+
 class _ExpansionScenes(BaseModel):
     """Wrapper schema for Gemini structured output of expansion scenes."""
     scenes: list[SceneSchema] = Field(description="New scenes to append")
@@ -926,11 +1033,12 @@ async def _generate_expansion_scenes(
     num_new_scenes: int,
     start_index: int,
     asset_registry_block: Optional[str] = None,
+    text_adapter=None,
 ) -> list[dict]:
     """Generate storyboard entries for new scenes extending an existing storyboard.
 
-    Uses Gemini structured output to create scene entries that continue the
-    narrative from the kept scenes, maintaining style and character consistency.
+    Uses the LLM adapter system (Vertex AI or Ollama) to create scene entries
+    that continue the narrative from the kept scenes.
 
     Args:
         project: The new forked project (has prompt, style, etc.)
@@ -939,12 +1047,18 @@ async def _generate_expansion_scenes(
         start_index: scene_index for the first new scene
         asset_registry_block: When provided, enables manifest-aware generation
             with scene_manifest and audio_manifest in the output schema.
+        text_adapter: Optional LLMAdapter instance. If None, falls back to
+            Vertex AI with the project's text_model or gemini-2.5-flash.
 
     Returns:
         List of scene dicts ready for Scene record creation
     """
-    model_id = project.text_model or "gemini-2.5-flash"
-    client = get_vertex_client(location=location_for_model(model_id))
+    from vidpipe.services.llm import get_adapter
+
+    if text_adapter is None:
+        model_id = project.text_model or "gemini-2.5-flash"
+        text_adapter = get_adapter(model_id)
+
     style_label = (project.style or "cinematic").replace("_", " ")
 
     # Build context from kept scenes
@@ -997,17 +1111,12 @@ Generate exactly {num_new_scenes} new scene(s) that continue the narrative from 
 - Include key_details for each scene (3-6 specific terms from the original script).
 """
 
-    response = await client.aio.models.generate_content(
-        model=model_id,
-        contents=[prompt],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=schema,
-            temperature=0.7,
-        ),
+    result = await text_adapter.generate_text(
+        prompt=prompt,
+        schema=schema,
+        temperature=0.7,
+        max_retries=3,
     )
-
-    result = schema.model_validate_json(response.text)
 
     # Normalize scene indices to start at start_index
     scenes_out = []
@@ -1797,7 +1906,9 @@ async def get_metrics():
     completed video clips.
     """
     async with async_session() as session:
-        result = await session.execute(select(Project))
+        result = await session.execute(
+            select(Project).where(Project.deleted_at.is_(None))
+        )
         projects = result.scalars().all()
 
         # Build lookup of actual artifacts per project for cost accuracy.

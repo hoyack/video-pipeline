@@ -3,7 +3,7 @@ import type {
   GenerateResponse,
   StatusResponse,
   ProjectDetail,
-  ProjectListItem,
+  PaginatedProjects,
   ResumeResponse,
   StopResponse,
   ForkRequest,
@@ -61,9 +61,27 @@ export function getProjectDetail(projectId: string): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/api/projects/${projectId}`);
 }
 
-/** GET /api/projects — list all projects */
-export function listProjects(): Promise<ProjectListItem[]> {
-  return request<ProjectListItem[]>("/api/projects");
+/** GET /api/projects — list projects with pagination */
+export function listProjects(params?: {
+  page?: number;
+  per_page?: number;
+  view?: string;
+  status?: string;
+}): Promise<PaginatedProjects> {
+  const searchParams = new URLSearchParams();
+  if (params?.page) searchParams.set("page", String(params.page));
+  if (params?.per_page) searchParams.set("per_page", String(params.per_page));
+  if (params?.view) searchParams.set("view", params.view);
+  if (params?.status) searchParams.set("status", params.status);
+  const qs = searchParams.toString();
+  return request<PaginatedProjects>(`/api/projects${qs ? `?${qs}` : ""}`);
+}
+
+/** DELETE /api/projects/{id} — soft delete project */
+export function deleteProject(projectId: string): Promise<{ status: string; project_id: string }> {
+  return request<{ status: string; project_id: string }>(`/api/projects/${projectId}`, {
+    method: "DELETE",
+  });
 }
 
 /** POST /api/projects/{id}/resume — resume a failed/interrupted job */

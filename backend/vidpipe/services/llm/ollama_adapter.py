@@ -1,10 +1,18 @@
 """Ollama adapter for the LLM abstraction layer.
 
 Connects via ollama.AsyncClient with optional auth headers, structured JSON
-output via model_json_schema(), and vision support via base64-encoded images.
+output via format='json' with schema instructions, and vision support via
+base64-encoded images.
+
+Note: We use format='json' instead of format=schema_dict because Ollama Cloud
+does not reliably enforce JSON schema constraints — it sometimes returns
+markdown or bare values when given a full JSON schema dict.  Instead, we
+append a concise schema description to the system prompt and rely on
+format='json' to guarantee valid JSON output.
 """
 
 import base64
+import json
 import logging
 from typing import Optional, Type
 
@@ -17,11 +25,29 @@ from vidpipe.services.llm.base import LLMAdapter
 logger = logging.getLogger(__name__)
 
 
+def _schema_instruction(schema: Type[BaseModel]) -> str:
+    """Build a concise JSON schema instruction to append to the system prompt.
+
+    Produces a compact representation of the expected output structure that
+    LLMs follow more reliably than a raw JSON Schema dict passed via the
+    format parameter.
+    """
+    schema_json = json.dumps(schema.model_json_schema(), indent=2)
+    return (
+        "\n\nIMPORTANT: You MUST respond with a single JSON object (no markdown, "
+        "no commentary, no code fences). The JSON must conform to this schema:\n"
+        f"```json\n{schema_json}\n```\n"
+        "All string fields must be strings (not arrays). Return ONLY the JSON object."
+    )
+
+
 class OllamaAdapter(LLMAdapter):
     """LLM adapter backed by a local or cloud Ollama instance.
 
     Strips the "ollama/" prefix from model IDs before passing to the ollama
     library. Always passes stream=False to avoid async generator responses.
+    Uses format='json' with schema instructions in the prompt for reliable
+    structured output across local and cloud Ollama deployments.
     """
 
     def __init__(
@@ -64,6 +90,8 @@ class OllamaAdapter(LLMAdapter):
         Returns:
             Validated Pydantic model instance.
         """
+        schema_suffix = _schema_instruction(schema)
+
         @retry(
             stop=stop_after_attempt(max_retries),
             wait=wait_exponential(multiplier=1, min=2, max=30),
@@ -73,17 +101,31 @@ class OllamaAdapter(LLMAdapter):
         async def _call() -> BaseModel:
             messages = []
             if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "system", "content": system_prompt + schema_suffix})
+            else:
+                messages.append({"role": "system", "content": schema_suffix.lstrip()})
             messages.append({"role": "user", "content": prompt})
 
             response = await self._client.chat(
                 model=self._ollama_model,
                 messages=messages,
-                format=schema.model_json_schema(),
+                format="json",
                 options={"temperature": temperature},
                 stream=False,
             )
-            return schema.model_validate_json(response.message.content)
+
+            raw = response.message.content
+            # Some models wrap JSON in markdown code fences — strip them
+            stripped = raw.strip()
+            if stripped.startswith("```"):
+                # Remove opening fence (```json or ```)
+                first_newline = stripped.index("\n")
+                stripped = stripped[first_newline + 1:]
+                if stripped.endswith("```"):
+                    stripped = stripped[:-3].rstrip()
+                raw = stripped
+
+            return schema.model_validate_json(raw)
 
         return await _call()
 
@@ -113,6 +155,8 @@ class OllamaAdapter(LLMAdapter):
         Returns:
             Validated Pydantic model instance.
         """
+        schema_suffix = _schema_instruction(schema)
+
         @retry(
             stop=stop_after_attempt(max_retries),
             wait=wait_exponential(multiplier=1, min=2, max=30),
@@ -122,19 +166,30 @@ class OllamaAdapter(LLMAdapter):
         async def _call() -> BaseModel:
             image_b64 = base64.b64encode(image_bytes).decode()
             messages = [
+                {"role": "system", "content": schema_suffix.lstrip()},
                 {
                     "role": "user",
                     "content": prompt,
                     "images": [image_b64],
-                }
+                },
             ]
             response = await self._client.chat(
                 model=self._ollama_model,
                 messages=messages,
-                format=schema.model_json_schema(),
+                format="json",
                 options={"temperature": temperature},
                 stream=False,
             )
-            return schema.model_validate_json(response.message.content)
+
+            raw = response.message.content
+            stripped = raw.strip()
+            if stripped.startswith("```"):
+                first_newline = stripped.index("\n")
+                stripped = stripped[first_newline + 1:]
+                if stripped.endswith("```"):
+                    stripped = stripped[:-3].rstrip()
+                raw = stripped
+
+            return schema.model_validate_json(raw)
 
         return await _call()

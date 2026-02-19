@@ -182,6 +182,8 @@ class Project(Base):
     # Phase 13: LLM Provider Abstraction
     vision_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

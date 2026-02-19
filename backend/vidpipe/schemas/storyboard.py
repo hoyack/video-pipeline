@@ -6,7 +6,24 @@ enabling structured output constraints via response_schema parameter.
 Spec reference: Section 5.1 (Storyboard Output Schema)
 """
 
-from pydantic import BaseModel, Field
+from typing import Annotated, Any
+
+from pydantic import BaseModel, BeforeValidator, Field
+
+
+def _coerce_to_str(v: Any) -> str:
+    """Coerce list/non-str values to comma-separated string.
+
+    Some LLM providers (e.g. Ollama) return arrays for fields declared as
+    string in the JSON schema.  This validator normalises them so Pydantic
+    validation succeeds regardless of provider quirks.
+    """
+    if isinstance(v, list):
+        return ", ".join(str(item) for item in v)
+    return v
+
+
+CoercedStr = Annotated[str, BeforeValidator(_coerce_to_str)]
 
 
 class StyleGuide(BaseModel):
@@ -16,13 +33,13 @@ class StyleGuide(BaseModel):
     to ensure visual coherence across all generated scenes.
     """
 
-    visual_style: str = Field(
+    visual_style: CoercedStr = Field(
         description="Overall aesthetic approach (e.g., 'cinematic realism', 'animated', 'vintage film')"
     )
-    color_palette: str = Field(
+    color_palette: CoercedStr = Field(
         description="Dominant colors and lighting mood (e.g., 'warm golden tones', 'cool blue shadows')"
     )
-    camera_style: str = Field(
+    camera_style: CoercedStr = Field(
         description="Camera movement and framing approach (e.g., 'handheld dynamic', 'smooth tracking shots')"
     )
 

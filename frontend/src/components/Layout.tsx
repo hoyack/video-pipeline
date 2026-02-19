@@ -8,9 +8,8 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-const NAV_ITEMS: { view: View; label: string }[] = [
-  { view: "generate", label: "Generate" },
-  { view: "list", label: "Projects" },
+const NAV_ITEMS: { view: View; label: string; activeFor?: View[] }[] = [
+  { view: "list", label: "Projects", activeFor: ["generate"] },
   { view: "manifests", label: "Manifests" },
   { view: "dashboard", label: "Dashboard" },
   { view: "settings", label: "Settings" },
@@ -22,25 +21,28 @@ export function Layout({ currentView, onNavigate, children }: LayoutProps) {
       <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
           <button
-            onClick={() => onNavigate("generate")}
+            onClick={() => onNavigate("list")}
             className="text-lg font-bold tracking-tight text-white"
           >
             vidpipe
           </button>
           <nav className="flex gap-1">
-            {NAV_ITEMS.map(({ view, label }) => (
-              <button
-                key={view}
-                onClick={() => onNavigate(view)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  currentView === view
-                    ? "bg-gray-800 text-white"
-                    : "text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            {NAV_ITEMS.map(({ view, label, activeFor }) => {
+              const isActive = currentView === view || (activeFor?.includes(currentView) ?? false);
+              return (
+                <button
+                  key={view}
+                  onClick={() => onNavigate(view)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    isActive
+                      ? "bg-gray-800 text-white"
+                      : "text-gray-400 hover:text-gray-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </nav>
         </div>
       </header>

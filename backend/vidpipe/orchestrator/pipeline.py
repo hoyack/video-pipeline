@@ -33,7 +33,9 @@ class PipelineStopped(Exception):
     """Raised when the user requests a pipeline stop."""
 
 
-async def _generate_expansion_if_needed(session: AsyncSession, project: Project) -> None:
+async def _generate_expansion_if_needed(
+    session: AsyncSession, project: Project, text_adapter=None,
+) -> None:
     """Generate storyboard entries for expansion scenes if needed.
 
     After a fork with delete-then-expand, the project may have fewer Scene
@@ -81,6 +83,7 @@ async def _generate_expansion_if_needed(session: AsyncSession, project: Project)
     new_scene_data = await _generate_expansion_scenes(
         project, kept_sb_scenes, num_new, start_index=existing_count,
         asset_registry_block=asset_registry_block,
+        text_adapter=text_adapter,
     )
 
     for sd in new_scene_data:
@@ -243,7 +246,7 @@ async def run_pipeline(
         # Step 2: Keyframe generation
         if project.status == "keyframing":
             # Check if expansion scenes are needed (fork delete-then-expand)
-            await _generate_expansion_if_needed(session, project)
+            await _generate_expansion_if_needed(session, project, text_adapter=text_adapter)
 
             step_start = time.monotonic()
             logger.info("Starting keyframes step")

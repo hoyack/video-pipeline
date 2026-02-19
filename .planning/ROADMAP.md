@@ -276,6 +276,6 @@ Plans:
 **Plans:** 3 plans in 2 waves
 
 Plans:
-- [ ] 13-01-PLAN.md — LLM adapter package (base, VertexAI, Ollama, registry), vision schemas, DB schema, settings API
+- [x] 13-01-PLAN.md — LLM adapter package (base, VertexAI, Ollama, registry), vision schemas, DB schema, settings API
 - [ ] 13-02-PLAN.md — Call-site migration (storyboard, prompt rewriter, reverse-prompt, CV analysis, candidate scoring), orchestrator wiring, route validation
 - [ ] 13-03-PLAN.md — Frontend Ollama settings UI, model management, GenerateForm vision_model dropdown

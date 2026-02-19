@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 12 of 12 (Fork System Integration with Manifests) — COMPLETE
-Plan: 3 of 3 complete
-Status: 12-03 complete — EditForkPanel asset management UI with lock/edit/remove controls and new upload file picker
-Last activity: 2026-02-17 — Completed 12-03 (fork asset management UI, TypeScript types, fetchManifestAssets)
+Phase: 13 of 13 (LLM Provider Abstraction + Ollama Integration) — IN PROGRESS
+Plan: 1 of 3 complete
+Status: 13-01 complete — LLM adapter package (VertexAI + Ollama), vision schemas, DB columns, settings API
+Last activity: 2026-02-19 — Completed 13-01 (LLM adapter abstraction layer, DB schema extensions)
 
-Progress: [██████████] 100% (12 of 12 phases complete, 34 of 34 plans complete)
+Progress: [██████████] 100% (12 of 12 prior phases complete, 35 of 37 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 31
+- Total plans completed: 35
 - Average duration: 2.7 min
-- Total execution time: 1.39 hours
+- Total execution time: 1.47 hours
 
 **By Phase:**
 
@@ -39,10 +39,11 @@ Progress: [██████████] 100% (12 of 12 phases complete, 34 of
 | 10-adaptive-prompt-rewriting | 2 | 4.0 min | 2.0 min |
 | 11-multi-candidate-quality-mode | 3/3 | 14.0 min | 4.7 min |
 | 12-fork-system-integration-with-manifests | 3/3 | 7.0 min | 2.3 min |
+| 13-llm-provider-abstraction-ollama | 1/3 | 5.0 min | 5.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 11-02 (3.0min), 11-03 (8.0min), 12-01 (2.0min), 12-02 (3.0min)
-- Trend: Phase 12 core logic fast — 12-02 asset inheritance + incremental manifesting in 3min
+- Last 5 plans: 11-03 (8.0min), 12-01 (2.0min), 12-02 (3.0min), 12-03 (2.0min), 13-01 (5.0min)
+- Trend: Phase 13 adapter layer complete in single plan — 6 new files, DB migrations, API extensions
 
 *Updated after each plan completion*
 
@@ -190,6 +191,13 @@ Recent decisions affecting current work:
 - **12-03:** Asset Registry section only renders when detail.manifest_id is present — zero visual impact for non-manifest projects
 - **12-03:** Silent catch on fetchManifestAssets failure — asset section shows empty state, never breaks fork flow
 - **12-03:** Asset modification removes field from modifiedAssets when value returns to original — keeps buildForkRequest clean
+- **13-01:** LLMAdapter ABC uses async abstract methods — consistent with existing async pipeline pattern
+- **13-01:** OllamaAdapter always passes stream=False to client.chat() — ollama library defaults to True (returns async generator, not response object)
+- **13-01:** Ollama model ID prefix "ollama/" stripped via removeprefix() before client.chat() — library uses bare model names (e.g., "llama3.1")
+- **13-01:** TYPE_CHECKING import for UserSettings in registry.py — prevents circular import (registry → db.models → db.__init__ → ... → registry)
+- **13-01:** ollama_use_cloud flag: True = cloud endpoint + api_key, False = localhost (or custom endpoint) with no auth key
+- **13-01:** vision_model accepted in GenerateRequest + Project for per-project LLM routing (separate from text_model for storyboarding)
+- **13-01:** GenerateRequest validation accepts "ollama/" prefix for text_model and vision_model (dynamic model IDs from user Ollama config)
 
 ### Roadmap Evolution
 
@@ -215,6 +223,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-17 (execution)
-Stopped at: Completed 12-03-PLAN.md (EditForkPanel asset management UI — all 12 phases complete, project DONE)
+Last session: 2026-02-19 (execution)
+Stopped at: Completed 13-01-PLAN.md (LLM adapter package + DB schema extensions + settings API)
 Resume file: None

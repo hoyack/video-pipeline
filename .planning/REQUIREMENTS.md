@@ -73,6 +73,16 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **API-06**: GET /api/projects/{id}/download serves final MP4 file
 - [ ] **API-07**: GET /api/health returns health check
 
+## LLM Provider Abstraction
+
+- [ ] **LLMA-01**: Abstract base `LLMAdapter` class with `generate_text(prompt, schema, temperature, retries)` and `analyze_image(image_bytes, prompt, schema, temperature)` methods
+- [ ] **LLMA-02**: `VertexAIAdapter` wraps existing Gemini calls — storyboard, prompt rewriting, reverse-prompting, CV semantic analysis, candidate scoring all route through it
+- [ ] **LLMA-03**: `OllamaAdapter` implements text generation (with JSON mode for structured output) and vision analysis using Ollama REST API (`/api/generate`, `/api/chat`)
+- [ ] **LLMA-04**: Settings UI Ollama section: API key input, cloud vs local toggle (local hides API key, uses `localhost:11434`; cloud uses `ollama.com`), custom endpoint URL override
+- [ ] **LLMA-05**: Model management: input box to add custom Ollama model names, toggle models on/off in settings, remove models from list entirely; added models appear in GenerateForm dropdowns
+- [ ] **LLMA-06**: GenerateForm supports text_model and vision_model selection; storyboard/prompt-rewriting uses text_model adapter; reverse-prompting/CV-analysis/candidate-scoring uses vision_model adapter
+- [ ] **LLMA-07**: Provider routing: model ID → adapter mapping via provider registry; Gemini models → VertexAIAdapter, Ollama models → OllamaAdapter; future providers (Anthropic, OpenAI, Grok) can register without modifying core pipeline
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -158,10 +168,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-05 | Phase 3 | Complete |
 | API-06 | Phase 3 | Complete |
 | API-07 | Phase 3 | Complete |
+| LLMA-01 | Phase 13 | Planned |
+| LLMA-02 | Phase 13 | Planned |
+| LLMA-03 | Phase 13 | Planned |
+| LLMA-04 | Phase 13 | Planned |
+| LLMA-05 | Phase 13 | Planned |
+| LLMA-06 | Phase 13 | Planned |
+| LLMA-07 | Phase 13 | Planned |
 
 **Coverage:**
-- v1 requirements: 41 total
-- Mapped to phases: 41
+- v1 requirements: 41 total (all complete)
+- v3 requirements (LLM abstraction): 7 total
+- Mapped to phases: 48
 - Unmapped: 0
 
 ---

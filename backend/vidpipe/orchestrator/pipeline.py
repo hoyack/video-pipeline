@@ -18,11 +18,13 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.db.models import Project, PipelineRun, Scene, Keyframe, VideoClip, AssetAppearance, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel
+from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
 from vidpipe.orchestrator.state import get_resume_step
 from vidpipe.pipeline.storyboard import generate_storyboard
 from vidpipe.pipeline.keyframes import generate_keyframes
 from vidpipe.pipeline.video_gen import generate_videos
 from vidpipe.pipeline.stitcher import stitch_videos
+from vidpipe.services.llm import get_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +186,19 @@ async def run_pipeline(
 
     logger.info(f"Starting pipeline for project {project_id}, current status: {project.status}")
 
+    # Load UserSettings for adapter creation
+    from vidpipe.config import settings as app_settings
+    user_settings_result = await session.execute(
+        select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+    )
+    user_settings = user_settings_result.scalar_one_or_none()
+
+    # Create adapters from project config + user settings
+    text_model_id = project.text_model or app_settings.models.storyboard_llm
+    vision_model_id = project.vision_model or project.text_model or app_settings.models.storyboard_llm
+    text_adapter = get_adapter(text_model_id, user_settings=user_settings)
+    vision_adapter = get_adapter(vision_model_id, user_settings=user_settings)
+
     # Create PipelineRun record
     run = PipelineRun(project_id=project_id)
     session.add(run)
@@ -215,7 +230,7 @@ async def run_pipeline(
             project.status = "storyboarding"
             await session.commit()
 
-            await generate_storyboard(session, project)
+            await generate_storyboard(session, project, text_adapter=text_adapter)
             await session.refresh(project)
 
             # Transition handled by generate_storyboard (sets status to "keyframing")
@@ -235,7 +250,7 @@ async def run_pipeline(
             if progress_callback:
                 progress_callback("Generating keyframes...")
 
-            await generate_keyframes(session, project)
+            await generate_keyframes(session, project, text_adapter=text_adapter)
             await session.refresh(project)
 
             # Transition handled by generate_keyframes (sets status to "generating_video")
@@ -258,7 +273,7 @@ async def run_pipeline(
             if progress_callback:
                 progress_callback("Generating video clips (with CV analysis)...")
 
-            await generate_videos(session, project)
+            await generate_videos(session, project, text_adapter=text_adapter, vision_adapter=vision_adapter)
             await session.refresh(project)
 
             project.status = "stitching"

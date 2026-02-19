@@ -352,6 +352,8 @@ class ForkRequest(BaseModel):
     deleted_scenes: Optional[list[int]] = None
     clear_keyframes: Optional[list[int]] = None
     asset_changes: Optional[AssetChanges] = None
+    # Phase 13: LLM Provider Abstraction
+    vision_model: Optional[str] = None
 
 
 class ForkResponse(BaseModel):
@@ -1337,7 +1339,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
         # Collect overrides (only explicitly provided fields)
         overrides: dict = {}
         for field in ("prompt", "style", "aspect_ratio", "clip_duration", "total_duration",
-                       "text_model", "image_model", "video_model", "audio_enabled"):
+                       "text_model", "image_model", "video_model", "audio_enabled", "vision_model"):
             val = getattr(request, field if field != "clip_duration" else field)
             if val is not None:
                 overrides[field] = val
@@ -1354,8 +1356,11 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
         if im and im not in ALLOWED_IMAGE_MODELS:
             raise HTTPException(status_code=422, detail=f"Invalid image_model: {im}")
         tm = overrides.get("text_model", source.text_model)
-        if tm and tm not in ALLOWED_TEXT_MODELS:
+        if tm and not (tm in ALLOWED_TEXT_MODELS or tm.startswith("ollama/")):
             raise HTTPException(status_code=422, detail=f"Invalid text_model: {tm}")
+        vism = overrides.get("vision_model", source.vision_model)
+        if vism and not (vism in ALLOWED_TEXT_MODELS or vism.startswith("ollama/")):
+            raise HTTPException(status_code=422, detail=f"Invalid vision_model: {vism}")
 
         cd = overrides.get("clip_duration", source.target_clip_duration)
         allowed = ALLOWED_DURATIONS.get(vm or "", [5, 6, 7, 8])
@@ -1445,6 +1450,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
             image_model=im,
             video_model=vm,
             audio_enabled=ae,
+            vision_model=vism,
             seed=random.randint(0, 2**32 - 1),
             forked_from_id=source.id,
             status=resume_from,

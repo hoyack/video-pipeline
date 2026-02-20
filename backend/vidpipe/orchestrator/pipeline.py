@@ -28,9 +28,20 @@ from vidpipe.services.llm import get_adapter
 
 logger = logging.getLogger(__name__)
 
+# Maps run_through value to the pipeline status that marks completion of that stage
+_STAGE_BOUNDARY = {
+    "storyboard": "keyframing",   # after storyboard completes, status becomes "keyframing"
+    "keyframes": "video_gen",     # after keyframes complete, status becomes "video_gen"
+    "video": "stitching",         # after video_gen completes, status becomes "stitching"
+}
+
 
 class PipelineStopped(Exception):
     """Raised when the user requests a pipeline stop."""
+
+
+class PipelineStaged(Exception):
+    """Raised when the pipeline reaches a user-requested stage boundary."""
 
 
 async def _generate_expansion_if_needed(
@@ -143,6 +154,27 @@ async def _generate_expansion_if_needed(
     logger.info(f"Project {project.id}: expansion complete, {num_new} scenes added")
 
 
+async def _check_stage_boundary(
+    session: AsyncSession, project: Project,
+) -> bool:
+    """Check if pipeline should pause at the current stage boundary.
+
+    Returns True (and sets status to 'staged') if run_through is set
+    and the pipeline has reached that boundary.
+    """
+    if project.run_through is None:
+        return False
+    boundary_status = _STAGE_BOUNDARY.get(project.run_through)
+    if boundary_status and project.status == boundary_status:
+        project.status = "staged"
+        await session.commit()
+        logger.info(
+            f"Project {project.id}: staged at {project.run_through} boundary"
+        )
+        return True
+    return False
+
+
 async def _check_stopped(session: AsyncSession, project_id: uuid.UUID) -> None:
     """Re-read project status from DB; raise PipelineStopped if stopped."""
     result = await session.execute(select(Project.status).where(Project.id == project_id))
@@ -217,8 +249,8 @@ async def run_pipeline(
     resume_step = get_resume_step(project.status, completed_steps)
     logger.info(f"Resume point: {resume_step}, completed_steps: {completed_steps}")
 
-    # Reset failed/stopped status to resume step
-    if project.status in ("failed", "stopped"):
+    # Reset failed/stopped/staged status to resume step
+    if project.status in ("failed", "stopped", "staged"):
         project.status = resume_step
         await session.commit()
 
@@ -240,6 +272,9 @@ async def run_pipeline(
             step_duration = time.monotonic() - step_start
             step_log["storyboard"] = step_duration
             logger.info(f"Storyboard step completed in {step_duration:.2f}s")
+
+            if await _check_stage_boundary(session, project):
+                raise PipelineStaged()
 
         await _check_stopped(session, project_id)
 
@@ -267,6 +302,9 @@ async def run_pipeline(
             step_log["keyframes"] = step_duration
             logger.info(f"Keyframes step completed in {step_duration:.2f}s")
 
+            if await _check_stage_boundary(session, project):
+                raise PipelineStaged()
+
         await _check_stopped(session, project_id)
 
         # Step 3: Video generation
@@ -286,6 +324,9 @@ async def run_pipeline(
             # Note: video_gen duration includes per-scene CV analysis (Phase 9)
             step_log["video_gen"] = step_duration
             logger.info(f"Video generation step completed in {step_duration:.2f}s")
+
+            if await _check_stage_boundary(session, project):
+                raise PipelineStaged()
 
         await _check_stopped(session, project_id)
 
@@ -311,6 +352,14 @@ async def run_pipeline(
         await session.commit()
 
         logger.info(f"Pipeline completed successfully in {run.total_duration_seconds:.2f}s")
+
+    except PipelineStaged:
+        logger.info(f"Pipeline staged at {project.run_through} boundary")
+        run.completed_at = datetime.utcnow()
+        run.total_duration_seconds = time.monotonic() - pipeline_start
+        run.log = step_log
+        await session.commit()
+        return
 
     except PipelineStopped:
         logger.info(f"Pipeline stopped by user at step {project.status}")

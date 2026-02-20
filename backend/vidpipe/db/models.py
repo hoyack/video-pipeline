@@ -156,6 +156,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     prompt: Mapped[str] = mapped_column(Text)
     style: Mapped[str] = mapped_column(String(50))
     aspect_ratio: Mapped[str] = mapped_column(String(10))
@@ -181,6 +182,9 @@ class Project(Base):
 
     # Phase 13: LLM Provider Abstraction
     vision_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # Selective stage execution ("Generate Through")
+    run_through: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 

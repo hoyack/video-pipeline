@@ -6,6 +6,7 @@ import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
 import { EditForkPanel } from "./EditForkPanel.tsx";
+import { ContinuePanel } from "./ContinuePanel.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import type { SceneDetail } from "../api/types.ts";
 
@@ -80,6 +81,8 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [continuing, setContinuing] = useState(false);
+  const [continueTarget, setContinueTarget] = useState<string | null | undefined>(undefined); // undefined=closed, null|string=open with run_through value
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
@@ -117,6 +120,18 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
     }
   }
 
+  async function handleContinue(runThrough: string | null) {
+    setContinuing(true);
+    try {
+      await resumeProject(projectId, { run_through: runThrough ?? "all" });
+      onViewProgress(projectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Continue failed");
+    } finally {
+      setContinuing(false);
+    }
+  }
+
   if (loading) {
     return <p className="text-center text-sm text-gray-500">Loading...</p>;
   }
@@ -129,8 +144,15 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
 
   const isTerminal = TERMINAL_STATUSES.has(detail.status);
   const canResume = detail.status === "failed" || detail.status === "stopped";
+  const canContinue = detail.status === "staged" && detail.run_through != null;
   const canFork = isTerminal;
   const isRunning = !isTerminal;
+
+  const NEXT_STAGE: Record<string, { run_through: string | null; label: string }> = {
+    storyboard: { run_through: "keyframes", label: "Continue to Keyframes" },
+    keyframes: { run_through: "video", label: "Continue to Video Gen" },
+    video: { run_through: null, label: "Continue to Completion" },
+  };
 
   if (editing && detail) {
     return (
@@ -155,7 +177,9 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
     <div className="mx-auto max-w-3xl space-y-6">
       {/* Header */}
       <div>
-        <h1 className="mb-1 text-2xl font-bold text-white">Project Detail</h1>
+        <h1 className="mb-1 text-2xl font-bold text-white">
+          {detail.title || "Untitled Project"}
+        </h1>
         <div className="flex items-center gap-1">
           <p className="text-sm text-gray-500 font-mono">{detail.project_id}</p>
           <CopyButton text={detail.project_id} />
@@ -241,6 +265,12 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
             </p>
           </div>
         )}
+        {detail.run_through && (
+          <div>
+            <span className="text-xs text-gray-500">Generate Through</span>
+            <p className="mt-1 text-sm capitalize text-cyan-300">{detail.run_through}</p>
+          </div>
+        )}
       </div>
 
       {/* Prompt */}
@@ -256,7 +286,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
 
       {/* Pipeline stepper */}
       <div className="flex justify-center py-2">
-        <PipelineStepper status={detail.status} />
+        <PipelineStepper status={detail.status} runThrough={detail.run_through} />
       </div>
 
       {/* Error */}
@@ -270,6 +300,19 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
         <div className="rounded-md border border-amber-800 bg-amber-900/50 px-3 py-2 text-sm text-amber-300">
           {error}
         </div>
+      )}
+
+      {/* Continue Panel — shown when user clicks a Continue button */}
+      {continueTarget !== undefined && canContinue && (
+        <ContinuePanel
+          detail={detail}
+          nextRunThrough={continueTarget}
+          onContinued={(pid) => {
+            setContinueTarget(undefined);
+            onViewProgress(pid);
+          }}
+          onCancel={() => setContinueTarget(undefined)}
+        />
       )}
 
       {/* Final video player */}
@@ -335,6 +378,34 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
           >
             {resuming ? "Resuming..." : "Resume Pipeline"}
           </button>
+        )}
+        {canContinue && detail.run_through && NEXT_STAGE[detail.run_through] && (
+          detail.run_through === "video" ? (
+            // Stitching needs no config — continue directly
+            <button
+              onClick={() => handleContinue(null)}
+              disabled={continuing}
+              className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 transition-colors disabled:opacity-50"
+            >
+              {continuing ? "Continuing..." : "Continue to Completion"}
+            </button>
+          ) : (
+            // storyboard/keyframes need model config — open panel
+            <>
+              <button
+                onClick={() => setContinueTarget(NEXT_STAGE[detail.run_through!].run_through)}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 transition-colors"
+              >
+                {NEXT_STAGE[detail.run_through].label}
+              </button>
+              <button
+                onClick={() => setContinueTarget(null)}
+                className="rounded-lg border border-cyan-700 px-4 py-2 text-sm font-medium text-cyan-300 hover:border-cyan-600 transition-colors"
+              >
+                Run to Completion
+              </button>
+            </>
+          )
         )}
         {canFork && (
           <button

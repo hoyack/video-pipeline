@@ -15,6 +15,7 @@ import {
   IMAGE_MODELS,
   VIDEO_MODELS,
   estimateCost,
+  estimatePartialCost,
   qualityModeCostMultiplier,
 } from "../lib/constants.ts";
 
@@ -23,6 +24,7 @@ interface GenerateFormProps {
 }
 
 export function GenerateForm({ onGenerated }: GenerateFormProps) {
+  const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [style, setStyle] = useState<string>(STYLE_OPTIONS[0]);
   const [aspectRatio, setAspectRatio] = useState<string>(ASPECT_RATIOS[0]);
@@ -34,6 +36,8 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   const [enableAudio, setEnableAudio] = useState(true);
   const [selectedManifestId, setSelectedManifestId] = useState<string | null>(null);
   const [visionModel, setVisionModel] = useState<string>("");
+  const [runThrough, setRunThrough] = useState<string | null>(null);
+  const [directSceneCount, setDirectSceneCount] = useState(3);
   const [qualityMode, setQualityMode] = useState(false);
   const [candidateCount, setCandidateCount] = useState(2);
   const [submitting, setSubmitting] = useState(false);
@@ -128,21 +132,33 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
     }
   }, [allowedDurations, clipDuration]);
 
-  const sceneCount = Math.ceil(totalDuration / clipDuration);
+  // In partial mode (storyboard/keyframes), user picks scene count directly.
+  // Video model / scene length aren't chosen yet.
+  const isPartialMode = runThrough === "storyboard" || runThrough === "keyframes";
+  const sceneCount = isPartialMode ? directSceneCount : Math.ceil(totalDuration / clipDuration);
   const audioActive = enableAudio && selectedVideoModel.supportsAudio;
+
+  // Sync directSceneCount <-> totalDuration when switching modes
+  useEffect(() => {
+    if (isPartialMode) {
+      // Entering partial mode: seed scene count from current derived value
+      setDirectSceneCount(Math.ceil(totalDuration / clipDuration));
+    }
+  }, [isPartialMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Override ComfyUI cost from user settings if configured
   const comfyuiCostOverride = modelSettings?.comfyui_cost_per_second;
+  // In partial mode, compute total_duration from scene count * default clip for cost estimation
+  const effectiveTotalDuration = isPartialMode ? directSceneCount * clipDuration : totalDuration;
+
   const effectiveCost = useMemo(() => {
-    const base = estimateCost(totalDuration, clipDuration, textModel, imageModel, videoModel, audioActive);
-    if (videoModel === "wan-2.2-ref-i2v" && comfyuiCostOverride != null && comfyuiCostOverride > 0) {
-      // wan-2.2-ref-i2v has costPerSecond=0, so base has $0 video cost.
-      // Add the user-configured ComfyUI rate on top.
-      const scenes = Math.ceil(totalDuration / clipDuration);
+    const base = estimatePartialCost(effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, runThrough);
+    if (videoModel === "wan-2.2-ref-i2v" && comfyuiCostOverride != null && comfyuiCostOverride > 0 && runThrough !== "storyboard" && runThrough !== "keyframes") {
+      const scenes = Math.ceil(effectiveTotalDuration / clipDuration);
       return base + scenes * clipDuration * comfyuiCostOverride;
     }
     return base;
-  }, [totalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, comfyuiCostOverride]);
+  }, [effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, comfyuiCostOverride, runThrough]);
   const cost = effectiveCost;
 
   function handleVideoModelChange(id: string) {
@@ -168,11 +184,12 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
 
     try {
       const res = await generateVideo({
+        title: title.trim() || undefined,
         prompt: prompt.trim(),
         style,
         aspect_ratio: aspectRatio,
         clip_duration: clipDuration,
-        total_duration: totalDuration,
+        total_duration: isPartialMode ? directSceneCount * clipDuration : totalDuration,
         text_model: textModel,
         image_model: imageModel,
         video_model: videoModel,
@@ -181,6 +198,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         quality_mode: qualityMode,
         candidate_count: qualityMode ? candidateCount : undefined,
         vision_model: visionModel || undefined,
+        run_through: runThrough,
       });
       onGenerated(res.project_id);
     } catch (err) {
@@ -199,7 +217,13 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   return (
     <form onSubmit={handleSubmit} className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="mb-1 text-2xl font-bold text-white">Generate Video</h1>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Untitled Project"
+          className="w-full bg-transparent text-2xl font-bold text-white placeholder-gray-600 border-none outline-none focus:outline-none"
+        />
         <p className="text-sm text-gray-400">
           Describe the video you want to create.
         </p>
@@ -268,50 +292,109 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         </div>
       </div>
 
-      {/* Scene Length (clip duration) */}
+      {/* Generate Through */}
       <div>
         <label className="mb-2 block text-sm font-medium text-gray-300">
-          Scene Length
+          Generate Through
         </label>
-        <div className="flex gap-2">
-          {allowedDurations.map((d) => (
+        <div className="flex flex-wrap gap-2">
+          {([
+            { value: null, label: "All" },
+            { value: "storyboard", label: "Storyboard" },
+            { value: "keyframes", label: "Keyframes" },
+            { value: "video", label: "Video" },
+          ] as const).map((opt) => (
             <button
-              key={d}
+              key={opt.label}
               type="button"
-              onClick={() => setClipDuration(d)}
+              onClick={() => setRunThrough(opt.value)}
               className={clsx(
-                "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
-                clipDuration === d
-                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                runThrough === opt.value
+                  ? "border-cyan-500 bg-cyan-500/20 text-cyan-300"
                   : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
               )}
             >
-              {d}s
+              {opt.label}
             </button>
           ))}
         </div>
+        {runThrough && (
+          <p className="mt-1 text-xs text-gray-500">
+            Pipeline will pause after {runThrough === "storyboard" ? "storyboarding" : runThrough === "keyframes" ? "keyframe generation" : "video generation"}. Continue from Project Detail.
+          </p>
+        )}
       </div>
 
-      {/* Total Duration */}
-      <div>
-        <label htmlFor="totalDuration" className="mb-2 block text-sm font-medium text-gray-300">
-          Total Duration: {totalDuration}s ({sceneCount} scenes)
-        </label>
-        <input
-          id="totalDuration"
-          type="range"
-          min={TOTAL_DURATION_MIN}
-          max={TOTAL_DURATION_MAX}
-          step={TOTAL_DURATION_STEP}
-          value={totalDuration}
-          onChange={(e) => setTotalDuration(Number(e.target.value))}
-          className="w-full accent-blue-500"
-        />
-        <div className="mt-1 flex justify-between text-xs text-gray-600">
-          <span>{TOTAL_DURATION_MIN}s</span>
-          <span>{TOTAL_DURATION_MAX}s</span>
+      {isPartialMode ? (
+        /* Scene Count — direct picker in partial mode (no video model chosen yet) */
+        <div>
+          <label htmlFor="sceneCount" className="mb-2 block text-sm font-medium text-gray-300">
+            Scenes: {directSceneCount}
+          </label>
+          <input
+            id="sceneCount"
+            type="range"
+            min={1}
+            max={50}
+            step={1}
+            value={directSceneCount}
+            onChange={(e) => setDirectSceneCount(Number(e.target.value))}
+            className="w-full accent-cyan-500"
+          />
+          <div className="mt-1 flex justify-between text-xs text-gray-600">
+            <span>1</span>
+            <span>50</span>
+          </div>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Scene Length (clip duration) */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-300">
+              Scene Length
+            </label>
+            <div className="flex gap-2">
+              {allowedDurations.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setClipDuration(d)}
+                  className={clsx(
+                    "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
+                    clipDuration === d
+                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                  )}
+                >
+                  {d}s
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Total Duration */}
+          <div>
+            <label htmlFor="totalDuration" className="mb-2 block text-sm font-medium text-gray-300">
+              Total Duration: {totalDuration}s ({sceneCount} scenes)
+            </label>
+            <input
+              id="totalDuration"
+              type="range"
+              min={TOTAL_DURATION_MIN}
+              max={TOTAL_DURATION_MAX}
+              step={TOTAL_DURATION_STEP}
+              value={totalDuration}
+              onChange={(e) => setTotalDuration(Number(e.target.value))}
+              className="w-full accent-blue-500"
+            />
+            <div className="mt-1 flex justify-between text-xs text-gray-600">
+              <span>{TOTAL_DURATION_MIN}s</span>
+              <span>{TOTAL_DURATION_MAX}s</span>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Model Selection */}
       <div className="space-y-4">
@@ -339,95 +422,101 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
           </div>
         </div>
 
-        {/* Vision Model */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">
-            Vision Model
-            <span className="ml-2 text-xs text-gray-500 font-normal">
-              For image analysis, reverse-prompting, and scoring
-            </span>
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setVisionModel("")}
-              className={clsx(
-                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                visionModel === ""
-                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-              )}
-            >
-              Same as Text
-            </button>
-            {allVisionModels.map((m) => (
+        {/* Vision Model — hidden when generating storyboard only */}
+        {runThrough !== "storyboard" && (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-300">
+              Vision Model
+              <span className="ml-2 text-xs text-gray-500 font-normal">
+                For image analysis, reverse-prompting, and scoring
+              </span>
+            </label>
+            <div className="flex flex-wrap gap-2">
               <button
-                key={m.id}
                 type="button"
-                onClick={() => setVisionModel(m.id)}
+                onClick={() => setVisionModel("")}
                 className={clsx(
                   "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                  visionModel === m.id
+                  visionModel === ""
                     ? "border-blue-500 bg-blue-500/20 text-blue-300"
                     : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
                 )}
               >
-                {m.label}
+                Same as Text
               </button>
-            ))}
+              {allVisionModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setVisionModel(m.id)}
+                  className={clsx(
+                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                    visionModel === m.id
+                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Image Model */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">
-            Image Model
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {filteredImageModels.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setImageModel(m.id)}
-                className={clsx(
-                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                  imageModel === m.id
-                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                )}
-              >
-                {m.label}
-              </button>
-            ))}
+        {/* Image Model — hidden when generating storyboard only */}
+        {runThrough !== "storyboard" && (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-300">
+              Image Model
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {filteredImageModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setImageModel(m.id)}
+                  className={clsx(
+                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                    imageModel === m.id
+                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Video Model */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">
-            Video Model
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {filteredVideoModels.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => handleVideoModelChange(m.id)}
-                className={clsx(
-                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                  videoModel === m.id
-                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                )}
-              >
-                {m.label}
-              </button>
-            ))}
+        {/* Video Model — hidden when generating storyboard or keyframes only */}
+        {runThrough !== "storyboard" && runThrough !== "keyframes" && (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-300">
+              Video Model
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {filteredVideoModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => handleVideoModelChange(m.id)}
+                  className={clsx(
+                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                    videoModel === m.id
+                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Audio Toggle — only shown for models that support audio */}
-        {selectedVideoModel.supportsAudio && (
+        {/* Audio Toggle — hidden when not reaching video gen */}
+        {runThrough !== "storyboard" && runThrough !== "keyframes" && selectedVideoModel.supportsAudio && (
           <div>
             <label className="mb-2 block text-sm font-medium text-gray-300">
               Audio
@@ -529,9 +618,14 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
 
       {/* Cost Estimate */}
       <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
-        <div>Estimated cost: ~${cost.toFixed(2)}</div>
+        <div>
+          Estimated cost: ~${cost.toFixed(2)}
+          {runThrough && <span className="ml-1 text-xs text-cyan-400">(through {runThrough})</span>}
+        </div>
         <div className="mt-1 text-xs text-gray-500">
-          {sceneCount} scenes &middot; ${videoCostPerSecond.toFixed(2)}/s video{audioActive ? " (with audio)" : ""} &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img
+          {sceneCount} scenes
+          {runThrough !== "storyboard" && <> &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img</>}
+          {runThrough !== "storyboard" && runThrough !== "keyframes" && <> &middot; ${videoCostPerSecond.toFixed(2)}/s video{audioActive ? " (with audio)" : ""}</>}
         </div>
       </div>
 
@@ -553,7 +647,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
             : "bg-gray-800 text-gray-500 cursor-not-allowed",
         )}
       >
-        {submitting ? "Starting..." : "Generate Video"}
+        {submitting ? "Starting..." : runThrough ? `Generate Through ${runThrough.charAt(0).toUpperCase() + runThrough.slice(1)}` : "Generate Video"}
       </button>
     </form>
   );

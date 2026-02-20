@@ -67,10 +67,21 @@ export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
 
       {/* Body */}
       <div className="p-3 space-y-2">
-        {/* Prompt (2-line clamp) */}
-        <p className="text-sm text-gray-200 line-clamp-2 leading-snug">
-          {project.prompt}
-        </p>
+        {/* Title + Prompt */}
+        {project.title ? (
+          <>
+            <p className="text-sm font-medium text-gray-100 line-clamp-1 leading-snug">
+              {project.title}
+            </p>
+            <p className="text-xs text-gray-400 line-clamp-1 leading-snug -mt-1">
+              {project.prompt}
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-gray-200 line-clamp-2 leading-snug">
+            {project.prompt}
+          </p>
+        )}
 
         {/* Metadata chips */}
         <div className="flex flex-wrap gap-1.5">

@@ -85,9 +85,22 @@ export function deleteProject(projectId: string): Promise<{ status: string; proj
 }
 
 /** POST /api/projects/{id}/resume — resume a failed/interrupted job */
-export function resumeProject(projectId: string): Promise<ResumeResponse> {
+export function resumeProject(
+  projectId: string,
+  body?: {
+    run_through?: string | null;
+    image_model?: string;
+    vision_model?: string;
+    video_model?: string;
+    audio_enabled?: boolean;
+    clip_duration?: number;
+  },
+): Promise<ResumeResponse> {
   return request<ResumeResponse>(`/api/projects/${projectId}/resume`, {
     method: "POST",
+    ...(body
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : {}),
   });
 }
 

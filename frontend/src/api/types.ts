@@ -24,6 +24,7 @@ export interface OllamaModelEntry {
 
 /** Request body for POST /api/generate */
 export interface GenerateRequest {
+  title?: string | null;
   prompt: string;
   style: string;
   aspect_ratio: string;
@@ -37,6 +38,7 @@ export interface GenerateRequest {
   quality_mode?: boolean;
   candidate_count?: number;
   vision_model?: string;
+  run_through?: string | null;
 }
 
 /** Response from POST /api/generate */
@@ -89,6 +91,7 @@ export interface SceneDetail {
 /** Response from GET /api/projects/{id} */
 export interface ProjectDetail {
   project_id: string;
+  title?: string | null;
   prompt: string;
   style: string;
   aspect_ratio: string;
@@ -109,11 +112,13 @@ export interface ProjectDetail {
   quality_mode?: boolean;
   candidate_count?: number;
   vision_model?: string | null;
+  run_through?: string | null;
 }
 
 /** Item in GET /api/projects list */
 export interface ProjectListItem {
   project_id: string;
+  title?: string | null;
   prompt: string;
   status: string;
   created_at: string;
@@ -124,6 +129,7 @@ export interface ProjectListItem {
   video_model?: string | null;
   audio_enabled?: boolean | null;
   vision_model?: string | null;
+  run_through?: string | null;
   style: string;
   aspect_ratio: string;
   thumbnail_url?: string | null;

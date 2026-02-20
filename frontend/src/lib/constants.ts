@@ -18,6 +18,7 @@ export const STAGE_LABELS: Record<string, string> = {
   video_gen: "Video Gen",
   stitching: "Stitch",
   complete: "Complete",
+  staged: "Staged",
 };
 
 /** Available style presets */
@@ -125,13 +126,51 @@ export function estimateCost(
   return videoCost + imageCost + textCost;
 }
 
+/** Estimate partial cost when running through a specific stage */
+export function estimatePartialCost(
+  totalDuration: number,
+  clipDuration: number,
+  textModelId: string,
+  imageModelId: string,
+  videoModelId: string,
+  enableAudio: boolean,
+  runThrough: string | null,
+): number {
+  if (runThrough === null) {
+    return estimateCost(totalDuration, clipDuration, textModelId, imageModelId, videoModelId, enableAudio);
+  }
+  const sceneCount = Math.ceil(totalDuration / clipDuration);
+  const textModel = TEXT_MODELS.find((m) => m.id === textModelId);
+  const textCost = textModel?.costPerCall ?? 0.01;
+
+  if (runThrough === "storyboard") {
+    return textCost;
+  }
+
+  const imageModel = IMAGE_MODELS.find((m) => m.id === imageModelId);
+  const imageCost = (sceneCount + 1) * (imageModel?.costPerImage ?? 0.04);
+
+  if (runThrough === "keyframes") {
+    return textCost + imageCost;
+  }
+
+  // "video" — text + image + video (no stitching cost, which is free anyway)
+  const videoModel = VIDEO_MODELS.find((m) => m.id === videoModelId);
+  const videoCostPerSecond = enableAudio && videoModel?.supportsAudio
+    ? (videoModel?.costPerSecondAudio ?? 0.40)
+    : (videoModel?.costPerSecond ?? 0.40);
+  const videoCost = sceneCount * clipDuration * videoCostPerSecond;
+
+  return textCost + imageCost + videoCost;
+}
+
 /** Estimate quality mode cost multiplier */
 export function qualityModeCostMultiplier(candidateCount: number): number {
   return candidateCount; // Linear scaling — N candidates = Nx video gen cost
 }
 
 /** Terminal statuses — pipeline is no longer running */
-export const TERMINAL_STATUSES = new Set(["complete", "failed", "stopped"]);
+export const TERMINAL_STATUSES = new Set(["complete", "failed", "stopped", "staged"]);
 
 /** Slow stages where polling can back off */
 export const SLOW_STAGES = new Set(["video_gen"]);

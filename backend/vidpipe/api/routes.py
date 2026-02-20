@@ -197,6 +197,7 @@ def _estimate_project_cost(
 
 class GenerateRequest(BaseModel):
     """Request schema for POST /api/generate."""
+    title: Optional[str] = None
     prompt: str
     style: str = "cinematic"
     aspect_ratio: str = "16:9"
@@ -212,6 +213,8 @@ class GenerateRequest(BaseModel):
     candidate_count: int = 1
     # Phase 13: LLM Provider Abstraction
     vision_model: Optional[str] = None
+    # Selective stage execution
+    run_through: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -264,6 +267,7 @@ class SceneDetail(BaseModel):
 class ProjectDetail(BaseModel):
     """Response schema for GET /api/projects/{id}."""
     project_id: str
+    title: Optional[str] = None
     prompt: str
     style: str
     aspect_ratio: str
@@ -286,11 +290,14 @@ class ProjectDetail(BaseModel):
     candidate_count: int = 1
     # Phase 13: LLM Provider Abstraction
     vision_model: Optional[str] = None
+    # Selective stage execution
+    run_through: Optional[str] = None
 
 
 class ProjectListItem(BaseModel):
     """Item in list response for GET /api/projects."""
     project_id: str
+    title: Optional[str] = None
     prompt: str
     status: str
     created_at: str
@@ -305,6 +312,8 @@ class ProjectListItem(BaseModel):
     candidate_count: int = 1
     # Phase 13: LLM Provider Abstraction
     vision_model: Optional[str] = None
+    # Selective stage execution
+    run_through: Optional[str] = None
     style: str = ""
     aspect_ratio: str = ""
     thumbnail_url: Optional[str] = None
@@ -323,6 +332,17 @@ class ResumeResponse(BaseModel):
     project_id: str
     status: str
     status_url: str
+
+
+class ContinueRequest(BaseModel):
+    """Optional body for POST /api/projects/{id}/resume to advance run_through."""
+    run_through: Optional[str] = None  # "keyframes", "video", or "all" (= run everything)
+    # Model overrides — applied to the project before resuming
+    image_model: Optional[str] = None
+    vision_model: Optional[str] = None
+    video_model: Optional[str] = None
+    audio_enabled: Optional[bool] = None
+    clip_duration: Optional[int] = None
 
 
 class ModifiedAsset(BaseModel):
@@ -602,12 +622,20 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
     if request.quality_mode and request.candidate_count < 2:
         raise HTTPException(status_code=422, detail="Quality Mode requires candidate_count >= 2")
 
+    # Validate run_through (selective stage execution)
+    if request.run_through is not None and request.run_through not in ("storyboard", "keyframes", "video"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"run_through must be 'storyboard', 'keyframes', 'video', or null; got '{request.run_through}'",
+        )
+
     # Derive scene count from total duration and clip duration
     scene_count = math.ceil(request.total_duration / request.clip_duration)
 
     async with async_session() as session:
         # Create project record
         project = Project(
+            title=request.title,
             prompt=request.prompt,
             style=request.style,
             aspect_ratio=request.aspect_ratio,
@@ -622,6 +650,7 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             seed=random.randint(0, 2**32 - 1),
             quality_mode=request.quality_mode,
             candidate_count=request.candidate_count if request.quality_mode else 1,
+            run_through=request.run_through,
             status="pending",
         )
         session.add(project)
@@ -800,6 +829,7 @@ async def get_project_detail(project_id: uuid.UUID):
 
         return ProjectDetail(
             project_id=str(project.id),
+            title=project.title,
             prompt=project.prompt,
             style=project.style,
             aspect_ratio=project.aspect_ratio,
@@ -820,6 +850,7 @@ async def get_project_detail(project_id: uuid.UUID):
             quality_mode=project.quality_mode,
             candidate_count=project.candidate_count,
             vision_model=project.vision_model,
+            run_through=project.run_through,
         )
 
 
@@ -843,7 +874,7 @@ async def list_projects(
     if page < 1:
         page = 1
 
-    VALID_STATUSES = {"pending", "storyboarding", "keyframing", "video_gen", "stitching", "complete", "failed", "stopped"}
+    VALID_STATUSES = {"pending", "storyboarding", "keyframing", "video_gen", "stitching", "complete", "failed", "stopped", "staged"}
 
     async with async_session() as session:
         filters = [Project.deleted_at.is_(None)]
@@ -887,6 +918,7 @@ async def list_projects(
             items=[
                 ProjectListItem(
                     project_id=str(p.id),
+                    title=p.title,
                     prompt=p.prompt,
                     status=p.status,
                     created_at=p.created_at.isoformat(),
@@ -897,6 +929,7 @@ async def list_projects(
                     video_model=p.video_model,
                     audio_enabled=p.audio_enabled,
                     vision_model=p.vision_model,
+                    run_through=p.run_through,
                     style=p.style,
                     aspect_ratio=p.aspect_ratio,
                     thumbnail_url=thumbnail_map.get(str(p.id)),
@@ -910,8 +943,15 @@ async def list_projects(
 
 
 @router.post("/projects/{project_id}/resume", status_code=202, response_model=ResumeResponse)
-async def resume_project(project_id: uuid.UUID, background_tasks: BackgroundTasks):
+async def resume_project(
+    project_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    body: Optional[ContinueRequest] = None,
+):
     """Resume failed or interrupted pipeline in background.
+
+    Accepts optional ContinueRequest body to advance run_through when
+    continuing from a "staged" state.
 
     Returns 409 if project is not in a resumable state (including complete).
     """
@@ -930,6 +970,46 @@ async def resume_project(project_id: uuid.UUID, background_tasks: BackgroundTask
                 status_code=409,
                 detail=f"Project cannot be resumed from status '{project.status}'"
             )
+
+        # Apply updates from ContinueRequest body
+        if body:
+            # Update run_through when continuing from staged state
+            if project.status == "staged" and body.run_through is not None:
+                new_val = None if body.run_through == "all" else body.run_through
+                if new_val is not None and new_val not in ("storyboard", "keyframes", "video"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"run_through must be 'storyboard', 'keyframes', 'video', or 'all'; got '{body.run_through}'",
+                    )
+                project.run_through = new_val
+
+            # Apply model overrides
+            if body.image_model is not None:
+                if body.image_model not in ALLOWED_IMAGE_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Invalid image_model: {body.image_model}")
+                project.image_model = body.image_model
+            if body.vision_model is not None:
+                if not (body.vision_model in ALLOWED_TEXT_MODELS or body.vision_model.startswith("ollama/")):
+                    raise HTTPException(status_code=422, detail=f"Invalid vision_model: {body.vision_model}")
+                project.vision_model = body.vision_model if body.vision_model else None
+            if body.video_model is not None:
+                if body.video_model not in ALLOWED_VIDEO_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Invalid video_model: {body.video_model}")
+                project.video_model = body.video_model
+            if body.audio_enabled is not None:
+                if body.audio_enabled and project.video_model not in AUDIO_CAPABLE_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Audio not supported for {project.video_model}")
+                project.audio_enabled = body.audio_enabled
+            if body.clip_duration is not None:
+                allowed = ALLOWED_DURATIONS.get(project.video_model or "", [5, 6, 7, 8])
+                if body.clip_duration not in allowed:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip_duration {body.clip_duration} not supported for {project.video_model}. Allowed: {allowed}",
+                    )
+                project.target_clip_duration = body.clip_duration
+
+            await session.commit()
 
         logger.info(f"Resuming project {project_id} from status {project.status}")
 

@@ -95,7 +95,9 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="mb-1 text-2xl font-bold text-white">Generation Progress</h1>
+        <h1 className="mb-1 text-2xl font-bold text-white">
+          {detail?.title || "Generation Progress"}
+        </h1>
         <p className="text-sm text-gray-400">
           Project {projectId.slice(0, 8)}...
         </p>
@@ -103,7 +105,7 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
 
       {/* Stepper */}
       <div className="flex justify-center py-4">
-        <PipelineStepper status={currentStatus} />
+        <PipelineStepper status={currentStatus} runThrough={detail?.run_through} />
       </div>
 
       {/* Error message */}
@@ -117,6 +119,13 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
       {currentStatus === "stopped" && (
         <div className="rounded-md border border-amber-800 bg-amber-900/50 px-3 py-2 text-sm text-amber-300">
           Pipeline stopped. You can resume from where it left off.
+        </div>
+      )}
+
+      {/* Staged message */}
+      {currentStatus === "staged" && (
+        <div className="rounded-md border border-cyan-800 bg-cyan-900/50 px-3 py-2 text-sm text-cyan-300">
+          Pipeline completed through the requested stage. View details to continue.
         </div>
       )}
 
@@ -209,6 +218,14 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 transition-colors disabled:opacity-50"
             >
               {resuming ? "Resuming..." : "Resume Pipeline"}
+            </button>
+          )}
+          {currentStatus === "staged" && (
+            <button
+              onClick={() => onViewDetail(projectId)}
+              className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 transition-colors"
+            >
+              View & Continue
             </button>
           )}
           <button

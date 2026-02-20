@@ -27,7 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: Multi-Candidate Quality Mode** - sampleCount configuration, composite scoring pipeline, candidate comparison UI (completed 2026-02-17)
 - [x] **Phase 12: Fork System Integration with Manifests** - Asset/manifest inheritance, incremental manifesting on fork (completed 2026-02-17)
 - [x] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring (completed 2026-02-19)
-- [ ] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback
+- [x] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback (completed 2026-02-20)
 
 ## Phase Details
 
@@ -104,7 +104,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 14
 | 11. Multi-Candidate Quality Mode | 0/3 | Complete    | 2026-02-17 |
 | 12. Fork System Integration | 0/3 | Complete    | 2026-02-17 |
 | 13. LLM Provider Abstraction | 3/3 | Complete    | 2026-02-19 |
-| 14. Storyboard Asset Binding | 0/1 | ○ Planned | — |
+| 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -293,7 +293,7 @@ Plans:
   4. Keyframe enforcement falls back to all manifest CHARACTER assets with reference images when `placed_char_tags` resolves empty
   5. Face verification retry loop fires whenever manifest has CHARACTER assets, regardless of scene manifest tag accuracy
   6. No regression for projects without manifests — original code paths unchanged
-**Plans:** 1 plan in 1 wave
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 14-01-PLAN.md — Defense-in-depth: prompt hardening, tag remapping, rewriter fallback, keyframe enforcement fallback

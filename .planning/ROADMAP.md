@@ -27,6 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: Multi-Candidate Quality Mode** - sampleCount configuration, composite scoring pipeline, candidate comparison UI (completed 2026-02-17)
 - [x] **Phase 12: Fork System Integration with Manifests** - Asset/manifest inheritance, incremental manifesting on fork (completed 2026-02-17)
 - [x] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring (completed 2026-02-19)
+- [ ] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback
 
 ## Phase Details
 
@@ -86,7 +87,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 13
+Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 14
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -103,6 +104,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 13
 | 11. Multi-Candidate Quality Mode | 0/3 | Complete    | 2026-02-17 |
 | 12. Fork System Integration | 0/3 | Complete    | 2026-02-17 |
 | 13. LLM Provider Abstraction | 3/3 | Complete    | 2026-02-19 |
+| 14. Storyboard Asset Binding | 0/1 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -279,3 +281,19 @@ Plans:
 - [x] 13-01-PLAN.md — LLM adapter package (base, VertexAI, Ollama, registry), vision schemas, DB schema, settings API
 - [x] 13-02-PLAN.md — Call-site migration (storyboard, prompt rewriter, reverse-prompt, CV analysis, candidate scoring), orchestrator wiring, route validation
 - [x] 13-03-PLAN.md — Frontend Ollama settings UI, model management, GenerateForm vision_model dropdown
+
+### Phase 14: Storyboard Manifest Asset Binding Fix
+**Goal**: Storyboard LLM uses existing manifest CHARACTER tags instead of inventing new ones, with defense-in-depth safety nets ensuring reference images always reach the image adapter and face verification is never silently skipped
+**Depends on**: Phase 7, Phase 10 (existing storyboard + prompt rewriter code)
+**Requirements**: SBIND-01, SBIND-02, SBIND-03, SBIND-04
+**Success Criteria** (what must be TRUE):
+  1. Storyboard prompt mandates using existing CHARACTER tags from the asset registry; `new_asset_declarations` restricted to non-CHARACTER types only
+  2. Post-storyboard deterministic remapping catches any LLM-invented CHARACTER tags and maps them to existing manifest CHARACTER assets
+  3. Prompt rewriter falls back to marking ALL manifest CHARACTER assets as MUST SELECT when scene manifest placements reference non-existent tags
+  4. Keyframe enforcement falls back to all manifest CHARACTER assets with reference images when `placed_char_tags` resolves empty
+  5. Face verification retry loop fires whenever manifest has CHARACTER assets, regardless of scene manifest tag accuracy
+  6. No regression for projects without manifests — original code paths unchanged
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] 14-01-PLAN.md — Defense-in-depth: prompt hardening, tag remapping, rewriter fallback, keyframe enforcement fallback

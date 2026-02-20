@@ -485,6 +485,23 @@ def _list_available_references(
     placed_assets = [a for a in with_images if a.manifest_tag in placed_tags]
     unplaced_assets = [a for a in with_images if a.manifest_tag not in placed_tags]
 
+    # Fix 3: Fallback — if no placed assets resolved but manifest has CHARACTER refs,
+    # mark ALL CHARACTER assets with reference images as MUST SELECT.
+    # This catches cases where storyboard tags were wrong (e.g., CHAR_04 instead of CHAR_01).
+    if not placed_assets:
+        fallback_chars = [
+            a for a in with_images
+            if a.asset_type == "CHARACTER" and a.reference_image_url
+        ]
+        if fallback_chars:
+            placed_assets = fallback_chars
+            unplaced_assets = [a for a in with_images if a not in placed_assets]
+            logger.warning(
+                "No placed assets resolved from scene manifest tags %s; "
+                "falling back to all %d CHARACTER assets as MUST SELECT",
+                placed_tags, len(placed_assets),
+            )
+
     for asset in placed_assets:
         face_note = " [face crop]" if asset.is_face_crop else ""
         quality_str = f"{asset.quality_score:.1f}" if asset.quality_score is not None else "N/A"

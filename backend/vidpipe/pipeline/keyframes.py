@@ -546,6 +546,23 @@ async def generate_keyframes(
                         and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
                         and asset_map[p["asset_tag"]].reference_image_url
                     }
+
+                    # Fix 4: Fallback — if scene has placements but none resolved
+                    # to manifest characters, use ALL manifest CHARACTER assets
+                    # with reference images. This guarantees reference images reach
+                    # the image adapter even when storyboard tags were wrong.
+                    if not placed_char_tags and project.manifest_id:
+                        placed_char_tags = {
+                            a.manifest_tag
+                            for a in all_assets
+                            if a.asset_type == "CHARACTER" and a.reference_image_url
+                        }
+                        if placed_char_tags:
+                            logger.warning(
+                                f"Scene {scene.scene_index}: no placed chars resolved "
+                                f"from scene manifest, falling back to all manifest "
+                                f"CHARACTER assets: {placed_char_tags}"
+                            )
                     current_tags = list(result.selected_reference_tags or [])
                     missing_chars = placed_char_tags - set(current_tags)
                     if missing_chars:

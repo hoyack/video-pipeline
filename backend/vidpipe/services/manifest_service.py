@@ -793,6 +793,10 @@ def format_asset_registry(assets: list[Asset]) -> str:
         lines.append("")  # Blank line between assets
 
     lines.append("━" * 40)
-    lines.append("Reference assets by [TAG]. You may declare NEW assets not in the registry.")
+    lines.append(
+        "Reference assets by [TAG]. You MUST use existing CHARACTER tags — do NOT "
+        "create new CHARACTER tags for people already represented in the registry. "
+        "You may declare new ENVIRONMENT or PROP assets not in the registry."
+    )
 
     return "\n".join(lines)

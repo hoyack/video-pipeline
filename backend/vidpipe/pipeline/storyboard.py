@@ -27,6 +27,108 @@ from vidpipe.services.manifest_service import load_manifest_assets, format_asset
 logger = logging.getLogger(__name__)
 
 
+def _remap_unrecognized_tags(
+    scene_manifest_dict: dict,
+    asset_tags_set: set[str],
+    manifest_characters: list[str],
+) -> dict:
+    """Remap unrecognized CHARACTER tags to existing manifest assets.
+
+    Deterministic backstop that catches LLM mistakes before persisting
+    scene manifests. Does not require an LLM call.
+
+    Strategy:
+    1. Collect all placement tags not in asset_tags_set
+    2. For each unrecognized tag that looks like a CHARACTER (starts with
+       CHAR_ or is declared as CHARACTER in new_asset_declarations),
+       attempt to map to an existing manifest character
+    3. Mapping order: first unrecognized CHAR -> first manifest CHAR, etc.
+    4. Replace tags in-place in the placements list
+    5. Remove remapped entries from new_asset_declarations
+
+    Args:
+        scene_manifest_dict: Mutable dict of scene_manifest (placements, new_asset_declarations, etc.)
+        asset_tags_set: Set of valid manifest tags (e.g., {"CHAR_01", "CHAR_02", "ENV_01"})
+        manifest_characters: Ordered list of CHARACTER tags from the manifest
+            (e.g., ["CHAR_01", "CHAR_02", "CHAR_03"])
+
+    Returns:
+        The mutated scene_manifest_dict (also mutated in-place)
+    """
+    if not manifest_characters:
+        return scene_manifest_dict
+
+    placements = scene_manifest_dict.get("placements", [])
+    new_declarations = scene_manifest_dict.get("new_asset_declarations") or []
+
+    # Build set of CHARACTER tags declared in new_asset_declarations
+    declared_char_tags = set()
+    for decl in new_declarations:
+        decl_type = (decl.get("type") or decl.get("asset_type") or "").upper()
+        decl_tag = decl.get("tag") or decl.get("asset_tag") or ""
+        if decl_type == "CHARACTER" or decl_tag.startswith("CHAR_"):
+            declared_char_tags.add(decl_tag)
+
+    # Identify unrecognized CHARACTER tags in placements
+    unrecognized_char_tags = []
+    for placement in placements:
+        tag = placement.get("asset_tag", "")
+        if tag not in asset_tags_set:
+            # Consider it a CHARACTER tag if it starts with CHAR_ or is in declared chars
+            if tag.startswith("CHAR_") or tag in declared_char_tags:
+                if tag not in unrecognized_char_tags:
+                    unrecognized_char_tags.append(tag)
+
+    if not unrecognized_char_tags:
+        return scene_manifest_dict
+
+    # Build the remap: match by order (CHAR_04 -> CHAR_01, CHAR_05 -> CHAR_02, etc.)
+    remap: dict[str, str] = {}
+    for i, bad_tag in enumerate(unrecognized_char_tags):
+        if i < len(manifest_characters):
+            remap[bad_tag] = manifest_characters[i]
+
+    if not remap:
+        return scene_manifest_dict
+
+    # Apply remap to placements
+    remapped_count = 0
+    for placement in placements:
+        tag = placement.get("asset_tag", "")
+        if tag in remap:
+            old_tag = tag
+            placement["asset_tag"] = remap[tag]
+            remapped_count += 1
+            logger.info(
+                "Tag remap: %s -> %s in placement (role=%s)",
+                old_tag, remap[old_tag], placement.get("role", "unknown"),
+            )
+
+    # Remove remapped CHARACTER entries from new_asset_declarations
+    if new_declarations:
+        surviving = []
+        for decl in new_declarations:
+            decl_tag = decl.get("tag") or decl.get("asset_tag") or ""
+            if decl_tag not in remap:
+                surviving.append(decl)
+            else:
+                logger.info(
+                    "Tag remap: removed new_asset_declaration for %s (remapped to %s)",
+                    decl_tag, remap[decl_tag],
+                )
+        scene_manifest_dict["new_asset_declarations"] = surviving
+
+    # Also remap any audio dialogue speaker_tags (if audio_manifest references CHAR tags)
+    # This is done separately in the caller if needed
+
+    logger.info(
+        "Tag remap summary: %d placement(s) remapped, mapping=%s",
+        remapped_count, remap,
+    )
+
+    return scene_manifest_dict
+
+
 # System prompt template for Gemini storyboard generation.
 # {style} and {aspect_ratio} are filled at runtime.
 STORYBOARD_SYSTEM_PROMPT = """You are a storyboard director specializing in short-form video content.
@@ -100,13 +202,19 @@ AVAILABLE ASSETS (from Asset Registry):
 
 SCENE MANIFEST INSTRUCTIONS:
 When creating scenes, generate a scene_manifest for each scene:
-- Reference registered assets by their [TAG] (e.g., [CHAR_01], [ENV_02])
+- You MUST use registered asset tags from the Available Assets list for ALL characters
+  and environments that match existing assets. Do NOT create new CHARACTER tags when
+  a matching character already exists in the registry.
+- Reference assets by their exact [TAG] (e.g., [CHAR_01], [ENV_02])
 - Use the asset's reverse_prompt for visual detail — it's already optimized for generation
 - Assign roles: subject, background, prop, interaction_target, environment
 - Specify spatial positions and actions for each placed asset
 - Include composition metadata: shot_type, camera_movement, focal_point
 - Add continuity_notes describing visual continuity with previous scenes
-- You MAY declare new_asset_declarations for assets NOT in the registry — describe them textually with name, type, and description
+- new_asset_declarations: ONLY for genuinely new assets that have NO match in the
+  registry (e.g., background extras, props, environments not yet registered).
+  NEVER declare a new CHARACTER when the registry already has CHARACTER assets
+  that could represent that person.
 
 AUDIO MANIFEST INSTRUCTIONS:
 For each scene, generate an audio_manifest with:
@@ -282,40 +390,70 @@ async def generate_storyboard(
 
     # Persist scene and audio manifests if manifest-aware mode
     if use_manifests:
+        # Pre-compute ordered list of manifest CHARACTER tags for remapping
+        manifest_characters = sorted(
+            [tag for tag in asset_tags_set if tag.startswith("CHAR_")]
+        )
+
         for scene_data in storyboard.scenes:
-            # Post-validate asset tags
-            for placement in scene_data.scene_manifest.placements:
-                if placement.asset_tag not in asset_tags_set:
+            # Convert scene manifest to mutable dict for potential remapping
+            manifest_dict = scene_data.scene_manifest.model_dump()
+
+            # Fix 2: Deterministic remap of unrecognized CHARACTER tags
+            # before persisting — catches LLM mistakes without another LLM call
+            _remap_unrecognized_tags(manifest_dict, asset_tags_set, manifest_characters)
+
+            # Also remap audio dialogue speaker_tags that reference bad CHAR tags
+            audio = scene_data.audio_manifest
+            audio_dialogue = [d.model_dump() for d in audio.dialogue_lines]
+            for dialogue_entry in audio_dialogue:
+                speaker = dialogue_entry.get("speaker_tag", "")
+                if speaker.startswith("CHAR_") and speaker not in asset_tags_set:
+                    # Find what this tag was remapped to in the scene manifest
+                    for placement in manifest_dict.get("placements", []):
+                        if placement.get("asset_tag", "").startswith("CHAR_"):
+                            # Use the first valid CHARACTER tag as fallback
+                            if placement["asset_tag"] in asset_tags_set:
+                                logger.info(
+                                    "Audio tag remap: speaker_tag %s -> %s",
+                                    speaker, placement["asset_tag"],
+                                )
+                                dialogue_entry["speaker_tag"] = placement["asset_tag"]
+                                break
+
+            # Post-validate: log any remaining unrecognized tags (non-CHAR, or unmapped)
+            for placement_d in manifest_dict.get("placements", []):
+                tag = placement_d.get("asset_tag", "")
+                if tag not in asset_tags_set:
                     logger.warning(
                         "Project %s scene %d: unrecognized asset tag '%s' "
                         "(not in registry, may be declared as new asset)",
-                        project.id, scene_data.scene_index, placement.asset_tag
+                        project.id, scene_data.scene_index, tag
                     )
 
-            # Persist scene manifest
+            # Persist scene manifest (using remapped dict)
             scene_manifest = SceneManifestModel(
                 project_id=project.id,
                 scene_index=scene_data.scene_index,
-                manifest_json=scene_data.scene_manifest.model_dump(),
+                manifest_json=manifest_dict,
                 composition_shot_type=scene_data.scene_manifest.composition.shot_type,
                 composition_camera_movement=scene_data.scene_manifest.composition.camera_movement,
-                asset_tags=[p.asset_tag for p in scene_data.scene_manifest.placements],
-                new_asset_count=len(scene_data.scene_manifest.new_asset_declarations or []),
+                asset_tags=[p.get("asset_tag", "") for p in manifest_dict.get("placements", [])],
+                new_asset_count=len(manifest_dict.get("new_asset_declarations") or []),
             )
             session.add(scene_manifest)
 
-            # Persist audio manifest
-            audio = scene_data.audio_manifest
+            # Persist audio manifest (with remapped speaker_tags)
             audio_manifest = SceneAudioManifestModel(
                 project_id=project.id,
                 scene_index=scene_data.scene_index,
-                dialogue_json=[d.model_dump() for d in audio.dialogue_lines],
+                dialogue_json=audio_dialogue,
                 sfx_json=[s.model_dump() for s in audio.sfx],
                 ambient_json=audio.ambient.model_dump() if audio.ambient else None,
                 music_json=audio.music.model_dump() if audio.music else None,
                 audio_continuity_json=audio.audio_continuity.model_dump() if audio.audio_continuity else None,
-                speaker_tags=[d.speaker_tag for d in audio.dialogue_lines],
-                has_dialogue=len(audio.dialogue_lines) > 0,
+                speaker_tags=[d.get("speaker_tag", "") for d in audio_dialogue],
+                has_dialogue=len(audio_dialogue) > 0,
                 has_music=audio.music is not None,
             )
             session.add(audio_manifest)

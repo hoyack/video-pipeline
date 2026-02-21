@@ -272,6 +272,7 @@ class SceneDetail(BaseModel):
     rewritten_keyframe_prompt: Optional[str] = None
     rewritten_video_prompt: Optional[str] = None
     is_empty_slot: bool = False
+    generation_status: Optional[str] = None
 
 
 class ProjectDetail(BaseModel):
@@ -604,6 +605,52 @@ class CandidateResponse(BaseModel):
     created_at: str
 
 
+# ---------------------------------------------------------------------------
+# Phase 15: Video Generation Editor Schemas
+# ---------------------------------------------------------------------------
+
+class CreateProjectRequest(BaseModel):
+    """Request schema for POST /api/projects (draft project creation)."""
+    prompt: str = ""
+    title: str = ""
+    style: str = "cinematic"
+    aspect_ratio: str = "16:9"
+    clip_duration: int = 6
+    scene_count: int = 3
+    text_model: str = "gemini-2.5-flash"
+    image_model: str = "gemini-2.5-flash-image"
+    video_model: str = "veo-3.1-fast-generate-001"
+    enable_audio: bool = True
+    manifest_id: Optional[str] = None
+    quality_mode: bool = False
+    candidate_count: int = 1
+    vision_model: Optional[str] = None
+
+
+class CreateProjectResponse(BaseModel):
+    """Response schema for POST /api/projects."""
+    project_id: str
+    status: str
+    scene_count: int
+
+
+class StartGenerationRequest(BaseModel):
+    """Request schema for POST /api/projects/{id}/generate."""
+    run_through: Optional[str] = None  # "storyboard"|"keyframes"|"video"|None (all)
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    vision_model: Optional[str] = None
+    clip_duration: Optional[int] = None
+    enable_audio: Optional[bool] = None
+
+
+class StartGenerationResponse(BaseModel):
+    """Response schema for POST /api/projects/{id}/generate."""
+    project_id: str
+    status: str
+
+
 # ============================================================================
 # Background Task Wrapper
 # ============================================================================
@@ -748,6 +795,250 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 15: Video Generation Editor Endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/projects", status_code=201, response_model=CreateProjectResponse)
+async def create_draft_project(request: CreateProjectRequest):
+    """Create a draft project with empty Scene rows.
+
+    Does NOT start the pipeline. The project remains in "draft" status until
+    POST /api/projects/{id}/generate is called.
+    """
+    # Validate aspect ratio
+    if request.aspect_ratio not in ("16:9", "9:16"):
+        raise HTTPException(status_code=422, detail=f"aspect_ratio must be 16:9 or 9:16, got {request.aspect_ratio}")
+
+    # Validate clip duration per video model
+    allowed = ALLOWED_DURATIONS.get(request.video_model, [5, 6, 7, 8])
+    if request.clip_duration not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=f"clip_duration {request.clip_duration} not supported for {request.video_model}. Allowed: {allowed}",
+        )
+
+    # Validate model IDs
+    if not (request.text_model in ALLOWED_TEXT_MODELS or request.text_model.startswith("ollama/")):
+        raise HTTPException(status_code=422, detail=f"Invalid text_model: {request.text_model}")
+    if request.image_model not in ALLOWED_IMAGE_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid image_model: {request.image_model}")
+    if request.video_model not in ALLOWED_VIDEO_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid video_model: {request.video_model}")
+    if request.vision_model is not None and not (
+        request.vision_model in ALLOWED_TEXT_MODELS or request.vision_model.startswith("ollama/")
+    ):
+        raise HTTPException(status_code=422, detail=f"Invalid vision_model: {request.vision_model}")
+
+    # Validate audio
+    if request.enable_audio and request.video_model not in AUDIO_CAPABLE_MODELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Audio generation not supported for {request.video_model}",
+        )
+
+    # Validate quality mode
+    if request.candidate_count < 1 or request.candidate_count > 4:
+        raise HTTPException(status_code=422, detail="candidate_count must be 1-4")
+    if request.quality_mode and request.candidate_count < 2:
+        raise HTTPException(status_code=422, detail="Quality Mode requires candidate_count >= 2")
+
+    # Validate scene_count
+    if request.scene_count < 1 or request.scene_count > 20:
+        raise HTTPException(status_code=422, detail="scene_count must be 1-20")
+
+    async with async_session() as session:
+        project = Project(
+            title=request.title or None,
+            prompt=request.prompt,
+            style=request.style,
+            aspect_ratio=request.aspect_ratio,
+            target_clip_duration=request.clip_duration,
+            target_scene_count=request.scene_count,
+            total_duration=request.scene_count * request.clip_duration,
+            text_model=request.text_model,
+            image_model=request.image_model,
+            video_model=request.video_model,
+            audio_enabled=request.enable_audio,
+            vision_model=request.vision_model,
+            seed=random.randint(0, 2**32 - 1),
+            quality_mode=request.quality_mode,
+            candidate_count=request.candidate_count if request.quality_mode else 1,
+            status="draft",
+        )
+        session.add(project)
+        await session.flush()
+
+        # Handle manifest_id if provided (reuse same snapshot logic as POST /api/generate)
+        if request.manifest_id:
+            manifest_uuid = uuid.UUID(request.manifest_id)
+            manifest = await manifest_service.get_manifest(session, manifest_uuid)
+            if not manifest:
+                raise HTTPException(status_code=404, detail=f"Manifest {request.manifest_id} not found")
+            project.manifest_id = manifest_uuid
+            project.manifest_version = manifest.version
+            await manifest_service.create_snapshot(session, manifest_uuid, project.id)
+            await manifest_service.increment_usage(session, manifest_uuid)
+            logger.info(f"Draft project {project.id} using manifest {request.manifest_id}, snapshot created")
+
+        # Create empty Scene rows
+        for i in range(request.scene_count):
+            scene = Scene(
+                project_id=project.id,
+                scene_index=i,
+                scene_description="",
+                start_frame_prompt="",
+                end_frame_prompt="",
+                video_motion_prompt="",
+                transition_notes="",
+                status="pending",
+            )
+            session.add(scene)
+
+        await session.commit()
+        await session.refresh(project)
+
+        project_id = project.id
+        logger.info(f"Created draft project {project_id} with {request.scene_count} empty scenes")
+
+    return CreateProjectResponse(
+        project_id=str(project_id),
+        status="draft",
+        scene_count=request.scene_count,
+    )
+
+
+@router.post("/projects/{project_id}/generate", status_code=202, response_model=StartGenerationResponse)
+async def start_generation(
+    project_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    body: Optional[StartGenerationRequest] = None,
+):
+    """Start or resume pipeline generation for a project.
+
+    Transitions draft/stopped/staged/failed/complete projects into pipeline
+    execution with gap-filling semantics (empty scenes get generated, filled
+    scenes are preserved).
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Only allow generation from specific states
+        allowed_states = ("draft", "stopped", "staged", "failed", "complete")
+        if project.status not in allowed_states:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot start generation from status '{project.status}'. Allowed: {', '.join(allowed_states)}",
+            )
+
+        # Apply optional overrides from request body
+        if body:
+            if body.run_through is not None:
+                new_val = None if body.run_through in ("all", "") else body.run_through
+                if new_val is not None and new_val not in ("storyboard", "keyframes", "video"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"run_through must be 'storyboard', 'keyframes', 'video', or null; got '{body.run_through}'",
+                    )
+                project.run_through = new_val
+            else:
+                # Default: clear run_through to run all stages
+                project.run_through = None
+
+            if body.text_model is not None:
+                if not (body.text_model in ALLOWED_TEXT_MODELS or body.text_model.startswith("ollama/")):
+                    raise HTTPException(status_code=422, detail=f"Invalid text_model: {body.text_model}")
+                project.text_model = body.text_model
+            if body.image_model is not None:
+                if body.image_model not in ALLOWED_IMAGE_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Invalid image_model: {body.image_model}")
+                project.image_model = body.image_model
+            if body.video_model is not None:
+                if body.video_model not in ALLOWED_VIDEO_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Invalid video_model: {body.video_model}")
+                project.video_model = body.video_model
+            if body.vision_model is not None:
+                if not (body.vision_model in ALLOWED_TEXT_MODELS or body.vision_model.startswith("ollama/")):
+                    raise HTTPException(status_code=422, detail=f"Invalid vision_model: {body.vision_model}")
+                project.vision_model = body.vision_model if body.vision_model else None
+            if body.clip_duration is not None:
+                dur_allowed = ALLOWED_DURATIONS.get(project.video_model or "", [5, 6, 7, 8])
+                if body.clip_duration not in dur_allowed:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip_duration {body.clip_duration} not supported for {project.video_model}. Allowed: {dur_allowed}",
+                    )
+                project.target_clip_duration = body.clip_duration
+            if body.enable_audio is not None:
+                if body.enable_audio and project.video_model not in AUDIO_CAPABLE_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Audio not supported for {project.video_model}")
+                project.audio_enabled = body.enable_audio
+
+        # Transition status
+        if project.status == "draft":
+            project.status = "pending"
+        # For stopped/staged/failed/complete: follow existing resume pattern
+        # (pipeline's run_pipeline checks get_resume_step to find correct re-entry point)
+
+        await session.commit()
+
+        logger.info(f"Starting generation for project {project_id} (was {project.status})")
+
+    background_tasks.add_task(run_pipeline_background, project_id)
+
+    return StartGenerationResponse(
+        project_id=str(project_id),
+        status="pending",
+    )
+
+
+@router.put("/projects/{project_id}/final-video")
+async def upload_final_video(project_id: uuid.UUID, file: UploadFile = File(...)):
+    """Upload a final video file for a project.
+
+    Accepts a multipart video upload and saves it as the project's output file.
+    """
+    # Validate content type
+    if not file.content_type or not file.content_type.startswith("video/"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Expected video/* content type, got {file.content_type}",
+        )
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Save file using same path convention as stitcher: tmp/{project_id}/output/final.mp4
+        file_mgr = FileManager()
+        output_path = file_mgr.get_output_path(project.id, "final.mp4")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(output_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        project.output_path = str(output_path)
+        await session.commit()
+
+        logger.info(f"Uploaded final video for project {project_id}: {output_path}")
+
+        return {
+            "project_id": str(project_id),
+            "output_path": str(output_path),
+            "status": project.status,
+        }
+
+
 @router.get("/projects/{project_id}/status", response_model=StatusResponse)
 async def get_project_status(project_id: uuid.UUID):
     """Get lightweight project status for polling.
@@ -833,6 +1124,7 @@ async def get_project_detail(project_id: uuid.UUID):
                 start_keyframe_url=f"/api/keyframes/{start_kf.id}" if start_kf else None,
                 end_keyframe_url=f"/api/keyframes/{end_kf.id}" if end_kf else None,
                 clip_url=f"/api/clips/{clip.id}" if clip and clip.status == "complete" and clip.local_path else None,
+                generation_status=scene.generation_status,
             ))
 
         # Load selected reference tags for all scenes (Phase 8)
@@ -938,7 +1230,7 @@ async def get_project_detail(project_id: uuid.UUID):
 @router.get("/projects", response_model=PaginatedProjects)
 async def list_projects(
     page: int = 1,
-    per_page: int = 10,
+    per_page: int = 12,
     view: Optional[str] = None,
     status: Optional[str] = None,
 ):
@@ -946,16 +1238,16 @@ async def list_projects(
 
     Query params:
       - page: 1-based page number (default 1)
-      - per_page: items per page, must be 10, 50, or 100 (default 10)
+      - per_page: items per page, must be 12, 24, 48, or 96 (default 12)
       - view: "cards" to include thumbnail_url (avoids extra query for list view)
       - status: filter by project status (e.g. "complete", "failed", "stopped")
     """
-    if per_page not in (10, 50, 100):
-        per_page = 10
+    if per_page not in (12, 24, 48, 96):
+        per_page = 12
     if page < 1:
         page = 1
 
-    VALID_STATUSES = {"pending", "storyboarding", "keyframing", "video_gen", "stitching", "complete", "failed", "stopped", "staged"}
+    VALID_STATUSES = {"draft", "pending", "storyboarding", "keyframing", "video_gen", "stitching", "complete", "failed", "stopped", "staged"}
 
     async with async_session() as session:
         filters = [Project.deleted_at.is_(None)]

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Text, JSON, Integer, Float, Boolean, ForeignKey, Index, func
+from sqlalchemy import String, Text, JSON, Integer, Float, Boolean, ForeignKey, Index, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -188,6 +188,9 @@ class Project(Base):
 
     deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
+    # PipeSVN: version control
+    head_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -299,6 +302,7 @@ class VideoClip(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    prompt_used: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     veo_submission_count: Mapped[int] = mapped_column(Integer, default=0)
     safety_regen_count: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -418,3 +422,24 @@ class UserSettings(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
+
+
+class ProjectCheckpoint(Base):
+    """Immutable snapshot of project state for version control.
+
+    Spec reference: PipeSVN
+    """
+    __tablename__ = "project_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("project_id", "sha", name="uq_checkpoint_project_sha"),
+        Index("idx_checkpoint_project_created", "project_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    sha: Mapped[str] = mapped_column(String(40))
+    parent_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    snapshot_data: Mapped[dict] = mapped_column(JSON)
+    message: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

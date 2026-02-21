@@ -4,6 +4,7 @@ import type { SceneDetail, CandidateScore } from "../api/types.ts";
 import { listCandidates, selectCandidate } from "../api/client.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { ImageLightbox } from "./ImageLightbox.tsx";
+import { PromptChainViewer } from "./PromptChainViewer.tsx";
 
 function Dot({ filled, color }: { filled: boolean; color: string }) {
   return (
@@ -228,6 +229,27 @@ export function SceneCard({
           )}
           {scene.transition_notes && (
             <PromptSection label="Transition" text={scene.transition_notes} copyable />
+          )}
+          {/* Prompt chain viewers */}
+          {(scene.rewritten_keyframe_prompt || scene.start_keyframe_prompt_used) && (
+            <div className="mt-2 space-y-1" onClick={(e) => e.stopPropagation()}>
+              <PromptChainViewer
+                label="Keyframe"
+                basePrompt={scene.start_frame_prompt}
+                rewrittenPrompt={scene.rewritten_keyframe_prompt}
+                sentPrompt={scene.start_keyframe_prompt_used}
+              />
+            </div>
+          )}
+          {(scene.rewritten_video_prompt || scene.clip_prompt_used) && (
+            <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+              <PromptChainViewer
+                label="Video"
+                basePrompt={scene.video_motion_prompt}
+                rewrittenPrompt={scene.rewritten_video_prompt}
+                sentPrompt={scene.clip_prompt_used}
+              />
+            </div>
           )}
           {/* Quality Mode — Candidate Comparison (Phase 11) */}
           {candidates.length > 1 && (

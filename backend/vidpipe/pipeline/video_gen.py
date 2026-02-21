@@ -981,6 +981,7 @@ async def _generate_video_comfyui(
             clip.status = "polling"
             clip.poll_count = 0
             clip.error_message = None
+        clip.prompt_used = video_prompt
         await session.commit()
 
     # --- Poll loop (adapter normalizes status to "completed"/"failed"/"running") ---
@@ -1472,6 +1473,7 @@ async def _generate_video_for_scene(
                 clip.poll_count = 0
                 clip.error_message = None
                 clip.veo_submission_count = (clip.veo_submission_count or 0) + 1
+            clip.prompt_used = video_prompt
             await session.commit()
 
             # Phase 11: Choose poll function based on mode

@@ -86,6 +86,16 @@ export interface SceneDetail {
   end_keyframe_url?: string | null;
   clip_url?: string | null;
   selected_references?: SceneReference[];
+  // PipeSVN staleness
+  start_keyframe_staleness?: string | null;
+  end_keyframe_staleness?: string | null;
+  clip_staleness?: string | null;
+  start_keyframe_prompt_used?: string | null;
+  end_keyframe_prompt_used?: string | null;
+  clip_prompt_used?: string | null;
+  rewritten_keyframe_prompt?: string | null;
+  rewritten_video_prompt?: string | null;
+  is_empty_slot?: boolean;
 }
 
 /** Response from GET /api/projects/{id} */
@@ -113,6 +123,82 @@ export interface ProjectDetail {
   candidate_count?: number;
   vision_model?: string | null;
   run_through?: string | null;
+  // PipeSVN
+  head_sha?: string | null;
+}
+
+/** Per-scene edit payload for in-place editing */
+export interface SceneEditPayload {
+  scene_description?: string;
+  start_frame_prompt?: string;
+  end_frame_prompt?: string;
+  video_motion_prompt?: string;
+  transition_notes?: string;
+}
+
+/** Request body for PATCH /api/projects/{id}/edit */
+export interface EditProjectRequest {
+  prompt?: string;
+  title?: string;
+  style?: string;
+  aspect_ratio?: string;
+  clip_duration?: number;
+  target_scene_count?: number;
+  text_model?: string;
+  image_model?: string;
+  video_model?: string;
+  vision_model?: string;
+  audio_enabled?: boolean;
+  scene_edits?: Record<number, SceneEditPayload>;
+  removed_scenes?: number[];
+  commit_message?: string;
+  expected_sha?: string;
+}
+
+/** Response from PATCH /api/projects/{id}/edit */
+export interface EditProjectResponse {
+  project_id: string;
+  head_sha: string;
+  message: string;
+  changes_count: number;
+}
+
+/** Checkpoint list item from GET /api/projects/{id}/checkpoints */
+export interface CheckpointListItem {
+  sha: string;
+  parent_sha: string | null;
+  message: string;
+  changes_count: number;
+  created_at: string;
+}
+
+/** Checkpoint diff from GET /api/projects/{id}/checkpoints/{sha}/diff */
+export interface CheckpointDiff {
+  sha: string;
+  message: string;
+  changes: Array<{
+    type: string;
+    field?: string;
+    scene_index?: number;
+    old?: string | null;
+    new?: string | null;
+  }>;
+}
+
+/** Request body for POST /api/projects/{id}/scenes/{idx}/regenerate */
+export interface RegenerateSceneRequest {
+  targets: string[];
+  prompt_overrides?: Record<string, string>;
+  skip_checkpoint?: boolean;
+  video_model?: string;
+  image_model?: string;
+  scene_edits?: Record<string, string>;
+}
+
+/** Request body for POST /api/projects/{id}/regenerate */
+export interface RegenerateProjectRequest {
+  scope: "stale" | "all" | "stitch_only";
+  scene_indices?: number[];
 }
 
 /** Item in GET /api/projects list */
@@ -376,6 +462,56 @@ export interface EnabledModelsResponse {
   default_video_model: string | null;
   comfyui_cost_per_second: number | null;
   ollama_models: OllamaModelEntry[] | null;
+}
+
+/** Request body for POST /api/projects/{id}/scenes/{idx}/regenerate-text */
+export interface RegenerateTextRequest {
+  field: string;
+  extra_context?: string;
+  text_model?: string;
+  scene_edits?: Record<string, string>;
+}
+
+/** Response from POST /api/projects/{id}/scenes/{idx}/regenerate-text */
+export interface RegenerateTextResponse {
+  field: string;
+  text: string;
+}
+
+/** Request body for POST /api/projects/{id}/generate-scene-fields */
+export interface GenerateSceneFieldsRequest {
+  scene_index: number;
+  all_scene_edits?: Record<number, Record<string, string>>;
+  text_model?: string;
+}
+
+/** Response from POST /api/projects/{id}/generate-scene-fields */
+export interface GenerateSceneFieldsResponse {
+  scene_description: string;
+  start_frame_prompt: string;
+  end_frame_prompt: string;
+  video_motion_prompt: string;
+  transition_notes: string;
+}
+
+/** Request body for POST /api/projects/{id}/generate-new-scene */
+export interface GenerateNewSceneRequest {
+  scene_index: number;
+  all_scene_edits?: Record<number, Record<string, string>>;
+  text_model?: string;
+  image_model?: string;
+  video_model?: string;
+}
+
+/** Response from POST /api/projects/{id}/generate-new-scene */
+export interface GenerateNewSceneResponse {
+  scene_index: number;
+  scene_description: string;
+  start_frame_prompt: string;
+  end_frame_prompt: string;
+  video_motion_prompt: string;
+  transition_notes: string;
+  head_sha?: string | null;
 }
 
 /** Processing progress response */

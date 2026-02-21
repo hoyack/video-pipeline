@@ -6,8 +6,10 @@ import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
 import { EditForkPanel } from "./EditForkPanel.tsx";
+import { EditModeOverlay } from "./EditModeOverlay.tsx";
 import { ContinuePanel } from "./ContinuePanel.tsx";
 import { CopyButton } from "./CopyButton.tsx";
+import { CheckpointLog } from "./CheckpointLog.tsx";
 import type { SceneDetail } from "../api/types.ts";
 
 function CopyAllScenesButton({ scenes }: { scenes: SceneDetail[] }) {
@@ -84,6 +86,8 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
   const [continuing, setContinuing] = useState(false);
   const [continueTarget, setContinueTarget] = useState<string | null | undefined>(undefined); // undefined=closed, null|string=open with run_through value
   const [editing, setEditing] = useState(false);
+  const [forking, setForking] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -160,13 +164,37 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
   if (editing && detail) {
     return (
       <div className="mx-auto max-w-3xl space-y-6">
+        <EditModeOverlay
+          detail={detail}
+          onCommitted={() => {
+            setEditing(false);
+            // Refresh detail after commit
+            getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+          }}
+          onCancel={() => {
+            setEditing(false);
+            // Re-fetch in case regens were reverted during edit
+            getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+          }}
+          onRefresh={() => {
+            // Refresh detail data without exiting edit mode
+            getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (forking && detail) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-6">
         <EditForkPanel
           detail={detail}
           onForked={(newId) => {
-            setEditing(false);
+            setForking(false);
             if (onForked) onForked(newId);
           }}
-          onCancel={() => setEditing(false)}
+          onCancel={() => setForking(false)}
         />
       </div>
     );
@@ -374,10 +402,23 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
           <h2 className="mb-3 text-sm font-medium text-gray-400">Final Video</h2>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video
-            src={getDownloadUrl(projectId)}
+            src={`${getDownloadUrl(projectId)}?v=${detail.head_sha ?? ""}`}
             className="w-full rounded-lg border border-gray-800"
             controls
             preload="metadata"
+          />
+        </div>
+      )}
+
+      {/* Checkpoint History */}
+      {showHistory && detail.head_sha && (
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
+          <CheckpointLog
+            projectId={detail.project_id}
+            headSha={detail.head_sha}
+            onReverted={() => {
+              getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+            }}
           />
         </div>
       )}
@@ -417,7 +458,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
       <div className="flex gap-3">
         {detail.status === "complete" && (
           <a
-            href={getDownloadUrl(projectId)}
+            href={`${getDownloadUrl(projectId)}?dl=1`}
             className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 transition-colors"
           >
             Download Video
@@ -461,12 +502,32 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
           )
         )}
         {canFork && (
-          <button
-            onClick={() => setEditing(true)}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 transition-colors"
-          >
-            Edit & Fork
-          </button>
+          <>
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => setForking(true)}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 transition-colors"
+            >
+              Fork
+            </button>
+            {detail.head_sha && (
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  showHistory
+                    ? "border-indigo-500 bg-indigo-500/10 text-indigo-300"
+                    : "border-gray-700 text-gray-400 hover:border-gray-600"
+                }`}
+              >
+                History
+              </button>
+            )}
+          </>
         )}
         {isRunning && (
           <button

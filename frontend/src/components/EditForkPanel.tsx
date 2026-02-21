@@ -323,7 +323,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-white">Edit & Fork</h2>
+          <h2 className="text-lg font-bold text-white">Fork Project</h2>
           <p className="text-sm text-gray-400">
             Modify settings or scene prompts, then fork to create a new project.
           </p>

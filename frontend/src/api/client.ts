@@ -8,6 +8,18 @@ import type {
   StopResponse,
   ForkRequest,
   ForkResponse,
+  EditProjectRequest,
+  EditProjectResponse,
+  CheckpointListItem,
+  CheckpointDiff,
+  RegenerateSceneRequest,
+  RegenerateProjectRequest,
+  RegenerateTextRequest,
+  RegenerateTextResponse,
+  GenerateSceneFieldsRequest,
+  GenerateSceneFieldsResponse,
+  GenerateNewSceneRequest,
+  GenerateNewSceneResponse,
   MetricsResponse,
   ManifestListItem,
   ManifestDetail,
@@ -124,6 +136,15 @@ export function stopProject(projectId: string): Promise<StopResponse> {
 export function forkProject(projectId: string, body: ForkRequest): Promise<ForkResponse> {
   return request<ForkResponse>(`/api/projects/${projectId}/fork`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** PATCH /api/projects/{id}/edit — edit project in-place (PipeSVN) */
+export function editProject(projectId: string, body: EditProjectRequest): Promise<EditProjectResponse> {
+  return request<EditProjectResponse>(`/api/projects/${projectId}/edit`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -332,6 +353,177 @@ export function updateSettings(body: UserSettingsUpdate): Promise<UserSettingsRe
 /** GET /api/settings/models — lightweight enabled models for GenerateForm */
 export function getEnabledModels(): Promise<EnabledModelsResponse> {
   return request<EnabledModelsResponse>("/api/settings/models");
+}
+
+// ============================================================================
+// PipeSVN: Checkpoint API
+// ============================================================================
+
+/** GET /api/projects/{id}/checkpoints — list checkpoints */
+export function listCheckpoints(projectId: string): Promise<CheckpointListItem[]> {
+  return request<CheckpointListItem[]>(`/api/projects/${projectId}/checkpoints`);
+}
+
+/** GET /api/projects/{id}/checkpoints/{sha}/diff — get checkpoint diff */
+export function getCheckpointDiff(projectId: string, sha: string): Promise<CheckpointDiff> {
+  return request<CheckpointDiff>(`/api/projects/${projectId}/checkpoints/${sha}/diff`);
+}
+
+/** POST /api/projects/{id}/checkpoints — create manual checkpoint */
+export function createCheckpoint(projectId: string): Promise<{ sha: string; message: string }> {
+  return request<{ sha: string; message: string }>(`/api/projects/${projectId}/checkpoints`, {
+    method: "POST",
+  });
+}
+
+/** DELETE /api/projects/{id}/checkpoints/{sha} — delete checkpoint */
+export function deleteCheckpoint(projectId: string, sha: string): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/projects/${projectId}/checkpoints/${sha}`, {
+    method: "DELETE",
+  });
+}
+
+/** POST /api/projects/{id}/revert — revert to checkpoint */
+export function revertToCheckpoint(
+  projectId: string,
+  sha: string,
+): Promise<{ status: string; head_sha: string; reverted_to: string }> {
+  return request<{ status: string; head_sha: string; reverted_to: string }>(
+    `/api/projects/${projectId}/revert`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sha }),
+    },
+  );
+}
+
+// ============================================================================
+// PipeSVN: Regeneration API
+// ============================================================================
+
+/** POST /api/projects/{id}/scenes/{idx}/regenerate — regenerate scene assets */
+export function regenerateScene(
+  projectId: string,
+  sceneIdx: number,
+  body: RegenerateSceneRequest,
+): Promise<{ status: string; head_sha?: string | null }> {
+  return request<{ status: string; head_sha?: string | null }>(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/regenerate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** POST /api/projects/{id}/scenes/{idx}/regenerate-text — regenerate a text field via LLM */
+export function regenerateSceneText(
+  projectId: string,
+  sceneIdx: number,
+  body: RegenerateTextRequest,
+): Promise<RegenerateTextResponse> {
+  return request<RegenerateTextResponse>(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/regenerate-text`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+}
+
+/** POST /api/projects/{id}/generate-scene-fields — generate all 5 text fields for a new scene */
+export function generateSceneFields(
+  projectId: string,
+  body: GenerateSceneFieldsRequest,
+): Promise<GenerateSceneFieldsResponse> {
+  return request<GenerateSceneFieldsResponse>(
+    `/api/projects/${projectId}/generate-scene-fields`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+}
+
+/** POST /api/projects/{id}/generate-new-scene — generate complete scene (text sync + assets background) */
+export function generateNewScene(
+  projectId: string,
+  body: GenerateNewSceneRequest,
+): Promise<GenerateNewSceneResponse> {
+  return request<GenerateNewSceneResponse>(
+    `/api/projects/${projectId}/generate-new-scene`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+}
+
+/** POST /api/projects/{id}/regenerate — project-wide regeneration */
+export function regenerateProject(
+  projectId: string,
+  body: RegenerateProjectRequest,
+): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/projects/${projectId}/regenerate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** PUT /api/projects/{id}/scenes/{idx}/keyframes/{pos} — upload keyframe */
+export async function uploadKeyframe(
+  projectId: string,
+  sceneIdx: number,
+  position: string,
+  file: File,
+): Promise<{ status: string; file_path: string; keyframe_id: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/keyframes/${position}`,
+    { method: "PUT", body: formData },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json();
+}
+
+/** PUT /api/projects/{id}/scenes/{idx}/clip — upload clip */
+export async function uploadClip(
+  projectId: string,
+  sceneIdx: number,
+  file: File,
+): Promise<{ status: string; file_path: string; clip_id: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/clip`,
+    { method: "PUT", body: formData },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json();
+}
+
+/** DELETE /api/projects/{id}/scenes/{idx}/clip — delete clip */
+export function deleteSceneClip(
+  projectId: string,
+  sceneIdx: number,
+): Promise<{ status: string }> {
+  return request<{ status: string }>(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/clip`,
+    { method: "DELETE" },
+  );
+}
+
+/** DELETE /api/projects/{id}/scenes/{idx}/keyframes/{pos} — delete keyframe */
+export function deleteSceneKeyframe(
+  projectId: string,
+  sceneIdx: number,
+  position: string,
+): Promise<{ status: string }> {
+  return request<{ status: string }>(
+    `/api/projects/${projectId}/scenes/${sceneIdx}/keyframes/${position}`,
+    { method: "DELETE" },
+  );
 }
 
 export { ApiError };

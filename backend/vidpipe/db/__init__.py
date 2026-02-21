@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown
-from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference, AssetAppearance, DEFAULT_USER_ID
+from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference, AssetAppearance, ProjectCheckpoint, DEFAULT_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,9 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE projects ADD COLUMN run_through VARCHAR(20)",
         # Project title
         "ALTER TABLE projects ADD COLUMN title VARCHAR(200)",
+        # PipeSVN: version control
+        "ALTER TABLE projects ADD COLUMN head_sha VARCHAR(40)",
+        "ALTER TABLE video_clips ADD COLUMN prompt_used TEXT",
     ]
     for sql in migrations:
         try:

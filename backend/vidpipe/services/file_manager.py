@@ -114,6 +114,34 @@ class FileManager:
 
         return filepath
 
+    def save_keyframe_versioned(
+        self, project_id: uuid.UUID, scene_idx: int, position: str, data: bytes
+    ) -> Path:
+        """Save keyframe with UUID-based filename to avoid overwriting previous versions.
+
+        Old files remain on disk for checkpoint history.
+        """
+        project_dir = self.get_project_dir(project_id)
+        short_id = uuid.uuid4().hex[:8]
+        filename = f"scene_{scene_idx}_{position}_{short_id}.png"
+        filepath = project_dir / "keyframes" / filename
+        filepath.write_bytes(data)
+        return filepath
+
+    def save_clip_versioned(
+        self, project_id: uuid.UUID, scene_idx: int, data: bytes
+    ) -> Path:
+        """Save clip with UUID-based filename to avoid overwriting previous versions.
+
+        Old files remain on disk for checkpoint history.
+        """
+        project_dir = self.get_project_dir(project_id)
+        short_id = uuid.uuid4().hex[:8]
+        filename = f"scene_{scene_idx}_{short_id}.mp4"
+        filepath = project_dir / "clips" / filename
+        filepath.write_bytes(data)
+        return filepath
+
     def get_output_path(
         self, project_id: uuid.UUID, filename: str = "final.mp4"
     ) -> Path:

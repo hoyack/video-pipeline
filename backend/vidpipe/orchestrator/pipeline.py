@@ -345,6 +345,15 @@ async def run_pipeline(
             step_log["stitching"] = step_duration
             logger.info(f"Stitching step completed in {step_duration:.2f}s")
 
+        # Auto-create initial checkpoint (PipeSVN)
+        if project.status == "complete" and project.head_sha is None:
+            try:
+                from vidpipe.services.checkpoint_service import create_checkpoint
+                await create_checkpoint(session, project, "Initial checkpoint")
+                logger.info(f"Auto-checkpoint created for project {project.id}")
+            except Exception as cp_err:
+                logger.warning(f"Failed to create auto-checkpoint: {cp_err}")
+
         # Finalize PipelineRun on success
         run.completed_at = datetime.utcnow()
         run.total_duration_seconds = time.monotonic() - pipeline_start

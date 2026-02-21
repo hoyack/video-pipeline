@@ -91,12 +91,12 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **VGED-04**: Scene-level upload endpoints: start-keyframe, end-keyframe, clip, final-video; each validates file type and creates/updates DB rows
 - [x] **VGED-05**: `generation_status` column on Scene model tracks per-scene pipeline progress (generating_text, generating_start_kf, generating_end_kf, generating_clip, complete, failed)
 - [ ] **VGED-06**: Pipeline stages (storyboard, keyframes, video_gen, stitcher) skip scenes/assets that already exist (gap-filling)
-- [ ] **VGED-07**: `VideoGenEditor` component replaces GenerateForm + ProgressView with unified create/edit/monitor experience
-- [ ] **VGED-08**: Generate Through slider controls pipeline stop point (storyboard, keyframes, video, stitch, all)
-- [ ] **VGED-09**: Scene cards render through full lifecycle: empty (dashed) → partially filled → generating (spinners per asset) → complete
-- [ ] **VGED-10**: Real-time asset population via polling with visual feedback (highlight flash on new assets)
+- [x] **VGED-07**: `VideoGenEditor` component replaces GenerateForm + ProgressView with unified create/edit/monitor experience
+- [x] **VGED-08**: Generate Through slider controls pipeline stop point (storyboard, keyframes, video, stitch, all)
+- [x] **VGED-09**: Scene cards render through full lifecycle: empty (dashed) → partially filled → generating (spinners per asset) → complete
+- [x] **VGED-10**: Real-time asset population via polling with visual feedback (highlight flash on new assets)
 - [ ] **VGED-11**: Pause/resume at per-scene granularity; stop flag checked between individual scene operations
-- [ ] **VGED-12**: App.tsx navigation merges "generate" + "progress" views into single "editor" view
+- [x] **VGED-12**: App.tsx navigation merges "generate" + "progress" views into single "editor" view
 
 ## v2 Requirements
 

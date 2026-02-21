@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 15 of 15 (Video Generation Editor)
-Plan: 1 of 3 complete
-Status: 15-01 complete — Draft project creation, generate endpoint, final-video upload, Scene.generation_status
-Last activity: 2026-02-21 — Completed 15-01 (Backend infrastructure for Video Generation Editor)
+Plan: 3 of 3 complete
+Status: Phase 15 COMPLETE — All plans executed (backend infrastructure, pipeline gap-filling, frontend editor)
+Last activity: 2026-02-21 — Completed 15-03 (VideoGenEditor frontend component)
 
-Progress: [██████████] 100% (14 of 15 phases complete, 38 of 40 plans complete)
+Progress: [██████████] 100% (15 of 15 phases complete, 40 of 40 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 35
+- Total plans completed: 40
 - Average duration: 2.7 min
-- Total execution time: 1.47 hours
+- Total execution time: 1.71 hours
 
 **By Phase:**
 
@@ -41,11 +41,11 @@ Progress: [██████████] 100% (14 of 15 phases complete, 38 of
 | 12-fork-system-integration-with-manifests | 3/3 | 7.0 min | 2.3 min |
 | 13-llm-provider-abstraction-ollama | 3/3 | 8.0 min | 2.7 min |
 
-| 15-video-generation-editor | 1/3 | 4.0 min | 4.0 min |
+| 15-video-generation-editor | 3/3 | 14.0 min | 4.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 12-03 (2.0min), 13-01 (5.0min), 13-02 (unknown), 13-03 (3.0min), 15-01 (4.0min)
-- Trend: Phase 15 started — Video Generation Editor backend infrastructure
+- Last 5 plans: 13-03 (3.0min), 15-01 (4.0min), 15-02 (4.0min), 15-03 (6.0min)
+- Trend: Phase 15 COMPLETE — Video Generation Editor fully built
 
 *Updated after each plan completion*
 
@@ -210,6 +210,11 @@ Recent decisions affecting current work:
 - **15-01:** Draft status in both PIPELINE_STATES and RESUMABLE_STATES for full state machine integration
 - **15-01:** POST /api/projects separate from POST /api/generate to maintain backward compatibility
 - **15-01:** Generate endpoint allows starting from "complete" state (re-generation) plus draft/stopped/staged/failed
+- **15-03:** Reuse SceneEditorCard directly in VideoGenEditor (not duplicated) for scene rendering
+- **15-03:** EditorMode derived from project status: drafting (no project), running (active pipeline), editing (all other states)
+- **15-03:** Draft status maps to editing mode, not drafting — user can edit before first generation
+- **15-03:** ProjectList passes (id, status) to App.tsx for draft-aware routing
+- **15-03:** Auto-collapse ProjectConfigBar when editorMode transitions to running
 
 ### Roadmap Evolution
 
@@ -236,5 +241,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-21 (execution)
-Stopped at: Completed 15-01-PLAN.md (Backend infrastructure for Video Generation Editor)
+Stopped at: Completed 15-03-PLAN.md (VideoGenEditor frontend component — Phase 15 COMPLETE)
 Resume file: None

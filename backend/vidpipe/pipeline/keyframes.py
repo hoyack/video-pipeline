@@ -35,6 +35,18 @@ from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 
 logger = logging.getLogger(__name__)
 
+
+def _detect_image_mime(data: bytes) -> str:
+    """Detect image MIME type from magic bytes."""
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return "image/png"
+    if data[:2] == b'\xff\xd8':
+        return "image/jpeg"
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return "image/webp"
+    return "image/png"  # safe fallback for Gemini
+
+
 # ---------------------------------------------------------------------------
 # ComfyUI image models (routed to ComfyUI instead of Vertex AI)
 # ---------------------------------------------------------------------------
@@ -113,7 +125,7 @@ async def _generate_image_from_text(
         contents.append(ref_prefix)
         for ref_bytes in reference_images:
             contents.append(
-                types.Part.from_bytes(data=ref_bytes, mime_type="image/png")
+                types.Part.from_bytes(data=ref_bytes, mime_type=_detect_image_mime(ref_bytes))
             )
     contents.append(prompt)
 
@@ -168,7 +180,7 @@ async def _generate_image_conditioned(
     """
     # Build contents: [conditioning_frame, identity_instruction, ref_images..., text_prompt]
     contents: list = [
-        types.Part.from_bytes(data=reference_image_bytes, mime_type="image/png"),
+        types.Part.from_bytes(data=reference_image_bytes, mime_type=_detect_image_mime(reference_image_bytes)),
     ]
     if reference_images:
         contents.append(types.Part.from_text(text=(
@@ -178,7 +190,7 @@ async def _generate_image_conditioned(
         )))
         for ref_bytes in reference_images:
             contents.append(
-                types.Part.from_bytes(data=ref_bytes, mime_type="image/png")
+                types.Part.from_bytes(data=ref_bytes, mime_type=_detect_image_mime(ref_bytes))
             )
     contents.append(types.Part.from_text(text=prompt))
 
@@ -455,304 +467,385 @@ async def generate_keyframes(
 
     # Process each scene sequentially (no parallelization)
     for scene in scenes:
-        # Check for user-requested stop
+        # Per-scene stop flag check (VGED-11)
         await session.refresh(project)
         if project.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
-            raise PipelineStopped("Pipeline stopped by user")
+            logger.info(f"Pipeline stopped by user at scene {scene.scene_index}")
+            raise PipelineStopped("Stopped by user")
 
-        # Skip scenes that already have both keyframes (fork copied them)
+        # Gap-filling: check for existing keyframes per position (VGED-06)
         existing_kfs_result = await session.execute(
             select(Keyframe).where(Keyframe.scene_id == scene.id)
         )
         existing_kfs = existing_kfs_result.scalars().all()
-        if len(existing_kfs) >= 2:
-            end_kf = next((k for k in existing_kfs if k.position == "end"), None)
-            if end_kf:
-                from pathlib import Path as _Path
-                previous_end_frame_bytes = _Path(end_kf.file_path).read_bytes()
+        existing_start_kf = next((k for k in existing_kfs if k.position == "start"), None)
+        existing_end_kf = next((k for k in existing_kfs if k.position == "end"), None)
+
+        # If both keyframes exist, skip entire scene (fork or user upload)
+        if existing_start_kf and existing_end_kf:
+            from pathlib import Path as _Path
+            previous_end_frame_bytes = _Path(existing_end_kf.file_path).read_bytes()
             # Don't downgrade scenes that already have completed clips
             if scene.status != "video_done":
                 scene.status = "keyframes_done"
+            scene.generation_status = None
             await session.commit()
+            logger.info(
+                f"Scene {scene.scene_index}: both keyframes exist, skipping"
+            )
             continue
 
-        # Phase 10: Adaptive Prompt Rewriting for manifest projects
-        # Also resolves asset reference images for multimodal keyframe generation
-        rewritten_start_prompt = None
-        selected_ref_assets: list = []
-        ref_image_bytes_list: list[bytes] = []
-        placed_char_assets: list = []  # CHARACTER assets placed in scene (for face verification)
-        if project.manifest_id:
-            try:
-                from vidpipe.services.prompt_rewriter import PromptRewriterService
-                from vidpipe.services.reference_selection import resolve_asset_image_bytes
-                from vidpipe.db.models import SceneManifest as SceneManifestModel
+        # KEYF-03 continuity: if scene has an uploaded start keyframe,
+        # use it as previous_end for daisy-chain conditioning
+        if existing_start_kf:
+            from pathlib import Path as _Path
+            # The uploaded start keyframe serves as "previous end" for conditioning
+            _existing_start_bytes = _Path(existing_start_kf.file_path).read_bytes()
 
-                # Load scene manifest
-                sm_result = await session.execute(
-                    select(SceneManifestModel).where(
-                        SceneManifestModel.project_id == project.id,
-                        SceneManifestModel.scene_index == scene.scene_index
-                    )
-                )
-                scene_manifest_row = sm_result.scalar_one_or_none()
+        try:
+            # Set generation_status for the scene (VGED-05)
+            if not existing_start_kf:
+                scene.generation_status = "generating_start_kf"
+                await session.commit()
 
-                if scene_manifest_row and scene_manifest_row.manifest_json:
-                    # Load assets
-                    from vidpipe.services import manifest_service
-                    all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
+            # Phase 10: Adaptive Prompt Rewriting for manifest projects
+            # Also resolves asset reference images for multimodal keyframe generation
+            rewritten_start_prompt = None
+            selected_ref_assets: list = []
+            ref_image_bytes_list: list[bytes] = []
+            placed_char_assets: list = []  # CHARACTER assets placed in scene (for face verification)
+            if project.manifest_id:
+                try:
+                    from vidpipe.services.prompt_rewriter import PromptRewriterService
+                    from vidpipe.services.reference_selection import resolve_asset_image_bytes
+                    from vidpipe.db.models import SceneManifest as SceneManifestModel
 
-                    # Load previous scene CV analysis for continuity
-                    previous_cv = None
-                    if scene.scene_index > 0:
-                        prev_sm_result = await session.execute(
-                            select(SceneManifestModel).where(
-                                SceneManifestModel.project_id == project.id,
-                                SceneManifestModel.scene_index == scene.scene_index - 1
-                            )
+                    # Load scene manifest
+                    sm_result = await session.execute(
+                        select(SceneManifestModel).where(
+                            SceneManifestModel.project_id == project.id,
+                            SceneManifestModel.scene_index == scene.scene_index
                         )
-                        prev_sm = prev_sm_result.scalar_one_or_none()
-                        if prev_sm:
-                            previous_cv = prev_sm.cv_analysis_json
-
-                    rewriter = PromptRewriterService(text_adapter=text_adapter)
-                    result = await rewriter.rewrite_keyframe_prompt(
-                        scene=scene,
-                        scene_manifest_json=scene_manifest_row.manifest_json,
-                        placed_assets=all_assets,  # rewriter filters to placed internally
-                        previous_cv_analysis=previous_cv,
-                        all_assets=all_assets,
                     )
+                    scene_manifest_row = sm_result.scalar_one_or_none()
 
-                    rewritten_start_prompt = result.rewritten_prompt
+                    if scene_manifest_row and scene_manifest_row.manifest_json:
+                        # Load assets
+                        from vidpipe.services import manifest_service
+                        all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
 
-                    # Persist rewritten prompt
-                    scene_manifest_row.rewritten_keyframe_prompt = result.rewritten_prompt
-                    await session.commit()
+                        # Load previous scene CV analysis for continuity
+                        previous_cv = None
+                        if scene.scene_index > 0:
+                            prev_sm_result = await session.execute(
+                                select(SceneManifestModel).where(
+                                    SceneManifestModel.project_id == project.id,
+                                    SceneManifestModel.scene_index == scene.scene_index - 1
+                                )
+                            )
+                            prev_sm = prev_sm_result.scalar_one_or_none()
+                            if prev_sm:
+                                previous_cv = prev_sm.cv_analysis_json
 
-                    logger.info(
-                        f"Scene {scene.scene_index}: keyframe prompt rewritten "
-                        f"(refs: {result.selected_reference_tags})"
-                    )
+                        rewriter = PromptRewriterService(text_adapter=text_adapter)
+                        result = await rewriter.rewrite_keyframe_prompt(
+                            scene=scene,
+                            scene_manifest_json=scene_manifest_row.manifest_json,
+                            placed_assets=all_assets,  # rewriter filters to placed internally
+                            previous_cv_analysis=previous_cv,
+                            all_assets=all_assets,
+                        )
 
-                    # Post-LLM enforcement: ensure placed CHARACTER assets are in refs
-                    asset_map = {a.manifest_tag: a for a in all_assets}
-                    placed_char_tags = {
-                        p["asset_tag"]
-                        for p in scene_manifest_row.manifest_json.get("placements", [])
-                        if "asset_tag" in p
-                        and asset_map.get(p["asset_tag"])
-                        and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
-                        and asset_map[p["asset_tag"]].reference_image_url
-                    }
+                        rewritten_start_prompt = result.rewritten_prompt
 
-                    # Fix 4: Fallback — if scene has placements but none resolved
-                    # to manifest characters, use ALL manifest CHARACTER assets
-                    # with reference images. This guarantees reference images reach
-                    # the image adapter even when storyboard tags were wrong.
-                    if not placed_char_tags and project.manifest_id:
+                        # Persist rewritten prompt and selected reference tags
+                        scene_manifest_row.rewritten_keyframe_prompt = result.rewritten_prompt
+                        scene_manifest_row.selected_reference_tags = result.selected_reference_tags
+                        await session.commit()
+
+                        logger.info(
+                            f"Scene {scene.scene_index}: keyframe prompt rewritten "
+                            f"(refs: {result.selected_reference_tags})"
+                        )
+
+                        # Post-LLM enforcement: ensure placed CHARACTER assets are in refs
+                        asset_map = {a.manifest_tag: a for a in all_assets}
+                        asset_map_by_id = {str(a.id): a for a in all_assets}
                         placed_char_tags = {
-                            a.manifest_tag
-                            for a in all_assets
-                            if a.asset_type == "CHARACTER" and a.reference_image_url
+                            p["asset_tag"]
+                            for p in scene_manifest_row.manifest_json.get("placements", [])
+                            if "asset_tag" in p
+                            and asset_map.get(p["asset_tag"])
+                            and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
+                            and asset_map[p["asset_tag"]].reference_image_url
                         }
-                        if placed_char_tags:
-                            logger.warning(
-                                f"Scene {scene.scene_index}: no placed chars resolved "
-                                f"from scene manifest, falling back to all manifest "
-                                f"CHARACTER assets: {placed_char_tags}"
-                            )
-                    current_tags = list(result.selected_reference_tags or [])
-                    missing_chars = placed_char_tags - set(current_tags)
-                    if missing_chars:
-                        enforced = list(missing_chars) + current_tags
-                        result.selected_reference_tags = enforced[:3]
-                        logger.info(
-                            f"Scene {scene.scene_index}: enforced placed CHARACTER refs "
-                            f"{missing_chars} → {result.selected_reference_tags}"
-                        )
 
-                    # Collect placed CHARACTER assets for face verification
-                    placed_char_assets = [
-                        asset_map[tag]
-                        for tag in placed_char_tags
-                        if tag in asset_map
-                    ]
-
-                    # Resolve selected reference tags → asset image bytes
-                    if result.selected_reference_tags:
-                        for tag in result.selected_reference_tags:
-                            asset = asset_map.get(tag)
-                            if asset:
-                                ref_bytes = await resolve_asset_image_bytes(session, asset)
-                                if ref_bytes:
-                                    ref_image_bytes_list.append(ref_bytes)
-                                    selected_ref_assets.append(asset)
-                        if ref_image_bytes_list:
+                        # Fix 4: Fallback — if scene has placements but none resolved
+                        # to manifest characters, use ALL manifest CHARACTER assets
+                        # with reference images. This guarantees reference images reach
+                        # the image adapter even when storyboard tags were wrong.
+                        if not placed_char_tags and project.manifest_id:
+                            placed_char_tags = {
+                                a.manifest_tag
+                                for a in all_assets
+                                if a.asset_type == "CHARACTER" and a.reference_image_url
+                            }
+                            if placed_char_tags:
+                                logger.warning(
+                                    f"Scene {scene.scene_index}: no placed chars resolved "
+                                    f"from scene manifest, falling back to all manifest "
+                                    f"CHARACTER assets: {placed_char_tags}"
+                                )
+                        current_tags = list(result.selected_reference_tags or [])
+                        missing_chars = placed_char_tags - set(current_tags)
+                        if missing_chars:
+                            enforced = list(missing_chars) + current_tags
+                            result.selected_reference_tags = enforced[:3]
                             logger.info(
-                                f"Scene {scene.scene_index}: resolved "
-                                f"{len(ref_image_bytes_list)} reference image(s) "
-                                f"for keyframe generation"
+                                f"Scene {scene.scene_index}: enforced placed CHARACTER refs "
+                                f"{missing_chars} → {result.selected_reference_tags}"
                             )
-            except Exception as e:
-                logger.warning(
-                    f"Scene {scene.scene_index}: keyframe rewriter failed (non-fatal): {e}"
-                )
-                rewritten_start_prompt = None  # Fall back to original
-                ref_image_bytes_list = []  # Reset on failure
 
-        # Face verification retry config (max 2 retries = 3 total attempts)
-        _max_identity_retries = 2
+                        # Update with enforced tags
+                        scene_manifest_row.selected_reference_tags = result.selected_reference_tags
+                        await session.commit()
 
-        # Generate or inherit START frame
-        if scene.scene_index == 0:
-            # Scene 0: Generate from text prompt (KEYF-01)
-            # Prepend style guide + character bible for maximum fidelity
-            # Phase 10: Use rewritten prompt when available (already includes asset details)
-            if rewritten_start_prompt:
-                enriched_prompt = f"{style_prefix}{rewritten_start_prompt}"
-            else:
-                enriched_prompt = f"{style_prefix}{character_prefix}{scene.start_frame_prompt}"
+                        # Collect placed CHARACTER assets for face verification
+                        placed_char_assets = [
+                            asset_map[tag]
+                            for tag in placed_char_tags
+                            if tag in asset_map
+                        ]
 
-            # Face verification retry loop
-            start_frame_bytes = None
-            for identity_level in range(_max_identity_retries + 1):
-                prompt_with_emphasis = (
-                    _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
-                    + enriched_prompt
-                )
-                if is_comfyui:
-                    start_frame_bytes = await _generate_image_comfyui(
-                        comfy_client, prompt_with_emphasis, seed=project.seed,
-                    )
-                else:
-                    start_frame_bytes = await _generate_image_from_text(
-                        image_client, prompt_with_emphasis, project.aspect_ratio, image_model,
-                        seed=project.seed,
-                        reference_images=ref_image_bytes_list or None,
-                    )
-                # Verify face match if placed chars exist and not final attempt
-                if placed_char_assets and identity_level < _max_identity_retries:
-                    passed, sim, detail = await _verify_keyframe_faces(
-                        start_frame_bytes, placed_char_assets,
-                    )
-                    if passed:
-                        logger.info(
-                            f"Scene {scene.scene_index} start: face verification passed "
-                            f"(level={identity_level}, {detail})"
-                        )
-                        break
-                    else:
-                        logger.warning(
-                            f"Scene {scene.scene_index} start: face verification failed "
-                            f"(level={identity_level}, {detail}), retrying"
-                        )
-                        continue
-                else:
-                    break  # No verification needed or final attempt
-            start_source = "generated"
-        else:
-            # Scene N: Inherit from previous scene's end frame (KEYF-03)
-            start_frame_bytes = previous_end_frame_bytes
-            start_source = "inherited"
+                        # Fallback: if a placed CHARACTER has no face_embedding,
+                        # try to borrow from its source (parent) asset
+                        for asset in placed_char_assets:
+                            if asset.face_embedding is None and asset.source_asset_id:
+                                parent = asset_map_by_id.get(str(asset.source_asset_id))
+                                if parent and parent.face_embedding:
+                                    asset.face_embedding = parent.face_embedding
+                                    logger.info(
+                                        f"Scene {scene.scene_index}: borrowed face embedding "
+                                        f"from parent {parent.manifest_tag} for {asset.manifest_tag}"
+                                    )
 
-        # Save start keyframe to filesystem
-        start_file_path = file_mgr.save_keyframe(
-            project.id, scene.scene_index, "start", start_frame_bytes
-        )
-
-        # Create start keyframe database record
-        start_keyframe = Keyframe(
-            scene_id=scene.id,
-            position="start",
-            file_path=str(start_file_path),
-            mime_type="image/png",
-            source=start_source,
-            prompt_used=scene.start_frame_prompt,
-        )
-        session.add(start_keyframe)
-
-        # Generate END frame with image conditioning (KEYF-02)
-        style_label = project.style.replace("_", " ")
-        conditioning_prompt = (
-            f"Generate the NEXT keyframe for this {style_label} scene, "
-            f"showing clear visual progression {project.target_clip_duration} seconds later.\n\n"
-            f"TARGET END STATE (this is what the new image must depict):\n"
-            f"{scene.end_frame_prompt}\n\n"
-            f"The new image MUST show VISIBLE CHANGES from the reference image — "
-            f"different pose, expression, body position, or camera framing. "
-            f"If the reference is a close-up, the new image should show "
-            f"a noticeably different expression, head angle, or gesture.\n\n"
-            f"CONSISTENCY CONSTRAINTS:\n"
-            f"- Same character appearance (face, hair, clothing, proportions)\n"
-            f"- Same {style_label} rendering style\n"
-            f"{character_prefix}"
-        )
-
-        # Face verification retry loop for end frame
-        end_frame_bytes = None
-        for identity_level in range(_max_identity_retries + 1):
-            prompt_with_emphasis = (
-                _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
-                + conditioning_prompt
-            )
-            if is_comfyui:
-                # ComfyUI text-only: no image conditioning, use offset seed
-                end_frame_bytes = await _generate_image_comfyui(
-                    comfy_client, prompt_with_emphasis,
-                    seed=project.seed + scene.scene_index + 1000,
-                )
-            else:
-                end_frame_bytes = await _generate_image_conditioned(
-                    image_client, start_frame_bytes, prompt_with_emphasis,
-                    project.aspect_ratio, image_model,
-                    reference_images=ref_image_bytes_list or None,
-                )
-            if placed_char_assets and identity_level < _max_identity_retries:
-                passed, sim, detail = await _verify_keyframe_faces(
-                    end_frame_bytes, placed_char_assets,
-                )
-                if passed:
-                    logger.info(
-                        f"Scene {scene.scene_index} end: face verification passed "
-                        f"(level={identity_level}, {detail})"
-                    )
-                    break
-                else:
+                        # Resolve selected reference tags → asset image bytes
+                        if result.selected_reference_tags:
+                            for tag in result.selected_reference_tags:
+                                asset = asset_map.get(tag)
+                                if asset:
+                                    ref_bytes = await resolve_asset_image_bytes(session, asset)
+                                    if ref_bytes:
+                                        ref_image_bytes_list.append(ref_bytes)
+                                        selected_ref_assets.append(asset)
+                            if ref_image_bytes_list:
+                                logger.info(
+                                    f"Scene {scene.scene_index}: resolved "
+                                    f"{len(ref_image_bytes_list)} reference image(s) "
+                                    f"for keyframe generation"
+                                )
+                except Exception as e:
                     logger.warning(
-                        f"Scene {scene.scene_index} end: face verification failed "
-                        f"(level={identity_level}, {detail}), retrying"
+                        f"Scene {scene.scene_index}: keyframe rewriter failed (non-fatal): {e}"
                     )
-                    continue
+                    rewritten_start_prompt = None  # Fall back to original
+                    ref_image_bytes_list = []  # Reset on failure
+
+            # Face verification retry config (max 2 retries = 3 total attempts)
+            _max_identity_retries = 2
+
+            # ---- START FRAME: Generate or inherit (skip if existing) ----
+            if existing_start_kf:
+                # Gap-filling: start keyframe already exists (user upload or fork)
+                from pathlib import Path as _Path2
+                start_frame_bytes = _Path2(existing_start_kf.file_path).read_bytes()
+                start_source = existing_start_kf.source
+                logger.info(
+                    f"Scene {scene.scene_index}: start keyframe exists, skipping generation"
+                )
+            elif scene.scene_index == 0:
+                # Scene 0: Generate from text prompt (KEYF-01)
+                # Prepend style guide + character bible for maximum fidelity
+                # Phase 10: Use rewritten prompt when available (already includes asset details)
+                if rewritten_start_prompt:
+                    enriched_prompt = f"{style_prefix}{rewritten_start_prompt}"
+                else:
+                    enriched_prompt = f"{style_prefix}{character_prefix}{scene.start_frame_prompt}"
+
+                # Face verification retry loop
+                start_frame_bytes = None
+                for identity_level in range(_max_identity_retries + 1):
+                    prompt_with_emphasis = (
+                        _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
+                        + enriched_prompt
+                    )
+                    if is_comfyui:
+                        start_frame_bytes = await _generate_image_comfyui(
+                            comfy_client, prompt_with_emphasis, seed=project.seed,
+                        )
+                    else:
+                        start_frame_bytes = await _generate_image_from_text(
+                            image_client, prompt_with_emphasis, project.aspect_ratio, image_model,
+                            seed=project.seed,
+                            reference_images=ref_image_bytes_list or None,
+                        )
+                    # Verify face match if placed chars exist and not final attempt
+                    if placed_char_assets and identity_level < _max_identity_retries:
+                        passed, sim, detail = await _verify_keyframe_faces(
+                            start_frame_bytes, placed_char_assets,
+                        )
+                        if passed:
+                            logger.info(
+                                f"Scene {scene.scene_index} start: face verification passed "
+                                f"(level={identity_level}, {detail})"
+                            )
+                            break
+                        else:
+                            logger.warning(
+                                f"Scene {scene.scene_index} start: face verification failed "
+                                f"(level={identity_level}, {detail}), retrying"
+                            )
+                            continue
+                    else:
+                        break  # No verification needed or final attempt
+                start_source = "generated"
+
+                # Save start keyframe to filesystem
+                start_file_path = file_mgr.save_keyframe(
+                    project.id, scene.scene_index, "start", start_frame_bytes
+                )
+
+                # Create start keyframe database record
+                start_keyframe = Keyframe(
+                    scene_id=scene.id,
+                    position="start",
+                    file_path=str(start_file_path),
+                    mime_type="image/png",
+                    source=start_source,
+                    prompt_used=scene.start_frame_prompt,
+                )
+                session.add(start_keyframe)
             else:
-                break
+                # Scene N: Inherit from previous scene's end frame (KEYF-03)
+                start_frame_bytes = previous_end_frame_bytes
+                start_source = "inherited"
 
-        # Save end keyframe to filesystem
-        end_file_path = file_mgr.save_keyframe(
-            project.id, scene.scene_index, "end", end_frame_bytes
-        )
+                # Save start keyframe to filesystem
+                start_file_path = file_mgr.save_keyframe(
+                    project.id, scene.scene_index, "start", start_frame_bytes
+                )
 
-        # Create end keyframe database record
-        end_keyframe = Keyframe(
-            scene_id=scene.id,
-            position="end",
-            file_path=str(end_file_path),
-            mime_type="image/png",
-            source="generated",
-            prompt_used=scene.end_frame_prompt,
-        )
-        session.add(end_keyframe)
+                # Create start keyframe database record
+                start_keyframe = Keyframe(
+                    scene_id=scene.id,
+                    position="start",
+                    file_path=str(start_file_path),
+                    mime_type="image/png",
+                    source=start_source,
+                    prompt_used=scene.start_frame_prompt,
+                )
+                session.add(start_keyframe)
 
-        # Update scene status and prepare for next iteration
-        scene.status = "keyframes_done"
-        previous_end_frame_bytes = end_frame_bytes
+            # ---- END FRAME: Generate with conditioning (skip if existing) ----
+            if existing_end_kf:
+                # Gap-filling: end keyframe already exists (user upload or fork)
+                from pathlib import Path as _Path3
+                end_frame_bytes = _Path3(existing_end_kf.file_path).read_bytes()
+                logger.info(
+                    f"Scene {scene.scene_index}: end keyframe exists, skipping generation"
+                )
+            else:
+                # Update generation_status for end frame (VGED-05)
+                scene.generation_status = "generating_end_kf"
+                await session.commit()
 
-        # Commit after each scene for crash recovery
-        await session.commit()
+                style_label = project.style.replace("_", " ")
+                conditioning_prompt = (
+                    f"Generate the NEXT keyframe for this {style_label} scene, "
+                    f"showing clear visual progression {project.target_clip_duration} seconds later.\n\n"
+                    f"TARGET END STATE (this is what the new image must depict):\n"
+                    f"{scene.end_frame_prompt}\n\n"
+                    f"The new image MUST show VISIBLE CHANGES from the reference image — "
+                    f"different pose, expression, body position, or camera framing. "
+                    f"If the reference is a close-up, the new image should show "
+                    f"a noticeably different expression, head angle, or gesture.\n\n"
+                    f"CONSISTENCY CONSTRAINTS:\n"
+                    f"- Same character appearance (face, hair, clothing, proportions)\n"
+                    f"- Same {style_label} rendering style\n"
+                    f"{character_prefix}"
+                )
 
-        # Rate limiting delay (KEYF-05)
-        await asyncio.sleep(settings.pipeline.image_gen_delay)
+                # Face verification retry loop for end frame
+                end_frame_bytes = None
+                for identity_level in range(_max_identity_retries + 1):
+                    prompt_with_emphasis = (
+                        _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
+                        + conditioning_prompt
+                    )
+                    if is_comfyui:
+                        # ComfyUI text-only: no image conditioning, use offset seed
+                        end_frame_bytes = await _generate_image_comfyui(
+                            comfy_client, prompt_with_emphasis,
+                            seed=project.seed + scene.scene_index + 1000,
+                        )
+                    else:
+                        end_frame_bytes = await _generate_image_conditioned(
+                            image_client, start_frame_bytes, prompt_with_emphasis,
+                            project.aspect_ratio, image_model,
+                            reference_images=ref_image_bytes_list or None,
+                        )
+                    if placed_char_assets and identity_level < _max_identity_retries:
+                        passed, sim, detail = await _verify_keyframe_faces(
+                            end_frame_bytes, placed_char_assets,
+                        )
+                        if passed:
+                            logger.info(
+                                f"Scene {scene.scene_index} end: face verification passed "
+                                f"(level={identity_level}, {detail})"
+                            )
+                            break
+                        else:
+                            logger.warning(
+                                f"Scene {scene.scene_index} end: face verification failed "
+                                f"(level={identity_level}, {detail}), retrying"
+                            )
+                            continue
+                    else:
+                        break
+
+                # Save end keyframe to filesystem
+                end_file_path = file_mgr.save_keyframe(
+                    project.id, scene.scene_index, "end", end_frame_bytes
+                )
+
+                # Create end keyframe database record
+                end_keyframe = Keyframe(
+                    scene_id=scene.id,
+                    position="end",
+                    file_path=str(end_file_path),
+                    mime_type="image/png",
+                    source="generated",
+                    prompt_used=scene.end_frame_prompt,
+                )
+                session.add(end_keyframe)
+
+            # Update scene status and prepare for next iteration
+            scene.status = "keyframes_done"
+            scene.generation_status = None  # Clear generation_status (VGED-05)
+            previous_end_frame_bytes = end_frame_bytes
+
+            # Commit after each scene for crash recovery
+            await session.commit()
+
+            # Rate limiting delay (KEYF-05)
+            await asyncio.sleep(settings.pipeline.image_gen_delay)
+
+        except Exception as e:
+            # On exception: set generation_status to "failed" (VGED-05)
+            scene.generation_status = "failed"
+            await session.commit()
+            raise
 
     # Update project status after all keyframes generated
     project.status = "generating_video"

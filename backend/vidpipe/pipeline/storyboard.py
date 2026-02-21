@@ -285,6 +285,10 @@ async def generate_storyboard(
     - Scene records created in database
     - Project status updated to "keyframing"
 
+    Supports gap-filling mode (VGED-06): if scenes already exist (draft projects),
+    only generates text for scenes with empty scene_description. User-provided
+    scene text is preserved and passed as context to the LLM for narrative continuity.
+
     Implements retry logic per STOR-05: up to 3 attempts with temperature
     reduction on JSON parse failures.
 
@@ -297,10 +301,36 @@ async def generate_storyboard(
         json.JSONDecodeError: If JSON parsing fails after retries
         ValidationError: If Pydantic validation fails after retries
     """
+    from sqlalchemy import select as sa_select
+
     model_id = project.text_model or settings.models.storyboard_llm
     adapter = text_adapter or get_adapter(model_id)
 
     style_label = project.style.replace("_", " ")
+
+    # ----------------------------------------------------------------
+    # Gap-filling: Check for existing scenes (draft projects, VGED-06)
+    # ----------------------------------------------------------------
+    existing_scenes_result = await session.execute(
+        sa_select(Scene)
+        .where(Scene.project_id == project.id)
+        .order_by(Scene.scene_index)
+    )
+    existing_scenes = list(existing_scenes_result.scalars().all())
+
+    # Partition into filled (user-provided text) and empty (need generation)
+    filled_scenes = [s for s in existing_scenes if s.scene_description and s.scene_description.strip()]
+    empty_scenes = [s for s in existing_scenes if not s.scene_description or not s.scene_description.strip()]
+
+    if existing_scenes and not empty_scenes:
+        # All scenes already have text — skip storyboard generation entirely
+        logger.info(
+            "Project %s: all %d scenes have text, skipping storyboard generation",
+            project.id, len(existing_scenes),
+        )
+        project.status = "keyframing"
+        await session.commit()
+        return
 
     # Determine if manifest-aware mode
     use_manifests = project.manifest_id is not None
@@ -317,6 +347,22 @@ async def generate_storyboard(
     else:
         asset_registry_block = ""
         asset_tags_set = set()
+
+    # Build context block for filled scenes (gap-filling narrative continuity)
+    filled_context = ""
+    if filled_scenes:
+        context_lines = []
+        for s in filled_scenes:
+            context_lines.append(
+                f"Scene {s.scene_index} (provided by user): {s.scene_description}"
+            )
+        empty_indices = [s.scene_index for s in empty_scenes]
+        filled_context = (
+            "\n\nEXISTING SCENES (provided by user — do NOT regenerate these):\n"
+            + "\n".join(context_lines)
+            + f"\n\nGenerate content ONLY for the following scene indices: {empty_indices}. "
+            "Maintain narrative continuity with the provided scenes."
+        )
 
     # Build system prompt with style, aspect ratio, and scene count
     if use_manifests:
@@ -337,7 +383,13 @@ async def generate_storyboard(
             f"- Break the script into exactly {project.target_scene_count} distinct visual scenes",
         )
 
-    full_prompt = f"{system_prompt}\n\nScript: {project.prompt}"
+    full_prompt = f"{system_prompt}{filled_context}\n\nScript: {project.prompt}"
+
+    # Set generation_status on empty scenes before generating
+    for s in empty_scenes:
+        s.generation_status = "generating_text"
+    if empty_scenes:
+        await session.commit()
 
     # Retry strategy: up to 3 attempts, reduce temperature on each retry
     attempt = 0
@@ -374,19 +426,54 @@ async def generate_storyboard(
     project.style_guide = storyboard.style_guide.model_dump()
     project.storyboard_raw = storyboard.model_dump()
 
-    # Create Scene records from storyboard
-    for scene_data in storyboard.scenes:
-        scene = Scene(
-            project_id=project.id,
-            scene_index=scene_data.scene_index,
-            scene_description=scene_data.scene_description,
-            start_frame_prompt=scene_data.start_frame_prompt,
-            end_frame_prompt=scene_data.end_frame_prompt,
-            video_motion_prompt=scene_data.video_motion_prompt,
-            transition_notes=scene_data.transition_notes,
-            status="pending"
-        )
-        session.add(scene)
+    # ----------------------------------------------------------------
+    # Persist scenes: update existing rows (draft) or create new ones
+    # ----------------------------------------------------------------
+    if existing_scenes:
+        # Draft project: Scene rows already exist — update only empty scenes
+        existing_by_index = {s.scene_index: s for s in existing_scenes}
+        for scene_data in storyboard.scenes:
+            existing = existing_by_index.get(scene_data.scene_index)
+            if existing:
+                # Only update if the scene was empty (preserve user-provided text)
+                if not existing.scene_description or not existing.scene_description.strip():
+                    existing.scene_description = scene_data.scene_description
+                    existing.start_frame_prompt = scene_data.start_frame_prompt
+                    existing.end_frame_prompt = scene_data.end_frame_prompt
+                    existing.video_motion_prompt = scene_data.video_motion_prompt
+                    existing.transition_notes = scene_data.transition_notes
+                    existing.status = "pending"
+                existing.generation_status = None  # Clear generation_status
+            else:
+                # Scene index from LLM not in existing rows — create new
+                scene = Scene(
+                    project_id=project.id,
+                    scene_index=scene_data.scene_index,
+                    scene_description=scene_data.scene_description,
+                    start_frame_prompt=scene_data.start_frame_prompt,
+                    end_frame_prompt=scene_data.end_frame_prompt,
+                    video_motion_prompt=scene_data.video_motion_prompt,
+                    transition_notes=scene_data.transition_notes,
+                    status="pending",
+                )
+                session.add(scene)
+        # Clear generation_status on filled scenes too
+        for s in filled_scenes:
+            s.generation_status = None
+    else:
+        # Non-draft project: no existing scenes — create all from scratch
+        for scene_data in storyboard.scenes:
+            scene = Scene(
+                project_id=project.id,
+                scene_index=scene_data.scene_index,
+                scene_description=scene_data.scene_description,
+                start_frame_prompt=scene_data.start_frame_prompt,
+                end_frame_prompt=scene_data.end_frame_prompt,
+                video_motion_prompt=scene_data.video_motion_prompt,
+                transition_notes=scene_data.transition_notes,
+                status="pending",
+            )
+            session.add(scene)
 
     # Persist scene and audio manifests if manifest-aware mode
     if use_manifests:

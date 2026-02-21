@@ -23,6 +23,7 @@ interface PipelineStepperProps {
 export function PipelineStepper({ status, runThrough }: PipelineStepperProps) {
   const isStaged = status === "staged";
   const isFailed = status === "failed";
+  const isDone = status === "complete";
 
   // For staged projects, resolve the effective stage from run_through
   const effectiveStatus = isStaged && runThrough
@@ -36,10 +37,12 @@ export function PipelineStepper({ status, runThrough }: PipelineStepperProps) {
         const stepIdx = stageIndex(step);
         const isComplete = isStaged
           ? stepIdx <= currentIdx  // staged: mark the boundary stage as complete too
-          : currentIdx > stepIdx;
+          : isDone
+            ? true  // all steps complete when project is done
+            : currentIdx > stepIdx;
         const isCurrent = isStaged
           ? step === effectiveStatus  // the stage we paused at
-          : status === step;
+          : !isDone && status === step;
 
         return (
           <div key={step} className="flex items-center gap-2">

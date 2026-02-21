@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getProjectDetail, resumeProject, getDownloadUrl } from "../api/client.ts";
+import { getProjectDetail, resumeProject, getDownloadUrl, updateProject } from "../api/client.ts";
 import type { ProjectDetail as ProjectDetailType } from "../api/types.ts";
 import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, estimateCost } from "../lib/constants.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
@@ -84,6 +84,9 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
   const [continuing, setContinuing] = useState(false);
   const [continueTarget, setContinueTarget] = useState<string | null | undefined>(undefined); // undefined=closed, null|string=open with run_through value
   const [editing, setEditing] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -177,9 +180,45 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
     <div className="mx-auto max-w-3xl space-y-6">
       {/* Header */}
       <div>
-        <h1 className="mb-1 text-2xl font-bold text-white">
-          {detail.title || "Untitled Project"}
-        </h1>
+        {editingTitle ? (
+          <form
+            className="mb-1 flex items-center gap-2"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const trimmed = titleDraft.trim();
+              if (!trimmed) return;
+              try {
+                await updateProject(detail.project_id, { title: trimmed });
+                setDetail({ ...detail, title: trimmed });
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Failed to update title");
+              }
+              setEditingTitle(false);
+            }}
+          >
+            <input
+              autoFocus
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setEditingTitle(false); }}
+              className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1 text-2xl font-bold text-white focus:border-blue-500 focus:outline-none"
+              maxLength={200}
+            />
+            <button type="submit" className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-500">Save</button>
+            <button type="button" onClick={() => setEditingTitle(false)} className="rounded border border-gray-600 px-3 py-1 text-sm text-gray-300 hover:border-gray-500">Cancel</button>
+          </form>
+        ) : (
+          <h1
+            className="mb-1 text-2xl font-bold text-white cursor-pointer hover:text-gray-300 transition-colors"
+            onClick={() => { setTitleDraft(detail.title || ""); setEditingTitle(true); }}
+            title="Click to edit title"
+          >
+            {detail.title || "Untitled Project"}
+            <svg className="ml-2 inline h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+          </h1>
+        )}
         <div className="flex items-center gap-1">
           <p className="text-sm text-gray-500 font-mono">{detail.project_id}</p>
           <CopyButton text={detail.project_id} />
@@ -279,9 +318,23 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
           <span className="text-xs text-gray-500">Prompt</span>
           <CopyButton text={detail.prompt} />
         </div>
-        <p className="mt-1 text-sm leading-relaxed text-gray-300">
-          {detail.prompt}
-        </p>
+        {detail.prompt.length <= 150 ? (
+          <p className="mt-1 text-sm leading-relaxed text-gray-300">
+            {detail.prompt}
+          </p>
+        ) : (
+          <button
+            onClick={() => setPromptExpanded(!promptExpanded)}
+            className="mt-1 w-full text-left"
+          >
+            <p className="text-sm leading-relaxed text-gray-300">
+              {promptExpanded ? detail.prompt : `${detail.prompt.slice(0, 150)}...`}
+            </p>
+            <span className="text-xs text-gray-500 hover:text-gray-400 transition-colors">
+              {promptExpanded ? "Show less" : "Show more"}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Pipeline stepper */}
@@ -343,7 +396,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
               <SceneCard
                 key={scene.scene_index}
                 scene={scene}
-                defaultExpanded
+                defaultExpanded={false}
                 projectId={detail.project_id}
                 qualityMode={detail.quality_mode}
                 onViewManifest={onViewManifest}

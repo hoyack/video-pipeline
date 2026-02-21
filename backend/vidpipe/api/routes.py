@@ -1058,6 +1058,28 @@ async def stop_project(project_id: uuid.UUID):
     return StopResponse(project_id=str(project_id), status="stopped")
 
 
+class UpdateProjectRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+
+
+@router.patch("/projects/{project_id}", response_model=dict)
+async def update_project(project_id: uuid.UUID, body: UpdateProjectRequest):
+    """Update mutable project fields (currently just title)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+
+        if not project or project.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        project.title = body.title
+        await session.commit()
+
+    return {"project_id": str(project_id), "title": body.title}
+
+
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: uuid.UUID):
     """Soft-delete a project: sets deleted_at, removes disk assets.

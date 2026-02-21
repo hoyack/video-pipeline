@@ -1,4 +1,6 @@
-# Storyboard Manifest Asset Binding: Problem & Solution Spec
+# Storyboard Manifest Asset Binding: Problem & Fix
+
+**Status:** Implemented (2026-02-20, commit `05b521f`)
 
 ## Problem Statement
 
@@ -19,39 +21,32 @@ The failure cascades through four layers, each silently degrading instead of cat
 
 ### Layer 1: Storyboard LLM Prompt (Root Cause)
 
-**File**: `backend/vidpipe/pipeline/storyboard.py` — `ENHANCED_STORYBOARD_PROMPT` (line 88)
+**File**: `backend/vidpipe/pipeline/storyboard.py` — `ENHANCED_STORYBOARD_PROMPT`
 
-The prompt gives the LLM permission to ignore existing assets:
+The prompt gave the LLM permission to ignore existing assets:
 
 ```
-Line 103: "Reference registered assets by their [TAG] (e.g., [CHAR_01], [ENV_02])"
-Line 109: "You MAY declare new_asset_declarations for assets NOT in the registry"
+"Reference registered assets by their [TAG] (e.g., [CHAR_01], [ENV_02])"
+"You MAY declare new_asset_declarations for assets NOT in the registry"
 ```
 
 The word "MAY" is permissive. The LLM interprets this as license to create fresh character tags for distinctness, even when the prompt describes characters that clearly correspond to existing manifest assets.
 
-**File**: `backend/vidpipe/services/manifest_service.py` — `format_asset_registry()` (line 755)
+**File**: `backend/vidpipe/services/manifest_service.py` — `format_asset_registry()`
 
-The asset registry footer reinforces the permissive behavior:
+The asset registry footer reinforced the permissive behavior:
 
 ```
-Line 796: "Reference assets by [TAG]. You may declare NEW assets not in the registry."
+"Reference assets by [TAG]. You may declare NEW assets not in the registry."
 ```
 
-**File**: `backend/vidpipe/pipeline/storyboard.py` — Post-validation (line 286)
+**File**: `backend/vidpipe/pipeline/storyboard.py` — Post-validation
 
-When the LLM outputs unrecognized tags, the post-processing only logs a warning:
-
-```python
-if placement.asset_tag not in asset_tags_set:
-    logger.warning("...unrecognized asset tag '%s' (not in registry, may be declared as new asset)...")
-```
-
-No correction, no rejection, no remapping. The invalid tags are persisted to `scene_manifests.manifest_json` as-is.
+When the LLM output unrecognized tags, the post-processing only logged a warning — no correction, no rejection, no remapping. Invalid tags were persisted to `scene_manifests.manifest_json` as-is.
 
 ### Layer 2: Prompt Rewriter — "MUST SELECT" Annotation Missed
 
-**File**: `backend/vidpipe/services/prompt_rewriter.py` — `_list_available_references()` (line 436)
+**File**: `backend/vidpipe/services/prompt_rewriter.py` — `_list_available_references()`
 
 The rewriter lists available reference images and marks placed CHARACTER assets with `"★ PLACED IN SCENE (MUST SELECT)"`. But the marking uses `placed_tags` derived from the scene manifest's placements:
 
@@ -63,51 +58,19 @@ placed_assets = [a for a in with_images if a.manifest_tag in placed_tags]
 # Result: [] — EMPTY, because CHAR_04/05 don't exist in the asset registry
 ```
 
-So CHAR_01/02/03 are listed as available references but **not** annotated as mandatory. The LLM in the rewriter sees them as optional and may or may not select them.
-
-**File**: `backend/vidpipe/services/prompt_rewriter.py` — `_format_placed_assets()` (line 291)
-
-For the invalid tags, the context shows:
-
-```
-[CHAR_04] — asset not found in registry
-[CHAR_05] — asset not found in registry
-```
-
-This tells the LLM that the scene references assets that don't exist, but there's no instruction to substitute with existing manifest assets.
+So CHAR_01/02/03 were listed as available references but **not** annotated as mandatory.
 
 ### Layer 3: Post-LLM Enforcement — No-Op
 
-**File**: `backend/vidpipe/pipeline/keyframes.py` (line 539)
+**File**: `backend/vidpipe/pipeline/keyframes.py`
 
-The enforcement logic tries to ensure placed CHARACTER assets appear in the selected references:
-
-```python
-placed_char_tags = {
-    p["asset_tag"]
-    for p in placements
-    if "asset_tag" in p
-    and asset_map.get(p["asset_tag"])       # CHAR_04 → None → FILTERED OUT
-    and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
-    and asset_map[p["asset_tag"]].reference_image_url
-}
-# Result: {} (empty set) — enforcement does nothing
-```
-
-Since the placements use tags not in the manifest, the filter produces an empty set. The `missing_chars` check finds nothing missing. **Enforcement is silently skipped.**
+The enforcement logic tried to ensure placed CHARACTER assets appear in the selected references, but since the placements use tags not in the manifest, the filter produced an empty set. Enforcement was silently skipped.
 
 ### Layer 4: Face Verification — Disabled
 
-**File**: `backend/vidpipe/pipeline/keyframes.py` (line 559)
+**File**: `backend/vidpipe/pipeline/keyframes.py`
 
-Face verification uses `placed_char_assets` derived from `placed_char_tags`:
-
-```python
-placed_char_assets = [asset_map[tag] for tag in placed_char_tags if tag in asset_map]
-# Result: [] — no face verification happens
-```
-
-The identity retry loop (lines 603-636) only fires when `placed_char_assets` is non-empty. With an empty list, face verification is completely bypassed.
+`placed_char_assets` derived from the empty `placed_char_tags` was `[]`. The identity retry loop only fires when `placed_char_assets` is non-empty, so face verification was completely bypassed.
 
 ### Cascade Summary
 
@@ -127,7 +90,7 @@ Output: generic AI face, zero similarity to manifest references
 
 ---
 
-## Proposed Solution
+## Implementation
 
 Four-layer defense-in-depth fix. Each layer independently prevents the failure case so the system is resilient even if one layer regresses.
 
@@ -135,7 +98,7 @@ Four-layer defense-in-depth fix. Each layer independently prevents the failure c
 
 **Files**: `storyboard.py` (ENHANCED_STORYBOARD_PROMPT), `manifest_service.py` (format_asset_registry)
 
-**Change the prompt instructions** from permissive ("MAY declare new") to mandatory ("MUST use existing"):
+Changed SCENE MANIFEST INSTRUCTIONS from permissive to mandatory:
 
 ```
 SCENE MANIFEST INSTRUCTIONS:
@@ -155,7 +118,7 @@ When creating scenes, generate a scene_manifest for each scene:
   that could represent that person.
 ```
 
-**Update the asset registry footer** (`manifest_service.py:796`):
+Updated `format_asset_registry()` footer:
 
 ```
 Reference assets by [TAG]. You MUST use existing CHARACTER tags — do NOT
@@ -165,82 +128,58 @@ You may declare new ENVIRONMENT or PROP assets not in the registry.
 
 ### Fix 2: Post-Storyboard Tag Remapping
 
-**File**: `storyboard.py` — after `generate_with_retry()` (around line 284)
+**File**: `storyboard.py` — `_remap_unrecognized_tags()` + integration in `generate_storyboard()`
 
-Add a **deterministic remapping pass** that catches LLM mistakes before persisting scene manifests:
+Added a deterministic remapping pass that runs after LLM generation but before persisting scene manifests. The function:
 
-```python
-def _remap_unrecognized_tags(scene_manifest, asset_tags_set, manifest_characters):
-    """Remap unrecognized CHARACTER tags to existing manifest assets.
+1. Collects placement tags not in `asset_tags_set` that look like CHARACTER tags (`CHAR_` prefix or declared as CHARACTER in `new_asset_declarations`)
+2. Maps to existing manifest CHARACTER assets by positional order (CHAR_04 → CHAR_01, CHAR_05 → CHAR_02)
+3. Replaces tags in-place in the placements list
+4. Removes remapped entries from `new_asset_declarations`
+5. Logs every remap at INFO level
 
-    Strategy:
-    1. Collect all placement tags not in asset_tags_set
-    2. For each unrecognized tag that is a CHARACTER type (from new_asset_declarations
-       or heuristic: tag starts with CHAR_), attempt to map to an existing character
-    3. Mapping order: match by new_asset_declaration description similarity to
-       existing asset reverse_prompt/visual_description, or by positional order
-       (first unrecognized CHAR → first manifest CHAR, etc.)
-    4. Replace tags in-place in the placements list
-    """
-```
+**Bonus**: Also remaps `speaker_tag` values in audio dialogue entries that reference the same invalid CHARACTER tags, keeping audio manifests consistent with scene manifests.
 
 **Mapping heuristic**: When unrecognized CHARACTER tags are found and the manifest has CHARACTER assets:
-- If only 1 manifest CHARACTER and 1 unrecognized CHAR: direct 1:1 map
-- If counts match: map by declaration order (CHAR_04 → CHAR_01, CHAR_05 → CHAR_02)
-- If counts differ: map first N by order, leave extras as new declarations
-- Log every remap at INFO level for debugging
-
-This is a deterministic backstop — it doesn't require another LLM call.
+- Map by declaration order: first unrecognized CHAR → first manifest CHAR, etc.
+- If more unrecognized than manifest chars, extras are left unmapped
+- No LLM call needed — purely deterministic
 
 ### Fix 3: Prompt Rewriter — Fallback MUST SELECT
 
-**File**: `prompt_rewriter.py` — `_list_available_references()` (line 436)
+**File**: `prompt_rewriter.py` — `_list_available_references()`
 
-When `placed_tags` from the scene manifest don't match any assets in the registry, **fall back to marking ALL manifest CHARACTER assets as MUST SELECT**:
+When `placed_tags` from the scene manifest don't match any assets in the registry, falls back to marking ALL manifest CHARACTER assets with reference images as MUST SELECT:
 
 ```python
 placed_assets = [a for a in with_images if a.manifest_tag in placed_tags]
 
-# FALLBACK: if no placed assets resolved but manifest has CHARACTER refs, mark all as MUST SELECT
+# Fallback: if no placed assets resolved but manifest has CHARACTER refs
 if not placed_assets:
-    placed_assets = [
+    fallback_chars = [
         a for a in with_images
         if a.asset_type == "CHARACTER" and a.reference_image_url
     ]
-    unplaced_assets = [a for a in with_images if a not in placed_assets]
+    if fallback_chars:
+        placed_assets = fallback_chars
+        unplaced_assets = [a for a in with_images if a not in placed_assets]
 ```
 
 This ensures the LLM rewriter sees `★ PLACED IN SCENE (MUST SELECT)` even when storyboard tags were wrong.
 
 ### Fix 4: Keyframe Enforcement — Fallback to All Manifest Characters
 
-**File**: `keyframes.py` (line 539)
+**File**: `keyframes.py` — after `placed_char_tags` computation
 
-When `placed_char_tags` resolves to empty but the manifest has CHARACTER assets with reference images, **fall back to using all manifest CHARACTER assets**:
+When `placed_char_tags` resolves to empty but the project has a manifest, falls back to all manifest CHARACTER assets with reference images:
 
 ```python
-placed_char_tags = {
-    p["asset_tag"]
-    for p in placements
-    if "asset_tag" in p
-    and asset_map.get(p["asset_tag"])
-    and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
-    and asset_map[p["asset_tag"]].reference_image_url
-}
-
-# FALLBACK: if scene has placements but none resolved to manifest characters,
-# use ALL manifest CHARACTER assets with reference images
 if not placed_char_tags and project.manifest_id:
     placed_char_tags = {
         a.manifest_tag
         for a in all_assets
         if a.asset_type == "CHARACTER" and a.reference_image_url
     }
-    if placed_char_tags:
-        logger.warning(
-            f"Scene {scene.scene_index}: no placed chars resolved from scene manifest, "
-            f"falling back to all manifest CHARACTER assets: {placed_char_tags}"
-        )
 ```
 
 This ensures:
@@ -252,13 +191,14 @@ This ensures:
 
 ## Files Modified
 
-| File | Fix | Change |
-|------|-----|--------|
-| `backend/vidpipe/pipeline/storyboard.py` | 1, 2 | Tighten ENHANCED_STORYBOARD_PROMPT, add `_remap_unrecognized_tags()` post-processing |
-| `backend/vidpipe/services/manifest_service.py` | 1 | Update `format_asset_registry()` footer text |
-| `backend/vidpipe/services/prompt_rewriter.py` | 3 | Add fallback MUST SELECT logic in `_list_available_references()` |
-| `backend/vidpipe/pipeline/keyframes.py` | 4 | Add fallback to all manifest CHARACTERs when placed_char_tags is empty |
-| `backend/vidpipe/schemas/storyboard_enhanced.py` | — | No schema changes needed (new_asset_declarations stays optional) |
+| File | Fix | Change | Delta |
+|------|-----|--------|-------|
+| `backend/vidpipe/pipeline/storyboard.py` | 1, 2 | Hardened `ENHANCED_STORYBOARD_PROMPT`, added `_remap_unrecognized_tags()`, integrated remapping + audio tag remap in persist loop | +168/-12 |
+| `backend/vidpipe/services/manifest_service.py` | 1 | Updated `format_asset_registry()` footer text | +4/-1 |
+| `backend/vidpipe/services/prompt_rewriter.py` | 3 | Added fallback MUST SELECT logic in `_list_available_references()` | +17/-0 |
+| `backend/vidpipe/pipeline/keyframes.py` | 4 | Added fallback to all manifest CHARACTERs when `placed_char_tags` is empty | +17/-0 |
+
+No schema changes needed (`new_asset_declarations` stays optional in `storyboard_enhanced.py`).
 
 ---
 
@@ -274,6 +214,7 @@ This ensures:
 - Run `_remap_unrecognized_tags()` with manifest containing CHAR_01/CHAR_02
 - Assert: placements are remapped to CHAR_01/CHAR_02
 - Assert: `new_asset_declarations` is cleared for the remapped entries
+- Assert: audio `speaker_tag` values are also remapped
 
 ### Test 3: Prompt Rewriter Fallback
 - Call `_list_available_references()` with `placed_tags={"CHAR_99"}` (non-existent)

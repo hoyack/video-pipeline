@@ -77,6 +77,15 @@ export function listProjects(params?: {
   return request<PaginatedProjects>(`/api/projects${qs ? `?${qs}` : ""}`);
 }
 
+/** PATCH /api/projects/{id} — update project title */
+export function updateProject(projectId: string, body: { title: string }): Promise<{ project_id: string; title: string }> {
+  return request<{ project_id: string; title: string }>(`/api/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 /** DELETE /api/projects/{id} — soft delete project */
 export function deleteProject(projectId: string): Promise<{ status: string; project_id: string }> {
   return request<{ status: string; project_id: string }>(`/api/projects/${projectId}`, {

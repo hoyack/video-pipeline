@@ -73,6 +73,16 @@ export function SceneCard({
 
   const sceneLabel = `Scene ${scene.scene_index + 1}`;
 
+  function buildSceneText(): string {
+    const lines = [sceneLabel];
+    lines.push(`Description: ${scene.description}`);
+    if (scene.start_frame_prompt) lines.push(`Start Frame Prompt: ${scene.start_frame_prompt}`);
+    if (scene.end_frame_prompt) lines.push(`End Frame Prompt: ${scene.end_frame_prompt}`);
+    if (scene.video_motion_prompt) lines.push(`Motion: ${scene.video_motion_prompt}`);
+    if (scene.transition_notes) lines.push(`Transition: ${scene.transition_notes}`);
+    return lines.join("\n");
+  }
+
   return (
     <div
       className={clsx(
@@ -82,9 +92,12 @@ export function SceneCard({
       onClick={() => hasExpandableContent && setExpanded((prev) => !prev)}
     >
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-medium text-gray-400">
-          {sceneLabel}
-        </span>
+        <div className="flex items-center gap-1">
+          <span className="text-xs font-medium text-gray-400">
+            {sceneLabel}
+          </span>
+          <CopyButton text={buildSceneText()} />
+        </div>
         <div className="flex items-center gap-1.5">
           {hasExpandableContent && (
             <svg

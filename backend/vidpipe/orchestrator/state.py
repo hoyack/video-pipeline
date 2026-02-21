@@ -8,6 +8,7 @@ from typing import Dict
 
 # Pipeline states in execution order
 PIPELINE_STATES = {
+    "draft": "Project created, not yet generating",
     "pending": "Initial state after project creation",
     "storyboarding": "Generating storyboard from prompt",
     "keyframing": "Generating sequential keyframe images",
@@ -30,6 +31,7 @@ STEP_TRANSITIONS = {
 
 # States from which pipeline can resume
 RESUMABLE_STATES = {
+    "draft",
     "pending",
     "failed",
     "stopped",
@@ -77,7 +79,7 @@ def get_resume_step(status: str, completed_steps: Dict[str, bool]) -> str:
         'keyframing'
     """
     # If failed/stopped/staged, use completed_steps to determine resume point
-    if status in ("failed", "stopped", "staged"):
+    if status in ("draft", "failed", "stopped", "staged"):
         if not completed_steps.get("has_storyboard", False):
             return "pending"
         elif not completed_steps.get("has_keyframes", False):

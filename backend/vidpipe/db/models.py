@@ -219,6 +219,9 @@ class Scene(Base):
     video_motion_prompt: Mapped[str] = mapped_column(Text)
     transition_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50))
+    generation_status: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True, default=None
+    )
 
 
 class SceneManifest(Base):

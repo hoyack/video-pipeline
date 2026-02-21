@@ -28,6 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 12: Fork System Integration with Manifests** - Asset/manifest inheritance, incremental manifesting on fork (completed 2026-02-17)
 - [x] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring (completed 2026-02-19)
 - [x] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback (completed 2026-02-20)
+- [ ] **Phase 15: Video Generation Editor** - Unified create/edit/monitor experience replacing GenerateForm + ProgressView; draft projects, gap-filling pipeline, per-scene uploads, VideoGenEditor component, pause/resume
 
 ## Phase Details
 
@@ -105,6 +106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 14
 | 12. Fork System Integration | 0/3 | Complete    | 2026-02-17 |
 | 13. LLM Provider Abstraction | 3/3 | Complete    | 2026-02-19 |
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
+| 15. Video Generation Editor | 0/3 | ○ Planned   | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -297,3 +299,26 @@ Plans:
 
 Plans:
 - [ ] 14-01-PLAN.md — Defense-in-depth: prompt hardening, tag remapping, rewriter fallback, keyframe enforcement fallback
+
+### Phase 15: Video Generation Editor
+**Goal**: Replace the GenerateForm + ProgressView two-screen flow with a unified VideoGenEditor that merges project creation, live generation monitoring, and editing into one view — turning the tool from "submit and wait" into a composable project workspace where AI fills gaps and users retain full control
+**Depends on**: Phase 3 (core pipeline), Phase 14 (latest completed phase)
+**Requirements**: VGED-01, VGED-02, VGED-03, VGED-04, VGED-05, VGED-06, VGED-07, VGED-08, VGED-09, VGED-10, VGED-11, VGED-12
+**Success Criteria** (what must be TRUE):
+  1. `POST /api/projects` creates a draft project with empty Scene rows without starting the pipeline
+  2. `POST /api/projects/{id}/generate` inspects existing assets and only generates what's missing up to the requested stage (gap-filling)
+  3. Pipeline stages (storyboard, keyframes, video_gen, stitcher) skip scenes/assets that already exist
+  4. Per-scene `generation_status` field tracks granular pipeline progress visible to frontend polling
+  5. Scene-level upload endpoints accept keyframe images, video clips, and final video with proper DB row creation
+  6. `VideoGenEditor` component provides unified create → generate → monitor → edit experience with SceneEditorCard lifecycle rendering
+  7. Generate Through slider controls pipeline stop point; scene cards show per-asset generation spinners
+  8. Pause/resume works at per-scene granularity; user can edit assets while paused and resume fills remaining gaps
+  9. App.tsx navigation merges "generate" and "progress" views into single "editor" view
+  10. Existing `POST /api/generate` endpoint remains functional (backward compatibility)
+**Design Doc**: `docs/vidgeneditor.md`
+**Plans:** 3 plans in 3 waves
+
+Plans:
+- [ ] 15-01-PLAN.md — Backend: draft status, create project endpoint, generate endpoint, generation_status column, final-video upload
+- [ ] 15-02-PLAN.md — Pipeline: gap-filling storyboard/keyframes/video_gen/stitcher, per-scene stop flag, generation_status updates
+- [ ] 15-03-PLAN.md — Frontend: VideoGenEditor component, GenerateThroughSlider, ProjectConfigBar, App.tsx navigation merge

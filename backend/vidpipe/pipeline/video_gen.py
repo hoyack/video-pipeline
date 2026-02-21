@@ -831,23 +831,53 @@ async def generate_videos(
     scenes = result.scalars().all()
 
     for scene in scenes:
-        # Check for user-requested stop
+        # Per-scene stop flag check (VGED-11)
         await session.refresh(project)
         if project.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
-            raise PipelineStopped("Pipeline stopped by user")
+            logger.info(f"Pipeline stopped by user at scene {scene.scene_index}")
+            raise PipelineStopped("Stopped by user")
 
-        if is_comfyui:
-            await _generate_video_comfyui(
-                session, scene, file_mgr, project, video_model,
+        # Gap-filling: skip scenes that already have a completed clip (VGED-06)
+        existing_clip_result = await session.execute(
+            select(VideoClip).where(VideoClip.scene_id == scene.id)
+        )
+        existing_clip = existing_clip_result.scalar_one_or_none()
+        if existing_clip and existing_clip.local_path:
+            logger.info(
+                f"Scene {scene.scene_index}: clip already exists, skipping video generation"
             )
-        else:
-            await _generate_video_for_scene(
-                session, scene, file_mgr, client, project, video_model,
-                cv_service=cv_service,
-                scoring_service=scoring_service,
-                text_adapter=text_adapter,
-            )
+            scene.generation_status = None
+            if scene.status != "video_done":
+                scene.status = "video_done"
+            await session.commit()
+            continue
+
+        # Set generation_status before video generation (VGED-05)
+        scene.generation_status = "generating_clip"
+        await session.commit()
+
+        try:
+            if is_comfyui:
+                await _generate_video_comfyui(
+                    session, scene, file_mgr, project, video_model,
+                )
+            else:
+                await _generate_video_for_scene(
+                    session, scene, file_mgr, client, project, video_model,
+                    cv_service=cv_service,
+                    scoring_service=scoring_service,
+                    text_adapter=text_adapter,
+                )
+
+            # Clear generation_status after successful generation (VGED-05)
+            scene.generation_status = None
+            await session.commit()
+        except Exception as e:
+            # On exception: set generation_status to "failed" (VGED-05)
+            scene.generation_status = "failed"
+            await session.commit()
+            raise
 
     # Update project status
     project.status = "stitching"

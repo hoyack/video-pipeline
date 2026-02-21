@@ -249,10 +249,11 @@ async def run_pipeline(
     resume_step = get_resume_step(project.status, completed_steps)
     logger.info(f"Resume point: {resume_step}, completed_steps: {completed_steps}")
 
-    # Reset failed/stopped/staged status to resume step
-    if project.status in ("failed", "stopped", "staged"):
+    # Reset draft/failed/stopped/staged status to resume step (VGED-02 safety check)
+    if project.status in ("draft", "failed", "stopped", "staged"):
         project.status = resume_step
         await session.commit()
+        logger.info(f"Project {project.id}: transitioned from previous status to {resume_step}")
 
     try:
         # Step 1: Storyboard generation
@@ -426,12 +427,26 @@ async def _check_completed_steps(session: AsyncSession, project: Project) -> Dic
             - has_keyframes: True if all scenes have both start and end keyframes
             - has_clips: True if all scenes have completed video clips
     """
-    # Check for storyboard (has scenes)
+    # Check for storyboard (has scenes WITH content)
+    # Draft projects have Scene rows but empty descriptions — those need storyboarding
     scene_count_result = await session.execute(
         select(func.count(Scene.id)).where(Scene.project_id == project.id)
     )
     scene_count = scene_count_result.scalar()
-    has_storyboard = scene_count > 0
+
+    # A storyboard is "done" only if scenes exist AND at least one has non-empty text
+    # (draft projects create empty Scene rows that still need LLM generation)
+    has_storyboard = False
+    if scene_count > 0:
+        filled_count_result = await session.execute(
+            select(func.count(Scene.id)).where(
+                Scene.project_id == project.id,
+                Scene.scene_description != "",
+                Scene.start_frame_prompt != "",
+            )
+        )
+        filled_count = filled_count_result.scalar() or 0
+        has_storyboard = filled_count > 0
 
     # Check for keyframes (all scenes have both start and end keyframes)
     if has_storyboard:

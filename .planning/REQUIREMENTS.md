@@ -83,6 +83,21 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **LLMA-06**: GenerateForm supports text_model and vision_model selection; storyboard/prompt-rewriting uses text_model adapter; reverse-prompting/CV-analysis/candidate-scoring uses vision_model adapter
 - [ ] **LLMA-07**: Provider routing: model ID → adapter mapping via provider registry; Gemini models → VertexAIAdapter, Ollama models → OllamaAdapter; future providers (Anthropic, OpenAI, Grok) can register without modifying core pipeline
 
+## Video Generation Editor
+
+- [x] **VGED-01**: `POST /api/projects` creates draft project with empty Scene rows without starting the pipeline
+- [x] **VGED-02**: `POST /api/projects/{id}/generate` inspects existing assets and only generates what's missing (gap-filling mode)
+- [x] **VGED-03**: `"draft"` added to project status enum; draft projects appear in list with Draft badge
+- [x] **VGED-04**: Scene-level upload endpoints: start-keyframe, end-keyframe, clip, final-video; each validates file type and creates/updates DB rows
+- [x] **VGED-05**: `generation_status` column on Scene model tracks per-scene pipeline progress (generating_text, generating_start_kf, generating_end_kf, generating_clip, complete, failed)
+- [ ] **VGED-06**: Pipeline stages (storyboard, keyframes, video_gen, stitcher) skip scenes/assets that already exist (gap-filling)
+- [ ] **VGED-07**: `VideoGenEditor` component replaces GenerateForm + ProgressView with unified create/edit/monitor experience
+- [ ] **VGED-08**: Generate Through slider controls pipeline stop point (storyboard, keyframes, video, stitch, all)
+- [ ] **VGED-09**: Scene cards render through full lifecycle: empty (dashed) → partially filled → generating (spinners per asset) → complete
+- [ ] **VGED-10**: Real-time asset population via polling with visual feedback (highlight flash on new assets)
+- [ ] **VGED-11**: Pause/resume at per-scene granularity; stop flag checked between individual scene operations
+- [ ] **VGED-12**: App.tsx navigation merges "generate" + "progress" views into single "editor" view
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -175,13 +190,26 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LLMA-05 | Phase 13 | Planned |
 | LLMA-06 | Phase 13 | Planned |
 | LLMA-07 | Phase 13 | Planned |
+| VGED-01 | Phase 15 | Planned |
+| VGED-02 | Phase 15 | Planned |
+| VGED-03 | Phase 15 | Planned |
+| VGED-04 | Phase 15 | Planned |
+| VGED-05 | Phase 15 | Planned |
+| VGED-06 | Phase 15 | Planned |
+| VGED-07 | Phase 15 | Planned |
+| VGED-08 | Phase 15 | Planned |
+| VGED-09 | Phase 15 | Planned |
+| VGED-10 | Phase 15 | Planned |
+| VGED-11 | Phase 15 | Planned |
+| VGED-12 | Phase 15 | Planned |
 
 **Coverage:**
 - v1 requirements: 41 total (all complete)
 - v3 requirements (LLM abstraction): 7 total
-- Mapped to phases: 48
+- Video Generation Editor: 12 total
+- Mapped to phases: 60
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-14*
-*Last updated: 2026-02-14 after Phase 3 completion (all v1 requirements complete)*
+*Last updated: 2026-02-21 after adding Video Generation Editor requirements*

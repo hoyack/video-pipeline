@@ -106,7 +106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 14
 | 12. Fork System Integration | 0/3 | Complete    | 2026-02-17 |
 | 13. LLM Provider Abstraction | 3/3 | Complete    | 2026-02-19 |
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
-| 15. Video Generation Editor | 0/3 | ○ Planned   | — |
+| 15. Video Generation Editor | 1/3 | In Progress|  |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -316,7 +316,7 @@ Plans:
   9. App.tsx navigation merges "generate" and "progress" views into single "editor" view
   10. Existing `POST /api/generate` endpoint remains functional (backward compatibility)
 **Design Doc**: `docs/vidgeneditor.md`
-**Plans:** 3 plans in 3 waves
+**Plans:** 1/3 plans executed
 
 Plans:
 - [ ] 15-01-PLAN.md — Backend: draft status, create project endpoint, generate endpoint, generation_status column, final-video upload

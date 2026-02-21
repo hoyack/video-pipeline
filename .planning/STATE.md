@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 5: Manifesting Engine (V2 pipeline evolution)
+**Current focus:** Phase 15: Video Generation Editor
 
 ## Current Position
 
-Phase: 13 of 13 (LLM Provider Abstraction + Ollama Integration) — COMPLETE
-Plan: 3 of 3 complete
-Status: 13-03 complete — Frontend Ollama Settings UI, vision_model dropdown, OllamaModelEntry types
-Last activity: 2026-02-19 — Completed 13-03 (Ollama Settings section + GenerateForm vision_model)
+Phase: 15 of 15 (Video Generation Editor)
+Plan: 1 of 3 complete
+Status: 15-01 complete — Draft project creation, generate endpoint, final-video upload, Scene.generation_status
+Last activity: 2026-02-21 — Completed 15-01 (Backend infrastructure for Video Generation Editor)
 
-Progress: [██████████] 100% (13 of 13 phases complete, 37 of 37 plans complete)
+Progress: [██████████] 100% (14 of 15 phases complete, 38 of 40 plans complete)
 
 ## Performance Metrics
 
@@ -41,9 +41,11 @@ Progress: [██████████] 100% (13 of 13 phases complete, 37 of
 | 12-fork-system-integration-with-manifests | 3/3 | 7.0 min | 2.3 min |
 | 13-llm-provider-abstraction-ollama | 3/3 | 8.0 min | 2.7 min |
 
+| 15-video-generation-editor | 1/3 | 4.0 min | 4.0 min |
+
 **Recent Trend:**
-- Last 5 plans: 12-02 (3.0min), 12-03 (2.0min), 13-01 (5.0min), 13-02 (unknown), 13-03 (3.0min)
-- Trend: Phase 13 complete — LLM abstraction layer, adapter migration, and full frontend Ollama UI
+- Last 5 plans: 12-03 (2.0min), 13-01 (5.0min), 13-02 (unknown), 13-03 (3.0min), 15-01 (4.0min)
+- Trend: Phase 15 started — Video Generation Editor backend infrastructure
 
 *Updated after each plan completion*
 
@@ -204,6 +206,10 @@ Recent decisions affecting current work:
 - **13-03:** Gemini text models appear in both Text Model and Vision Model groups (all support multimodal)
 - [Phase 13]: cv_analysis_service uses first frame only for adapter.analyze_image() — single-image adapter interface, full detection context in text prompt
 - [Phase 13]: Per-call CVAnalysisService/CandidateScoringService in generate_videos() — enables vision_adapter to flow through correctly, module-level singletons retained but unused from main path
+- **15-01:** Empty string sentinel for draft scenes — gap-filling logic uses `if not s.scene_description.strip()` to detect empty scenes
+- **15-01:** Draft status in both PIPELINE_STATES and RESUMABLE_STATES for full state machine integration
+- **15-01:** POST /api/projects separate from POST /api/generate to maintain backward compatibility
+- **15-01:** Generate endpoint allows starting from "complete" state (re-generation) plus draft/stopped/staged/failed
 
 ### Roadmap Evolution
 
@@ -229,6 +235,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-19 (execution)
-Stopped at: Completed 13-03-PLAN.md (Frontend Ollama UI + vision_model dropdown — Phase 13 COMPLETE)
+Last session: 2026-02-21 (execution)
+Stopped at: Completed 15-01-PLAN.md (Backend infrastructure for Video Generation Editor)
 Resume file: None

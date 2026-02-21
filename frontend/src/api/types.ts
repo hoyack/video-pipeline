@@ -96,6 +96,7 @@ export interface SceneDetail {
   rewritten_keyframe_prompt?: string | null;
   rewritten_video_prompt?: string | null;
   is_empty_slot?: boolean;
+  generation_status?: string | null;
 }
 
 /** Response from GET /api/projects/{id} */
@@ -512,6 +513,42 @@ export interface GenerateNewSceneResponse {
   video_motion_prompt: string;
   transition_notes: string;
   head_sha?: string | null;
+}
+
+/** Request body for POST /api/projects (draft creation) */
+export interface CreateProjectRequest {
+  prompt?: string;
+  title?: string;
+  style?: string;
+  aspect_ratio?: string;
+  clip_duration?: number;
+  scene_count?: number;
+  text_model?: string;
+  image_model?: string;
+  video_model?: string;
+  enable_audio?: boolean;
+  manifest_id?: string | null;
+  quality_mode?: boolean;
+  candidate_count?: number;
+  vision_model?: string | null;
+}
+
+/** Response from POST /api/projects */
+export interface CreateProjectResponse {
+  project_id: string;
+  status: string;
+  scene_count: number;
+}
+
+/** Request body for POST /api/projects/{id}/generate */
+export interface StartGenerationRequest {
+  run_through?: string | null;
+  text_model?: string | null;
+  image_model?: string | null;
+  video_model?: string | null;
+  vision_model?: string | null;
+  clip_duration?: number | null;
+  enable_audio?: boolean | null;
 }
 
 /** Processing progress response */

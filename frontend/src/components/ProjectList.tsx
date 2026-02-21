@@ -33,7 +33,7 @@ function formatCost(item: ProjectListItem): string | null {
 }
 
 interface ProjectListProps {
-  onSelectProject: (projectId: string) => void;
+  onSelectProject: (projectId: string, status?: string) => void;
   onNewProject: () => void;
 }
 
@@ -41,7 +41,7 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(10);
+  const [perPage, setPerPage] = useState(12);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -170,9 +170,10 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
               onChange={(e) => handlePerPageChange(Number(e.target.value))}
               className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-300"
             >
-              <option value={10}>10 / page</option>
-              <option value={50}>50 / page</option>
-              <option value={100}>100 / page</option>
+              <option value={12}>12 / page</option>
+              <option value={24}>24 / page</option>
+              <option value={48}>48 / page</option>
+              <option value={96}>96 / page</option>
             </select>
 
           {/* View toggle */}
@@ -207,6 +208,7 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
             { value: "storyboarding", label: "Storyboarding" },
             { value: "stitching", label: "Stitching" },
             { value: "pending", label: "Pending" },
+            { value: "draft", label: "Draft" },
           ].map((opt) => (
             <button
               key={opt.value}
@@ -248,7 +250,7 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
             <ProjectCard
               key={p.project_id}
               project={p}
-              onClick={() => onSelectProject(p.project_id)}
+              onClick={() => onSelectProject(p.project_id, p.status)}
               onDelete={() => setDeleteConfirm(p.project_id)}
             />
           ))}
@@ -283,7 +285,7 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
                 return (
                   <tr
                     key={p.project_id}
-                    onClick={() => onSelectProject(p.project_id)}
+                    onClick={() => onSelectProject(p.project_id, p.status)}
                     className="group cursor-pointer border-b border-gray-800/50 hover:bg-gray-900/80 transition-colors"
                   >
                     <td className="px-4 py-2.5 text-gray-200 max-w-md truncate">

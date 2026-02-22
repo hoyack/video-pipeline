@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getMetrics } from "../api/client.ts";
 import type { MetricsResponse } from "../api/types.ts";
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from "../lib/constants.ts";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 
 // ---------------------------------------------------------------------------
 // Label lookups
@@ -98,6 +99,7 @@ function DistributionSection({
 // ---------------------------------------------------------------------------
 
 export function Dashboard() {
+  const { showCost } = useShowCost();
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -171,10 +173,10 @@ export function Dashboard() {
           label="Video Seconds"
           value={String(metrics.total_video_seconds)}
         />
-        <SummaryCard
+        {showCost && <SummaryCard
           label="Est. Cost"
           value={`$${metrics.total_estimated_cost.toFixed(2)}`}
-        />
+        />}
         <SummaryCard label="Success Rate" value={`${successRate}%`} />
       </div>
 

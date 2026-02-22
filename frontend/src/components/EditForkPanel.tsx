@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { forkProject, fetchManifestAssets, getEnabledModels } from "../api/client.ts";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { ProjectDetail } from "../api/types.ts";
 import type { ForkRequest, AssetResponse, ModifiedAsset, NewForkUpload, EnabledModelsResponse } from "../api/types.ts";
 import {
@@ -21,6 +22,7 @@ interface EditForkPanelProps {
 }
 
 export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps) {
+  const { showCost } = useShowCost();
   // Project-level state (initialized from existing detail)
   const [prompt, setPrompt] = useState(detail.prompt);
   const [style, setStyle] = useState(detail.style);
@@ -568,14 +570,14 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
       </div>
 
       {/* Cost Estimate */}
-      <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
+      {showCost && <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
         <div>Estimated cost for fork: ~${estimateCost(
           sceneCount * clipDuration, clipDuration, textModel, imageModel, videoModel, audioActive
         ).toFixed(2)}</div>
         <div className="mt-1 text-xs text-gray-500">
           {sceneCount} scene{sceneCount !== 1 ? "s" : ""} &middot; Full regeneration cost shown (inherited assets reduce actual cost)
         </div>
-      </div>
+      </div>}
 
       {/* Asset Registry (Phase 12) */}
       {detail.manifest_id && (

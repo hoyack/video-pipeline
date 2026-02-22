@@ -3,8 +3,11 @@ import clsx from "clsx";
 import { getSettings, updateSettings } from "../api/client.ts";
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from "../lib/constants.ts";
 import type { UserSettingsResponse, OllamaModelEntry } from "../api/types.ts";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 
 export function SettingsPage() {
+  const { setShowCost: setShowCostCtx } = useShowCost();
+  const [showCostLocal, setShowCostLocal] = useState(true);
   const [, setSettings] = useState<UserSettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -59,6 +62,7 @@ export function SettingsPage() {
         setHasOllamaKey(s.has_ollama_key);
         setOllamaEndpoint(s.ollama_endpoint ?? "");
         setOllamaModels(s.ollama_models ?? []);
+        setShowCostLocal(s.show_cost);
       })
       .catch(() => setFeedback({ type: "error", msg: "Failed to load settings" }))
       .finally(() => setLoading(false));
@@ -81,6 +85,7 @@ export function SettingsPage() {
     try {
       const costVal = comfyuiCostPerSecond.trim();
       const res = await updateSettings({
+        show_cost: showCostLocal,
         enabled_text_models: enabledText,
         enabled_image_models: enabledImage,
         enabled_video_models: enabledVideo,
@@ -105,6 +110,7 @@ export function SettingsPage() {
       setComfyuiApiKey("");
       setHasOllamaKey(res.has_ollama_key);
       setOllamaApiKey("");
+      setShowCostCtx(res.show_cost);
       setFeedback({ type: "success", msg: "Settings saved" });
     } catch (err) {
       setFeedback({ type: "error", msg: err instanceof Error ? err.message : "Save failed" });
@@ -209,6 +215,32 @@ export function SettingsPage() {
           Configure enabled models, defaults, and API credentials.
         </p>
       </div>
+
+      {/* Display Preferences */}
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold text-white">Display</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm font-medium text-gray-300">Show Cost Estimates</span>
+            <p className="text-xs text-gray-500">Display estimated costs on projects, forms, and dashboard</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowCostLocal((v) => !v)}
+            className={clsx(
+              "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+              showCostLocal ? "bg-cyan-600" : "bg-gray-700"
+            )}
+          >
+            <span
+              className={clsx(
+                "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                showCostLocal ? "translate-x-6" : "translate-x-1"
+              )}
+            />
+          </button>
+        </div>
+      </section>
 
       {/* Text Models */}
       <ModelSection
@@ -343,7 +375,7 @@ export function SettingsPage() {
             Cost per Second ($)
           </label>
           <input
-            type="number"
+            type={showCostLocal ? "number" : "password"}
             step="0.01"
             min="0"
             value={comfyuiCostPerSecond}

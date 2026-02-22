@@ -413,6 +413,9 @@ class UserSettings(Base):
     comfyui_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     comfyui_cost_per_second: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # Display preferences
+    show_cost: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+
     # Phase 13: Ollama configuration
     ollama_use_cloud: Mapped[bool] = mapped_column(Boolean, default=False)
     ollama_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

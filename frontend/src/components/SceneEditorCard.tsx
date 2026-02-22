@@ -429,129 +429,28 @@ export function SceneEditorCard({
   const getOriginal = (_field: string, original: string | null | undefined) =>
     original ?? "";
 
-  // Empty slot — full card with all 5 editable fields + Generate button
-  if (scene.is_empty_slot) {
-    async function handleGenerateScene() {
-      if (!onGenerateScene) return;
-      setEmptySlotGenerating(true);
-      setEmptySlotGenError(null);
-      try {
-        await onGenerateScene(idx);
-      } catch (err) {
-        setEmptySlotGenError(err instanceof Error ? err.message : "Generation failed");
-      } finally {
-        setEmptySlotGenerating(false);
-      }
-    }
+  // Treat any scene with no content (no text, no assets) as "new" — not just synthetic empty slots
+  const isNewScene = scene.is_empty_slot || (
+    !scene.description &&
+    !scene.start_frame_prompt &&
+    !scene.end_frame_prompt &&
+    !scene.video_motion_prompt &&
+    !scene.has_start_keyframe &&
+    !scene.has_end_keyframe &&
+    !scene.has_clip
+  );
 
-    async function handleGenerateTextOnly() {
-      if (!projectId) return;
-      setEmptySlotGenerating(true);
-      setEmptySlotGenError(null);
-      try {
-        const resp = await generateSceneFields(projectId, {
-          scene_index: idx,
-          all_scene_edits: allSceneEdits,
-          text_model: textModel,
-          prompt: prompt || undefined,
-        });
-        onChange(idx, "scene_description", resp.scene_description);
-        onChange(idx, "start_frame_prompt", resp.start_frame_prompt);
-        onChange(idx, "end_frame_prompt", resp.end_frame_prompt);
-        onChange(idx, "video_motion_prompt", resp.video_motion_prompt);
-        onChange(idx, "transition_notes", resp.transition_notes);
-      } catch (err) {
-        setEmptySlotGenError(err instanceof Error ? err.message : "Generation failed");
-      } finally {
-        setEmptySlotGenerating(false);
-      }
+  async function handleGenerateFullScene() {
+    if (!onGenerateScene) return;
+    setEmptySlotGenerating(true);
+    setEmptySlotGenError(null);
+    try {
+      await onGenerateScene(idx);
+    } catch (err) {
+      setEmptySlotGenError(err instanceof Error ? err.message : "Generation failed");
+    } finally {
+      setEmptySlotGenerating(false);
     }
-
-    return (
-      <div className="rounded-lg border border-dashed border-gray-700 bg-gray-900/50 p-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-emerald-400">
-            Scene {idx + 1} — New
-          </span>
-          <div className="flex items-center gap-2">
-            {projectId && onGenerateScene && (
-              <button
-                type="button"
-                onClick={handleGenerateScene}
-                disabled={emptySlotGenerating}
-                className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-indigo-400 hover:bg-indigo-900/30 transition-colors disabled:opacity-50"
-              >
-                {emptySlotGenerating && <Spinner className="h-2.5 w-2.5 text-indigo-400" />}
-                {emptySlotGenerating ? "Generating..." : "Generate Scene"}
-              </button>
-            )}
-            {projectId && (
-              <button
-                type="button"
-                onClick={handleGenerateTextOnly}
-                disabled={emptySlotGenerating}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-gray-500 hover:text-gray-400 hover:bg-gray-800/50 transition-colors disabled:opacity-50"
-                title="Generate text fields only (no keyframes or clip)"
-              >
-                Text Only
-              </button>
-            )}
-            {canRemove && (
-              <button
-                type="button"
-                onClick={() => onRemove(idx)}
-                className="text-gray-600 hover:text-red-400 transition-colors"
-                title="Remove scene"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
-          </div>
-        </div>
-        {emptySlotGenError && (
-          <div className="mt-1 rounded border border-red-800 bg-red-900/50 px-2 py-1 text-[11px] text-red-300">
-            {emptySlotGenError}
-          </div>
-        )}
-        <EditableField
-          label="Description"
-          value={getValue("scene_description", scene.description)}
-          originalValue=""
-          onChange={(v) => onChange(idx, "scene_description", v)}
-          onClear={() => onChange(idx, "scene_description", "")}
-        />
-        <EditableField
-          label="Start Frame Prompt"
-          value={getValue("start_frame_prompt", scene.start_frame_prompt)}
-          originalValue=""
-          onChange={(v) => onChange(idx, "start_frame_prompt", v)}
-          onClear={() => onChange(idx, "start_frame_prompt", "")}
-        />
-        <EditableField
-          label="End Frame Prompt"
-          value={getValue("end_frame_prompt", scene.end_frame_prompt)}
-          originalValue=""
-          onChange={(v) => onChange(idx, "end_frame_prompt", v)}
-          onClear={() => onChange(idx, "end_frame_prompt", "")}
-        />
-        <EditableField
-          label="Motion Prompt"
-          value={getValue("video_motion_prompt", scene.video_motion_prompt)}
-          originalValue=""
-          onChange={(v) => onChange(idx, "video_motion_prompt", v)}
-          onClear={() => onChange(idx, "video_motion_prompt", "")}
-        />
-        <EditableField
-          label="Transition Notes"
-          value={getValue("transition_notes", scene.transition_notes)}
-          originalValue=""
-          onChange={(v) => onChange(idx, "transition_notes", v)}
-          onClear={() => onChange(idx, "transition_notes", "")}
-        />
-      </div>
-    );
   }
 
   // Removed scene
@@ -580,8 +479,10 @@ export function SceneEditorCard({
   return (
     <div
       className={clsx(
-        "rounded-lg border bg-gray-900 p-3",
-        hasEdits ? "border-amber-700" : "border-gray-800",
+        "rounded-lg border p-3",
+        isNewScene
+          ? "border-dashed border-gray-700 bg-gray-900/50"
+          : hasEdits ? "border-amber-700 bg-gray-900" : "border-gray-800 bg-gray-900",
       )}
     >
       {/* Header — clickable to toggle expand/collapse */}
@@ -598,8 +499,8 @@ export function SceneEditorCard({
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
             </svg>
           )}
-          <span className="text-xs font-medium text-gray-400 flex-shrink-0">
-            Scene {idx + 1}
+          <span className={clsx("text-xs font-medium flex-shrink-0", isNewScene ? "text-emerald-400" : "text-gray-400")}>
+            Scene {idx + 1}{isNewScene ? " — New" : ""}
           </span>
           {expanded === false && (
             <>
@@ -619,6 +520,17 @@ export function SceneEditorCard({
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {isNewScene && projectId && onGenerateScene && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleGenerateFullScene(); }}
+              disabled={emptySlotGenerating}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-indigo-400 hover:bg-indigo-900/30 transition-colors disabled:opacity-50"
+            >
+              {emptySlotGenerating && <Spinner className="h-2.5 w-2.5 text-indigo-400" />}
+              {emptySlotGenerating ? "Generating..." : "Generate Scene"}
+            </button>
+          )}
           {hasEdits && (
             <span className="text-[10px] font-medium uppercase text-amber-400">Modified</span>
           )}
@@ -650,6 +562,11 @@ export function SceneEditorCard({
       {actionError && (
         <div className="mt-2 mb-2 rounded border border-red-800 bg-red-900/50 px-2 py-1 text-[11px] text-red-300">
           {actionError}
+        </div>
+      )}
+      {emptySlotGenError && (
+        <div className="mt-2 mb-2 rounded border border-red-800 bg-red-900/50 px-2 py-1 text-[11px] text-red-300">
+          {emptySlotGenError}
         </div>
       )}
 

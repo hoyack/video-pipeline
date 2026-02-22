@@ -433,6 +433,7 @@ export interface UserSettingsResponse {
   has_ollama_key: boolean;
   ollama_endpoint: string | null;
   ollama_models: OllamaModelEntry[] | null;
+  show_cost: boolean;
 }
 
 /** Request body for PUT /api/settings */
@@ -456,6 +457,7 @@ export interface UserSettingsUpdate {
   clear_ollama_key?: boolean;
   ollama_endpoint?: string | null;
   ollama_models?: OllamaModelEntry[] | null;
+  show_cost?: boolean;
 }
 
 /** Lightweight response from GET /api/settings/models */
@@ -468,6 +470,7 @@ export interface EnabledModelsResponse {
   default_video_model: string | null;
   comfyui_cost_per_second: number | null;
   ollama_models: OllamaModelEntry[] | null;
+  show_cost: boolean;
 }
 
 /** Request body for POST /api/projects/{id}/scenes/{idx}/regenerate-text */

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { generateVideo, getEnabledModels } from "../api/client.ts";
 import { ManifestSelector } from "./ManifestSelector.tsx";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { EnabledModelsResponse } from "../api/types.ts";
 import {
   STYLE_OPTIONS,
@@ -24,6 +25,7 @@ interface GenerateFormProps {
 }
 
 export function GenerateForm({ onGenerated }: GenerateFormProps) {
+  const { showCost } = useShowCost();
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [style, setStyle] = useState<string>(STYLE_OPTIONS[0]);
@@ -605,19 +607,19 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
                 ))}
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs">
+            {showCost && <div className="flex items-center gap-2 text-xs">
               <span className="text-gray-500">Cost impact:</span>
               <span className="text-amber-400 font-medium">
                 ~{qualityModeCostMultiplier(candidateCount)}x video generation cost
                 {" "}(${(cost * candidateCount).toFixed(2)} est.)
               </span>
-            </div>
+            </div>}
           </div>
         )}
       </div>
 
       {/* Cost Estimate */}
-      <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
+      {showCost && <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
         <div>
           Estimated cost: ~${cost.toFixed(2)}
           {runThrough && <span className="ml-1 text-xs text-cyan-400">(through {runThrough})</span>}
@@ -627,7 +629,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
           {runThrough !== "storyboard" && <> &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img</>}
           {runThrough !== "storyboard" && runThrough !== "keyframes" && <> &middot; ${videoCostPerSecond.toFixed(2)}/s video{audioActive ? " (with audio)" : ""}</>}
         </div>
-      </div>
+      </div>}
 
       {/* Error */}
       {error && (

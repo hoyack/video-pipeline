@@ -4,6 +4,7 @@ import type { ProjectListItem } from "../api/types.ts";
 import { estimateCost, TERMINAL_STATUSES } from "../lib/constants.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { ProjectCard } from "./ProjectCard.tsx";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 
 type ViewMode = "list" | "cards";
 
@@ -39,6 +40,7 @@ interface ProjectListProps {
 }
 
 export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: ProjectListProps) {
+  const { showCost } = useShowCost();
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [page, setPage] = useState(1);
@@ -278,9 +280,9 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
                 <th className="px-4 py-2.5 text-left font-medium text-gray-400">
                   Status
                 </th>
-                <th className="px-4 py-2.5 text-right font-medium text-gray-400">
+                {showCost && <th className="px-4 py-2.5 text-right font-medium text-gray-400">
                   Est. Cost
-                </th>
+                </th>}
                 <th className="px-4 py-2.5 text-left font-medium text-gray-400">
                   Created
                 </th>
@@ -303,9 +305,9 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
                     <td className="px-4 py-2.5">
                       <StatusBadge status={p.status} />
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-gray-400">
+                    {showCost && <td className="px-4 py-2.5 text-right font-mono text-gray-400">
                       {cost ?? "\u2014"}
-                    </td>
+                    </td>}
                     <td className="px-4 py-2.5 text-gray-500">
                       {new Date(p.created_at).toLocaleString()}
                     </td>

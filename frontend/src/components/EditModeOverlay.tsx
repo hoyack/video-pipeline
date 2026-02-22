@@ -1,14 +1,12 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import clsx from "clsx";
 import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewScene, getDownloadUrl, deleteProject } from "../api/client.ts";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { ProjectDetail, SceneDetail, SceneEditPayload, EditProjectRequest, EnabledModelsResponse, SceneReference } from "../api/types.ts";
 import { usePolling } from "../hooks/usePolling.ts";
 import {
   STYLE_OPTIONS,
   ASPECT_RATIOS,
-  TOTAL_DURATION_MIN,
-  TOTAL_DURATION_MAX,
-  TOTAL_DURATION_STEP,
   TEXT_MODELS,
   IMAGE_MODELS,
   VIDEO_MODELS,
@@ -67,6 +65,7 @@ interface EditModeOverlayProps {
 }
 
 export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: EditModeOverlayProps) {
+  const { showCost } = useShowCost();
   // Project-level state
   const [title, setTitle] = useState(detail.title ?? "");
   const [prompt, setPrompt] = useState(detail.prompt);
@@ -79,11 +78,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [videoModel, setVideoModel] = useState(detail.video_model ?? "");
   const [visionModel, setVisionModel] = useState(detail.vision_model ?? "");
   const [enableAudio, setEnableAudio] = useState(detail.audio_enabled ?? false);
-  const [runThrough, setRunThrough] = useState<string | null>(null);
+  const runThrough: string | null = null;
   const [totalDuration, setTotalDuration] = useState(detail.scene_count * (detail.clip_duration ?? 6));
   const [manifestId, setManifestId] = useState<string | null>(detail.manifest_id ?? null);
-
-  const isPartialMode = runThrough === "storyboard" || runThrough === "keyframes";
 
   // Scene edits
   const [sceneEdits, setSceneEdits] = useState<Record<number, Record<string, string>>>({});
@@ -635,15 +632,12 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
   // Cost estimate
   const costEstimate = useMemo(() => {
-    const effectiveTotalDuration = isPartialMode
-      ? sceneCount * clipDuration
-      : totalDuration;
     return estimatePartialCost(
-      effectiveTotalDuration, clipDuration,
+      totalDuration, clipDuration,
       textModel, imageModel, videoModel,
       enableAudio, runThrough,
     );
-  }, [sceneCount, clipDuration, totalDuration, textModel, imageModel, videoModel, enableAudio, runThrough, isPartialMode]);
+  }, [clipDuration, totalDuration, textModel, imageModel, videoModel, enableAudio, runThrough]);
 
   const videoCostPerSecond = useMemo(() => {
     const vm = VIDEO_MODELS.find((m) => m.id === videoModel);
@@ -942,65 +936,38 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         />
       </div>
 
-      {/* Scene Count / Total Duration (dual mode) */}
-      {isPartialMode || !clipDuration ? (
-        <div>
-          <label htmlFor="edit-sceneCount" className="mb-2 block text-sm font-medium text-gray-300">
-            Scenes: {sceneCount}
-            {clipDuration
-              ? <span className="text-gray-500"> · {sceneCount * clipDuration}s total</span>
-              : <span className="text-gray-500"> · 0s total (select a scene length)</span>
-            }
-            {activeScenes.length !== sceneCount && <span className="text-gray-500"> · {activeScenes.length} active</span>}
-            {syntheticCount > 0 && <span className="text-gray-500">, {syntheticCount} new</span>}
-            {removedScenes.size > 0 && <span className="text-gray-500">, {removedScenes.size} removed</span>}
-          </label>
-          <input
-            id="edit-sceneCount"
-            type="range"
-            min={1}
-            max={50}
-            step={1}
-            value={sceneCount}
-            onChange={(e) => {
-              const count = Number(e.target.value);
-              setSceneCount(count);
-              setTotalDuration(count * clipDuration);
-            }}
-            className="dark-slider w-full"
-            style={sliderFill(sceneCount, 1, 50)}
-          />
-          <div className="mt-1 flex justify-between text-xs text-gray-600">
-            <span>1</span>
-            <span>50</span>
-          </div>
+      {/* Scene Count */}
+      <div>
+        <label htmlFor="edit-sceneCount" className="mb-2 block text-sm font-medium text-gray-300">
+          Scenes: {sceneCount}
+          {clipDuration
+            ? <span className="text-gray-500"> · {sceneCount * clipDuration}s total</span>
+            : <span className="text-gray-500"> · select a scene length</span>
+          }
+          {activeScenes.length !== sceneCount && <span className="text-gray-500"> · {activeScenes.length} active</span>}
+          {syntheticCount > 0 && <span className="text-gray-500">, {syntheticCount} new</span>}
+          {removedScenes.size > 0 && <span className="text-gray-500">, {removedScenes.size} removed</span>}
+        </label>
+        <input
+          id="edit-sceneCount"
+          type="range"
+          min={1}
+          max={50}
+          step={1}
+          value={sceneCount}
+          onChange={(e) => {
+            const count = Number(e.target.value);
+            setSceneCount(count);
+            setTotalDuration(count * clipDuration);
+          }}
+          className="dark-slider w-full"
+          style={sliderFill(sceneCount, 1, 50)}
+        />
+        <div className="mt-1 flex justify-between text-xs text-gray-600">
+          <span>1</span>
+          <span>50</span>
         </div>
-      ) : (
-        <div>
-          <label htmlFor="edit-totalDuration" className="mb-2 block text-sm font-medium text-gray-300">
-            Total Duration: {totalDuration}s ({sceneCount} scenes{activeScenes.length !== sceneCount ? ` · ${activeScenes.length} active` : ""}{removedScenes.size > 0 ? ` · ${removedScenes.size} removed` : ""})
-          </label>
-          <input
-            id="edit-totalDuration"
-            type="range"
-            min={clipDuration}
-            max={TOTAL_DURATION_MAX}
-            step={TOTAL_DURATION_STEP}
-            value={totalDuration}
-            onChange={(e) => {
-              const dur = Number(e.target.value);
-              setTotalDuration(dur);
-              setSceneCount(Math.ceil(dur / clipDuration));
-            }}
-            className="dark-slider w-full"
-            style={sliderFill(totalDuration, clipDuration, TOTAL_DURATION_MAX)}
-          />
-          <div className="mt-1 flex justify-between text-xs text-gray-600">
-            <span>{clipDuration}s</span>
-            <span>{TOTAL_DURATION_MAX}s</span>
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* Scene Edits */}
       {allScenes.length > 0 && (
@@ -1052,79 +1019,83 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </div>
       )}
 
-      {/* Regeneration toolbar */}
+      {/* Generate toolbar */}
       {(() => {
         const busy = regenScope !== null || bgOpPending !== null;
-        const showKeyframes = runThrough !== "storyboard";
-        const showClips = runThrough !== "storyboard" && runThrough !== "keyframes";
-        const showVideo = runThrough === null;
 
         const storyboardDisabled = busy || !textModel;
         const keyframesDisabled = busy || !textModel || !imageModel;
         const clipsDisabled = busy || !textModel || !imageModel || !videoModel;
         const videoDisabled = busy || !videoModel;
-        const allPhasesDisabled = busy || !textModel
-          || (showKeyframes && !imageModel)
-          || (showClips && !videoModel);
+        const allPhasesDisabled = busy || !textModel || !imageModel || !videoModel;
 
-        const chips: Array<{
-          scope: "storyboard" | "keyframes" | "clips" | "stitch_only" | "all_phases";
+        const phaseButtons: Array<{
+          scope: "storyboard" | "keyframes" | "clips" | "stitch_only";
           label: string;
           disabled: boolean;
           activeClass: string;
-          visible: boolean;
         }> = [
           {
             scope: "storyboard", label: "Storyboard", disabled: storyboardDisabled,
-            activeClass: "bg-violet-900/50 text-violet-300 hover:bg-violet-800/50",
-            visible: true,
+            activeClass: "border-violet-600 bg-violet-900/50 text-violet-300 hover:bg-violet-800/50",
           },
           {
             scope: "keyframes", label: "Keyframes", disabled: keyframesDisabled,
-            activeClass: "bg-blue-900/50 text-blue-300 hover:bg-blue-800/50",
-            visible: showKeyframes,
+            activeClass: "border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50",
           },
           {
             scope: "clips", label: "Clips", disabled: clipsDisabled,
-            activeClass: "bg-teal-900/50 text-teal-300 hover:bg-teal-800/50",
-            visible: showClips,
+            activeClass: "border-teal-600 bg-teal-900/50 text-teal-300 hover:bg-teal-800/50",
           },
           {
             scope: "stitch_only", label: "Video", disabled: videoDisabled,
-            activeClass: "bg-green-900/50 text-green-300 hover:bg-green-800/50",
-            visible: showVideo,
-          },
-          {
-            scope: "all_phases", label: "All Phases", disabled: allPhasesDisabled,
-            activeClass: "bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50",
-            visible: true,
+            activeClass: "border-green-600 bg-green-900/50 text-green-300 hover:bg-green-800/50",
           },
         ];
 
+        const allPhasesActive = regenScope === "all_phases" || bgOpPending === "all_phases";
+
         return (
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/50 px-3 py-2">
-            <span className="text-[11px] font-medium text-gray-500">Regenerate:</span>
-            {chips.filter(c => c.visible).map(({ scope, label, disabled, activeClass }) => {
-              const isActive = regenScope === scope || bgOpPending === scope;
-              return (
-                <button
-                  key={scope}
-                  type="button"
-                  onClick={() => handleRegenerate(scope)}
-                  disabled={disabled}
-                  className={clsx(
-                    "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    isActive
-                      ? "bg-gray-800 text-gray-500"
-                      : disabled
-                        ? "bg-gray-800 text-gray-600 cursor-not-allowed"
-                        : activeClass,
-                  )}
-                >
-                  {isActive ? "Regenerating..." : label}
-                </button>
-              );
-            })}
+          <div className="space-y-3">
+            <span className="text-xs font-medium text-gray-400">Generate:</span>
+            <div className="grid grid-cols-4 gap-3">
+              {phaseButtons.map(({ scope, label, disabled, activeClass }) => {
+                const isActive = regenScope === scope || bgOpPending === scope;
+                return (
+                  <button
+                    key={scope}
+                    type="button"
+                    onClick={() => handleRegenerate(scope)}
+                    disabled={disabled}
+                    className={clsx(
+                      "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
+                      isActive
+                        ? "border-gray-700 bg-gray-800 text-gray-500"
+                        : disabled
+                          ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
+                          : activeClass,
+                    )}
+                  >
+                    {isActive ? "Running..." : label}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => handleRegenerate("all_phases")}
+              disabled={allPhasesDisabled}
+              className={clsx(
+                "w-full rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
+                allPhasesActive
+                  ? "border-gray-700 bg-gray-800 text-gray-500"
+                  : allPhasesDisabled
+                    ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
+                    : "border-indigo-600 bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50",
+              )}
+            >
+              {allPhasesActive ? "Running..." : "All Phases"}
+            </button>
           </div>
         );
       })()}
@@ -1142,54 +1113,16 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       )}
 
       {/* Cost Estimate */}
-      <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
+      {showCost && <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
         <div>
           Estimated cost: ~${costEstimate.toFixed(2)}
-          {runThrough && <span className="ml-1 text-xs text-indigo-400">(through {runThrough})</span>}
         </div>
         <div className="mt-1 text-xs text-gray-500">
           {sceneCount} scene{sceneCount !== 1 ? "s" : ""}
-          {runThrough !== "storyboard" && <> &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img</>}
-          {runThrough !== "storyboard" && runThrough !== "keyframes" && <> &middot; ${videoCostPerSecond.toFixed(2)}/s video{enableAudio ? " (with audio)" : ""}</>}
+          &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img
+          &middot; ${videoCostPerSecond.toFixed(2)}/s video{enableAudio ? " (with audio)" : ""}
         </div>
-      </div>
-
-      {/* Generate Through (4-position slider) */}
-      <div>
-        <label className="mb-2 block text-sm font-medium text-gray-300">
-          Generate Through: <span className="text-indigo-300">{
-            runThrough === "storyboard" ? "Storyboard" :
-            runThrough === "keyframes" ? "Keyframes" :
-            runThrough === "video" ? "Clips" : "Video"
-          }</span>
-        </label>
-        <input
-          type="range"
-          min={1}
-          max={4}
-          step={1}
-          value={
-            runThrough === "storyboard" ? 1 :
-            runThrough === "keyframes" ? 2 :
-            runThrough === "video" ? 3 : 4
-          }
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            setRunThrough(v === 1 ? "storyboard" : v === 2 ? "keyframes" : v === 3 ? "video" : null);
-          }}
-          className="dark-slider w-full"
-          style={sliderFill(
-            runThrough === "storyboard" ? 1 : runThrough === "keyframes" ? 2 : runThrough === "video" ? 3 : 4,
-            1, 4,
-          )}
-        />
-        <div className="mt-1 flex justify-between text-xs text-gray-500">
-          <span>Storyboard</span>
-          <span>Keyframes</span>
-          <span>Clips</span>
-          <span>Video</span>
-        </div>
-      </div>
+      </div>}
 
       {/* Models & Settings */}
       <div className="space-y-4">
@@ -1243,9 +1176,8 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           </div>
         </div>
 
-        {/* Image Model + Aspect Ratio (visible from Keyframes+) */}
-        {runThrough !== "storyboard" && (
-          <div className="grid gap-4 sm:grid-cols-2">
+        {/* Image Model + Aspect Ratio */}
+        <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-2 block text-sm font-medium text-gray-300">Image Model</label>
               <div className="flex flex-wrap gap-2">
@@ -1288,11 +1220,8 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
               </div>
             </div>
           </div>
-        )}
 
-        {/* Video Model + Scene Length + Audio (visible from Clips+) */}
-        {runThrough !== "storyboard" && runThrough !== "keyframes" && (
-          <>
+        {/* Video Model + Scene Length + Audio */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-300">Video Model</label>
@@ -1361,8 +1290,6 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                 </span>
               </div>
             )}
-          </>
-        )}
 
         {/* Style (always visible) */}
         <div>

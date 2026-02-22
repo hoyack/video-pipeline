@@ -10,6 +10,7 @@ import { ManifestLibrary } from "./components/ManifestLibrary.tsx";
 import { ManifestCreator } from "./components/ManifestCreator.tsx";
 import { SettingsPage } from "./components/SettingsPage.tsx";
 import { createDraftProject } from "./api/client.ts";
+import { ShowCostProvider } from "./hooks/useShowCost.tsx";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("list");
@@ -65,6 +66,7 @@ function App() {
   }
 
   return (
+    <ShowCostProvider>
     <Layout currentView={currentView} onNavigate={(v) => navigateTo(v)}>
       {currentView === "generate" && (
         <GenerateForm onGenerated={handleGenerated} />
@@ -117,6 +119,7 @@ function App() {
       )}
       {currentView === "settings" && <SettingsPage />}
     </Layout>
+    </ShowCostProvider>
   );
 }
 

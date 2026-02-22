@@ -2,6 +2,7 @@ import type { ProjectListItem } from "../api/types.ts";
 import { estimateCost } from "../lib/constants.ts";
 import { TERMINAL_STATUSES } from "../lib/constants.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 
 function formatCost(item: ProjectListItem): string | null {
   if (!item.total_duration || !item.clip_duration || !item.text_model || !item.image_model || !item.video_model) {
@@ -36,6 +37,7 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
+  const { showCost } = useShowCost();
   const cost = formatCost(project);
   const canDelete = TERMINAL_STATUSES.has(project.status);
 
@@ -104,7 +106,7 @@ export function ProjectCard({ project, onClick, onDelete }: ProjectCardProps) {
 
         {/* Cost + date + delete */}
         <div className="flex items-center justify-between text-xs">
-          <span className="font-mono text-gray-400">{cost ?? ""}</span>
+          {showCost && <span className="font-mono text-gray-400">{cost ?? ""}</span>}
           <div className="flex items-center gap-2">
             <span className="text-gray-500">
               {new Date(project.created_at).toLocaleDateString()}

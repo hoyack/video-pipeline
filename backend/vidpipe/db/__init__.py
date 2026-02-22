@@ -90,6 +90,8 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE projects ADD COLUMN head_sha VARCHAR(40)",
         "ALTER TABLE video_clips ADD COLUMN prompt_used TEXT",
         "ALTER TABLE scenes ADD COLUMN generation_status VARCHAR(32)",
+        # Display preferences
+        "ALTER TABLE user_settings ADD COLUMN show_cost INTEGER DEFAULT 1",
     ]
     for sql in migrations:
         try:

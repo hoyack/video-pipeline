@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getProjectDetail, resumeProject, getDownloadUrl, updateProject } from "../api/client.ts";
 import type { ProjectDetail as ProjectDetailType } from "../api/types.ts";
 import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, estimateCost } from "../lib/constants.ts";
+import { useShowCost } from "../hooks/useShowCost.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { SceneCard } from "./SceneCard.tsx";
@@ -79,6 +80,7 @@ interface ProjectDetailProps {
 }
 
 export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProject, onViewManifest }: ProjectDetailProps) {
+  const { showCost } = useShowCost();
   const [detail, setDetail] = useState<ProjectDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -332,7 +334,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
             </p>
           </div>
         )}
-        {costEstimate != null && (
+        {showCost && costEstimate != null && (
           <div>
             <span className="text-xs text-gray-500">Est. Cost</span>
             <p className="mt-1 text-sm font-mono text-gray-200">

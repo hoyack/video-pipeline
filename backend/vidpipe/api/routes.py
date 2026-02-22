@@ -3399,6 +3399,8 @@ class UserSettingsResponse(BaseModel):
     has_ollama_key: bool = False
     ollama_endpoint: Optional[str] = None
     ollama_models: Optional[list] = None
+    # Display preferences
+    show_cost: bool = True
 
 
 class UserSettingsUpdate(BaseModel):
@@ -3423,6 +3425,8 @@ class UserSettingsUpdate(BaseModel):
     clear_ollama_key: Optional[bool] = None
     ollama_endpoint: Optional[str] = None
     ollama_models: Optional[list] = None
+    # Display preferences
+    show_cost: Optional[bool] = None
 
 
 class EnabledModelsResponse(BaseModel):
@@ -3436,6 +3440,8 @@ class EnabledModelsResponse(BaseModel):
     comfyui_cost_per_second: Optional[float] = None
     # Phase 13: Ollama models for dynamic model list
     ollama_models: Optional[list] = None
+    # Display preferences
+    show_cost: bool = True
 
 
 @router.get("/settings")
@@ -3465,6 +3471,7 @@ async def get_settings() -> UserSettingsResponse:
             has_ollama_key=bool(settings.ollama_api_key),
             ollama_endpoint=settings.ollama_endpoint,
             ollama_models=settings.ollama_models,
+            show_cost=bool(settings.show_cost),
         )
 
 
@@ -3536,6 +3543,8 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             settings.ollama_endpoint = body.ollama_endpoint or None
         if body.ollama_models is not None:
             settings.ollama_models = body.ollama_models
+        if body.show_cost is not None:
+            settings.show_cost = body.show_cost
 
         await session.commit()
         await session.refresh(settings)
@@ -3557,6 +3566,7 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             has_ollama_key=bool(settings.ollama_api_key),
             ollama_endpoint=settings.ollama_endpoint,
             ollama_models=settings.ollama_models,
+            show_cost=bool(settings.show_cost),
         )
 
 
@@ -3579,6 +3589,7 @@ async def get_enabled_models() -> EnabledModelsResponse:
             default_video_model=settings.default_video_model,
             comfyui_cost_per_second=settings.comfyui_cost_per_second,
             ollama_models=settings.ollama_models,
+            show_cost=bool(settings.show_cost),
         )
 
 

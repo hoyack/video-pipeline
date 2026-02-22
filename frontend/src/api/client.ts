@@ -33,9 +33,6 @@ import type {
   UserSettingsResponse,
   UserSettingsUpdate,
   EnabledModelsResponse,
-  CreateProjectRequest,
-  CreateProjectResponse,
-  StartGenerationRequest,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -527,48 +524,6 @@ export function deleteSceneKeyframe(
     `/api/projects/${projectId}/scenes/${sceneIdx}/keyframes/${position}`,
     { method: "DELETE" },
   );
-}
-
-// ============================================================================
-// Video Generation Editor: Draft + Generate API
-// ============================================================================
-
-/** POST /api/projects — create a draft project (no pipeline start) */
-export function createDraftProject(body: CreateProjectRequest): Promise<CreateProjectResponse> {
-  return request<CreateProjectResponse>("/api/projects", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-/** POST /api/projects/{id}/generate — start gap-filling generation */
-export function startGeneration(
-  projectId: string,
-  body: StartGenerationRequest,
-): Promise<{ project_id: string; status: string }> {
-  return request<{ project_id: string; status: string }>(
-    `/api/projects/${projectId}/generate`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
-}
-
-/** PUT /api/projects/{id}/final-video — upload final stitched video */
-export async function uploadFinalVideo(projectId: string, file: File): Promise<void> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch(`/api/projects/${projectId}/final-video`, {
-    method: "PUT",
-    body: formData,
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new ApiError(res.status, body.detail ?? res.statusText);
-  }
 }
 
 export { ApiError };

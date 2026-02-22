@@ -9,7 +9,6 @@ import { Dashboard } from "./components/Dashboard.tsx";
 import { ManifestLibrary } from "./components/ManifestLibrary.tsx";
 import { ManifestCreator } from "./components/ManifestCreator.tsx";
 import { SettingsPage } from "./components/SettingsPage.tsx";
-import { VideoGenEditor } from "./components/VideoGenEditor.tsx";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("list");
@@ -24,15 +23,11 @@ function App() {
   }
 
   function handleGenerated(projectId: string) {
-    navigateTo("editor", projectId);
+    navigateTo("progress", projectId);
   }
 
-  function handleSelectProject(projectId: string, status?: string) {
-    if (status === "draft") {
-      navigateTo("editor", projectId);
-    } else {
-      navigateTo("detail", projectId);
-    }
+  function handleSelectProject(projectId: string) {
+    navigateTo("detail", projectId);
   }
 
   function handleViewProgress(projectId: string) {
@@ -60,12 +55,6 @@ function App() {
 
   return (
     <Layout currentView={currentView} onNavigate={(v) => navigateTo(v)}>
-      {currentView === "editor" && (
-        <VideoGenEditor
-          projectId={activeProjectId}
-          onNavigate={(v, pid) => navigateTo(v, pid)}
-        />
-      )}
       {currentView === "generate" && (
         <GenerateForm onGenerated={handleGenerated} />
       )}
@@ -78,7 +67,7 @@ function App() {
       {currentView === "list" && (
         <ProjectList
           onSelectProject={handleSelectProject}
-          onNewProject={() => navigateTo("editor")}
+          onNewProject={() => navigateTo("generate")}
         />
       )}
       {currentView === "detail" && activeProjectId && (

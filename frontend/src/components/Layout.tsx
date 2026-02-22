@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type View = "editor" | "generate" | "progress" | "list" | "detail" | "dashboard" | "manifests" | "manifest-creator" | "settings";
+export type View = "generate" | "progress" | "list" | "detail" | "dashboard" | "manifests" | "manifest-creator" | "settings";
 
 interface LayoutProps {
   currentView: View;
@@ -9,7 +9,7 @@ interface LayoutProps {
 }
 
 const NAV_ITEMS: { view: View; label: string; activeFor?: View[] }[] = [
-  { view: "list", label: "Projects", activeFor: ["generate", "editor"] },
+  { view: "list", label: "Projects", activeFor: ["generate"] },
   { view: "manifests", label: "Manifests" },
   { view: "dashboard", label: "Dashboard" },
   { view: "settings", label: "Settings" },

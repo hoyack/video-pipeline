@@ -437,6 +437,33 @@ class ManifestingEngine:
 
         await self.session.flush()
 
+        # Step 3c: Generate face embeddings for extracted CHARACTER crops
+        # Extracted person crops (source="extracted", asset_type="CHARACTER") need
+        # ArcFace embeddings for downstream keyframe face verification.
+        extracted_chars_needing_emb = [
+            a for a in extracted_crops
+            if a.asset_type == "CHARACTER"
+            and not a.is_face_crop  # face crops handled above in Step 3
+            and a.face_embedding is None
+        ]
+        for char_crop in extracted_chars_needing_emb:
+            pattern = f"tmp/manifests/{manifest_id}/crops/{char_crop.id}_*"
+            matches = glob(pattern)
+            if not matches:
+                continue
+            try:
+                embedding = await asyncio.to_thread(
+                    self.face_matcher.generate_embedding, matches[0]
+                )
+                char_crop.face_embedding = embedding.tobytes()
+                logger.info(f"Generated face embedding for extracted CHARACTER {char_crop.manifest_tag}")
+            except ValueError:
+                logger.warning(
+                    f"No face detected in extracted CHARACTER {char_crop.id}, skipping embedding"
+                )
+
+        await self.session.flush()
+
         # Step 4: Reverse-prompting (only assets without existing reverse_prompt)
         self.progress["current_step"] = "reverse_prompting"
         logger.info("Step 4: Running reverse-prompting")
@@ -806,6 +833,33 @@ class ManifestingEngine:
             except ValueError:
                 logger.warning(
                     f"No face detected in new CHARACTER upload {char_asset.id}, skipping embedding"
+                )
+
+        await self.session.flush()
+
+        # --- Step 4c: Generate face embeddings for new extracted CHARACTER crops ---
+        new_extracted_chars_needing_emb = [
+            a for a in new_extracted_crops
+            if a.asset_type == "CHARACTER"
+            and not a.is_face_crop
+            and a.face_embedding is None
+        ]
+        for char_crop in new_extracted_chars_needing_emb:
+            pattern = f"tmp/manifests/{manifest_id}/crops/{char_crop.id}_*"
+            matches = glob(pattern)
+            if not matches:
+                continue
+            try:
+                embedding = await asyncio.to_thread(
+                    self.face_matcher.generate_embedding, matches[0]
+                )
+                char_crop.face_embedding = embedding.tobytes()
+                logger.info(
+                    f"Generated face embedding for new extracted CHARACTER {char_crop.manifest_tag}"
+                )
+            except ValueError:
+                logger.warning(
+                    f"No face in new extracted CHARACTER {char_crop.id}, skipping embedding"
                 )
 
         await self.session.flush()

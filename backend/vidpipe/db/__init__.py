@@ -89,6 +89,7 @@ async def _run_migrations(conn) -> None:
         # PipeSVN: version control
         "ALTER TABLE projects ADD COLUMN head_sha VARCHAR(40)",
         "ALTER TABLE video_clips ADD COLUMN prompt_used TEXT",
+        "ALTER TABLE scenes ADD COLUMN generation_status VARCHAR(32)",
     ]
     for sql in migrations:
         try:

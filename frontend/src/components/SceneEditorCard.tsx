@@ -34,10 +34,16 @@ interface SceneEditorCardProps {
   imageModel?: string;
   /** All scene edits across the project — for generate-scene-fields neighbor context */
   allSceneEdits?: Record<number, Record<string, string>>;
+  /** Current project prompt from edit form (may differ from saved DB value) */
+  prompt?: string;
   /** Called to generate a complete new scene (text + assets) from an empty slot */
   onGenerateScene?: (sceneIndex: number) => Promise<void>;
   /** True when background asset generation is in progress for this scene */
   isGeneratingAssets?: boolean;
+  /** Whether this card is expanded (accordion) */
+  expanded?: boolean;
+  /** Toggle expand/collapse */
+  onToggleExpand?: () => void;
 }
 
 function StalenessBadge({ staleness }: { staleness: string | null | undefined }) {
@@ -217,8 +223,11 @@ export function SceneEditorCard({
   videoModel,
   imageModel,
   allSceneEdits,
+  prompt,
   onGenerateScene,
   isGeneratingAssets,
+  expanded,
+  onToggleExpand,
 }: SceneEditorCardProps) {
   const idx = scene.scene_index;
   const [promptDetailsOpen, setPromptDetailsOpen] = useState(false);
@@ -394,6 +403,7 @@ export function SceneEditorCard({
         extra_context: textExtraContext[field]?.trim() || undefined,
         text_model: textModel,
         scene_edits: Object.keys(edits).length > 0 ? edits : undefined,
+        prompt: prompt || undefined,
       });
       onChange(idx, field, resp.text);
       // Clear extra context on success
@@ -437,6 +447,7 @@ export function SceneEditorCard({
           scene_index: idx,
           all_scene_edits: allSceneEdits,
           text_model: textModel,
+          prompt: prompt || undefined,
         });
         onChange(idx, "scene_description", resp.scene_description);
         onChange(idx, "start_frame_prompt", resp.start_frame_prompt);
@@ -567,19 +578,48 @@ export function SceneEditorCard({
         hasEdits ? "border-amber-700" : "border-gray-800",
       )}
     >
-      {/* Header */}
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-medium text-gray-400">
-          Scene {idx + 1}
-        </span>
-        <div className="flex items-center gap-2">
+      {/* Header — clickable to toggle expand/collapse */}
+      <div
+        className={clsx("flex items-center justify-between", onToggleExpand && "cursor-pointer select-none")}
+        onClick={onToggleExpand}
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          {onToggleExpand && (
+            <svg
+              className={clsx("h-3.5 w-3.5 flex-shrink-0 text-gray-500 transition-transform", expanded && "rotate-180")}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          )}
+          <span className="text-xs font-medium text-gray-400 flex-shrink-0">
+            Scene {idx + 1}
+          </span>
+          {expanded === false && (
+            <>
+              <span className="text-xs text-gray-500 truncate min-w-0">
+                {getValue("scene_description", scene.description).slice(0, 80) || "No description"}
+              </span>
+              {/* Compact asset dots */}
+              <span className="flex items-center gap-1 flex-shrink-0 ml-1">
+                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", scene.has_start_keyframe ? "bg-blue-400" : "bg-gray-700")} title="Start KF" />
+                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", scene.has_end_keyframe ? "bg-indigo-400" : "bg-gray-700")} title="End KF" />
+                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", scene.has_clip ? "bg-green-400" : "bg-gray-700")} title="Clip" />
+              </span>
+              {(scene.start_keyframe_staleness === "stale" || scene.end_keyframe_staleness === "stale" || scene.clip_staleness === "stale") && (
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Has stale assets" />
+              )}
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
           {hasEdits && (
             <span className="text-[10px] font-medium uppercase text-amber-400">Modified</span>
           )}
           {canRemove && (
             <button
               type="button"
-              onClick={() => onRemove(idx)}
+              onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
               className="text-gray-600 hover:text-red-400 transition-colors"
               title="Remove scene"
             >
@@ -591,16 +631,25 @@ export function SceneEditorCard({
         </div>
       </div>
 
+      {/* Hidden file inputs (always rendered so refs work) */}
+      <input ref={startKfInput} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadKeyframe("start", f); e.target.value = ""; }} />
+      <input ref={endKfInput} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadKeyframe("end", f); e.target.value = ""; }} />
+      <input ref={clipInput} type="file" accept="video/*" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadClip(f); e.target.value = ""; }} />
+
+      {expanded !== false && (<>
       {/* Action error */}
       {actionError && (
-        <div className="mb-2 rounded border border-red-800 bg-red-900/50 px-2 py-1 text-[11px] text-red-300">
+        <div className="mt-2 mb-2 rounded border border-red-800 bg-red-900/50 px-2 py-1 text-[11px] text-red-300">
           {actionError}
         </div>
       )}
 
       {/* Generating assets banner (shown after scene created, before assets arrive) */}
       {isGeneratingAssets && (
-        <div className="mb-2 flex items-center gap-1.5 rounded border border-indigo-800 bg-indigo-900/50 px-2 py-1 text-[11px] text-indigo-300">
+        <div className="mt-2 mb-2 flex items-center gap-1.5 rounded border border-indigo-800 bg-indigo-900/50 px-2 py-1 text-[11px] text-indigo-300">
           <Spinner className="h-2.5 w-2.5 text-indigo-400" />
           Generating keyframes & video clip...
         </div>
@@ -608,7 +657,7 @@ export function SceneEditorCard({
 
       {/* Regen queued feedback with animated indicator */}
       {regenQueued && (
-        <div className="mb-2 flex items-center justify-between rounded border border-green-800 bg-green-900/50 px-2 py-1 text-[11px] text-green-300">
+        <div className="mt-2 mb-2 flex items-center justify-between rounded border border-green-800 bg-green-900/50 px-2 py-1 text-[11px] text-green-300">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
             Regenerating {regenQueued.replace(/_/g, " ")}...
@@ -618,14 +667,6 @@ export function SceneEditorCard({
           </button>
         </div>
       )}
-
-      {/* Hidden file inputs */}
-      <input ref={startKfInput} type="file" accept="image/*" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadKeyframe("start", f); e.target.value = ""; }} />
-      <input ref={endKfInput} type="file" accept="image/*" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadKeyframe("end", f); e.target.value = ""; }} />
-      <input ref={clipInput} type="file" accept="video/*" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadClip(f); e.target.value = ""; }} />
 
       {/* Keyframe previews with staleness badges + actions */}
       <div className="mb-2 flex gap-2">
@@ -659,8 +700,11 @@ export function SceneEditorCard({
                 <button
                   type="button"
                   onClick={() => handleRegenerate("start_keyframe")}
-                  disabled={regenerating === "start_keyframe" || pollingTarget === "start_keyframe"}
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-indigo-400 hover:bg-indigo-900/30 transition-colors disabled:opacity-50"
+                  disabled={regenerating === "start_keyframe" || pollingTarget === "start_keyframe" || !imageModel}
+                  className={clsx(
+                    "flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-50",
+                    !imageModel ? "text-gray-600 cursor-not-allowed" : "text-indigo-400 hover:bg-indigo-900/30",
+                  )}
                 >
                   {(regenerating === "start_keyframe" || regenQueued === "start_keyframe") && <Spinner className="h-2.5 w-2.5 text-indigo-400" />}
                   {regenerating === "start_keyframe" ? "Sending..." : regenQueued === "start_keyframe" ? "Generating..." : "Regen"}
@@ -736,8 +780,11 @@ export function SceneEditorCard({
                 <button
                   type="button"
                   onClick={() => handleRegenerate("end_keyframe")}
-                  disabled={regenerating === "end_keyframe" || pollingTarget === "end_keyframe"}
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-indigo-400 hover:bg-indigo-900/30 transition-colors disabled:opacity-50"
+                  disabled={regenerating === "end_keyframe" || pollingTarget === "end_keyframe" || !imageModel}
+                  className={clsx(
+                    "flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-50",
+                    !imageModel ? "text-gray-600 cursor-not-allowed" : "text-indigo-400 hover:bg-indigo-900/30",
+                  )}
                 >
                   {(regenerating === "end_keyframe" || regenQueued === "end_keyframe") && <Spinner className="h-2.5 w-2.5 text-indigo-400" />}
                   {regenerating === "end_keyframe" ? "Sending..." : regenQueued === "end_keyframe" ? "Generating..." : "Regen"}
@@ -786,15 +833,15 @@ export function SceneEditorCard({
       </div>
 
       {/* Clip preview */}
-      {scene.clip_url && (
-        <div className="mb-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              Clip
-            </span>
-            <StalenessBadge staleness={scene.clip_staleness} />
-          </div>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <div className="mb-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+            Clip
+          </span>
+          <StalenessBadge staleness={scene.clip_staleness} />
+        </div>
+        {scene.clip_url ? (
+          /* eslint-disable-next-line jsx-a11y/media-has-caption */
           <video
             src={scene.clip_url}
             className={clsx(
@@ -805,8 +852,12 @@ export function SceneEditorCard({
             preload="metadata"
             onClick={(e) => e.stopPropagation()}
           />
-        </div>
-      )}
+        ) : (
+          <div className="mt-0.5 flex h-16 items-center justify-center rounded border border-dashed border-gray-700 bg-gray-950 text-[10px] text-gray-600">
+            No clip
+          </div>
+        )}
+      </div>
 
       {/* Clip staleness + actions */}
       {scene.has_clip && scene.clip_staleness === "stale" && !scene.clip_url && (
@@ -821,8 +872,11 @@ export function SceneEditorCard({
             <button
               type="button"
               onClick={() => handleRegenerate("video_clip")}
-              disabled={regenerating === "video_clip" || pollingTarget === "video_clip"}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-indigo-400 hover:bg-indigo-900/30 transition-colors disabled:opacity-50"
+              disabled={regenerating === "video_clip" || pollingTarget === "video_clip" || !videoModel}
+              className={clsx(
+                "flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-50",
+                !videoModel ? "text-gray-600 cursor-not-allowed" : "text-indigo-400 hover:bg-indigo-900/30",
+              )}
             >
               {(regenerating === "video_clip" || regenQueued === "video_clip") && <Spinner className="h-2.5 w-2.5 text-indigo-400" />}
               {regenerating === "video_clip" ? "Sending..." : regenQueued === "video_clip" ? "Generating..." : "Regen Clip"}
@@ -875,7 +929,7 @@ export function SceneEditorCard({
         originalValue={getOriginal("scene_description", scene.description)}
         onChange={(v) => onChange(idx, "scene_description", v)}
         onClear={() => onChange(idx, "scene_description", "")}
-        onRegen={projectId ? () => handleTextRegen("scene_description") : undefined}
+        onRegen={projectId && textModel ? () => handleTextRegen("scene_description") : undefined}
         regenerating={regenTextFields.has("scene_description")}
         showContext={showTextContextFor === "scene_description"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "scene_description" ? null : "scene_description")}
@@ -890,7 +944,7 @@ export function SceneEditorCard({
         onChange={(v) => onChange(idx, "start_frame_prompt", v)}
         onClear={() => onChange(idx, "start_frame_prompt", "")}
         staleness={scene.start_keyframe_staleness}
-        onRegen={projectId ? () => handleTextRegen("start_frame_prompt") : undefined}
+        onRegen={projectId && textModel ? () => handleTextRegen("start_frame_prompt") : undefined}
         regenerating={regenTextFields.has("start_frame_prompt")}
         showContext={showTextContextFor === "start_frame_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "start_frame_prompt" ? null : "start_frame_prompt")}
@@ -905,7 +959,7 @@ export function SceneEditorCard({
         onChange={(v) => onChange(idx, "end_frame_prompt", v)}
         onClear={() => onChange(idx, "end_frame_prompt", "")}
         staleness={scene.end_keyframe_staleness}
-        onRegen={projectId ? () => handleTextRegen("end_frame_prompt") : undefined}
+        onRegen={projectId && textModel ? () => handleTextRegen("end_frame_prompt") : undefined}
         regenerating={regenTextFields.has("end_frame_prompt")}
         showContext={showTextContextFor === "end_frame_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "end_frame_prompt" ? null : "end_frame_prompt")}
@@ -920,7 +974,7 @@ export function SceneEditorCard({
         onChange={(v) => onChange(idx, "video_motion_prompt", v)}
         onClear={() => onChange(idx, "video_motion_prompt", "")}
         staleness={scene.clip_staleness}
-        onRegen={projectId ? () => handleTextRegen("video_motion_prompt") : undefined}
+        onRegen={projectId && textModel ? () => handleTextRegen("video_motion_prompt") : undefined}
         regenerating={regenTextFields.has("video_motion_prompt")}
         showContext={showTextContextFor === "video_motion_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "video_motion_prompt" ? null : "video_motion_prompt")}
@@ -934,7 +988,7 @@ export function SceneEditorCard({
         originalValue={getOriginal("transition_notes", scene.transition_notes)}
         onChange={(v) => onChange(idx, "transition_notes", v)}
         onClear={() => onChange(idx, "transition_notes", "")}
-        onRegen={projectId ? () => handleTextRegen("transition_notes") : undefined}
+        onRegen={projectId && textModel ? () => handleTextRegen("transition_notes") : undefined}
         regenerating={regenTextFields.has("transition_notes")}
         showContext={showTextContextFor === "transition_notes"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "transition_notes" ? null : "transition_notes")}
@@ -997,6 +1051,8 @@ export function SceneEditorCard({
         </div>
       )}
 
+      </>)}
+
       {/* Lightbox modal */}
       {lightboxUrl && (
         <div
@@ -1049,7 +1105,7 @@ export function SceneEditorCard({
             value={getValue(editorField, fieldOriginalMap[editorField])}
             onChange={(v) => onChange(idx, editorField, v)}
             onClose={() => setEditorField(null)}
-            onRegen={projectId ? () => handleTextRegen(editorField) : undefined}
+            onRegen={projectId && textModel ? () => handleTextRegen(editorField) : undefined}
             regenerating={regenTextFields.has(editorField)}
             extraContext={textExtraContext[editorField] ?? ""}
             onExtraContextChange={(v) => setTextExtraContext(prev => ({ ...prev, [editorField]: v }))}

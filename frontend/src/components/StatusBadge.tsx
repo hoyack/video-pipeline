@@ -10,6 +10,7 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "bg-red-600 text-red-100",
   stopped: "bg-amber-600 text-amber-100",
   staged: "bg-cyan-600 text-cyan-100",
+  draft: "bg-gray-500 text-gray-100",
 };
 
 const LABELS: Record<string, string> = {
@@ -22,6 +23,7 @@ const LABELS: Record<string, string> = {
   failed: "Failed",
   stopped: "Stopped",
   staged: "Staged",
+  draft: "Draft",
 };
 
 export function StatusBadge({ status }: { status: string }) {

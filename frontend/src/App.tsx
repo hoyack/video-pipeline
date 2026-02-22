@@ -9,6 +9,7 @@ import { Dashboard } from "./components/Dashboard.tsx";
 import { ManifestLibrary } from "./components/ManifestLibrary.tsx";
 import { ManifestCreator } from "./components/ManifestCreator.tsx";
 import { SettingsPage } from "./components/SettingsPage.tsx";
+import { createDraftProject } from "./api/client.ts";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("list");
@@ -53,6 +54,16 @@ function App() {
     navigateTo("manifest-creator"); // View opens creator in read mode for now
   }
 
+  async function handleNewDraft() {
+    try {
+      const res = await createDraftProject();
+      navigateTo("detail", res.project_id);
+    } catch {
+      // Fall back to generate form if draft creation fails
+      navigateTo("generate");
+    }
+  }
+
   return (
     <Layout currentView={currentView} onNavigate={(v) => navigateTo(v)}>
       {currentView === "generate" && (
@@ -68,6 +79,7 @@ function App() {
         <ProjectList
           onSelectProject={handleSelectProject}
           onNewProject={() => navigateTo("generate")}
+          onNewDraft={handleNewDraft}
         />
       )}
       {currentView === "detail" && activeProjectId && (

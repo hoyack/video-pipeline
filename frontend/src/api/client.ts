@@ -33,6 +33,10 @@ import type {
   UserSettingsResponse,
   UserSettingsUpdate,
   EnabledModelsResponse,
+  CreateDraftProjectRequest,
+  CreateDraftProjectResponse,
+  StartGenerationRequest,
+  StartGenerationResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -52,6 +56,25 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, body.detail ?? res.statusText);
   }
   return res.json() as Promise<T>;
+}
+
+/** POST /api/projects — create a draft project (no pipeline execution) */
+export function createDraftProject(body: CreateDraftProjectRequest = {}): Promise<CreateDraftProjectResponse> {
+  return request<CreateDraftProjectResponse>("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** POST /api/projects/{id}/generate — start pipeline on an existing project */
+export function startGeneration(projectId: string, body?: StartGenerationRequest): Promise<StartGenerationResponse> {
+  return request<StartGenerationResponse>(`/api/projects/${projectId}/generate`, {
+    method: "POST",
+    ...(body
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : {}),
+  });
 }
 
 /** POST /api/generate — start a new video generation job */

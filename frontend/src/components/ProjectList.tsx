@@ -35,13 +35,14 @@ function formatCost(item: ProjectListItem): string | null {
 interface ProjectListProps {
   onSelectProject: (projectId: string) => void;
   onNewProject: () => void;
+  onNewDraft?: () => void;
 }
 
-export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps) {
+export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: ProjectListProps) {
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(10);
+  const [perPage, setPerPage] = useState(12);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -162,6 +163,14 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
             >
               + New
             </button>
+            {onNewDraft && (
+              <button
+                onClick={onNewDraft}
+                className="rounded-md bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
+              >
+                + New Draft
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {/* Per-page dropdown */}
@@ -170,9 +179,10 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
               onChange={(e) => handlePerPageChange(Number(e.target.value))}
               className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-300"
             >
-              <option value={10}>10 / page</option>
-              <option value={50}>50 / page</option>
-              <option value={100}>100 / page</option>
+              <option value={12}>12 / page</option>
+              <option value={24}>24 / page</option>
+              <option value={48}>48 / page</option>
+              <option value={96}>96 / page</option>
             </select>
 
           {/* View toggle */}
@@ -207,6 +217,7 @@ export function ProjectList({ onSelectProject, onNewProject }: ProjectListProps)
             { value: "storyboarding", label: "Storyboarding" },
             { value: "stitching", label: "Stitching" },
             { value: "pending", label: "Pending" },
+            { value: "draft", label: "Draft" },
           ].map((opt) => (
             <button
               key={opt.value}

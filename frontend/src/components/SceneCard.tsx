@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import clsx from "clsx";
 import type { SceneDetail, CandidateScore } from "../api/types.ts";
 import { listCandidates, selectCandidate } from "../api/client.ts";
@@ -32,6 +32,25 @@ function PromptSection({ label, text, copyable }: { label: string; text: string;
   );
 }
 
+const GEN_STATUS_LABELS: Record<string, string> = {
+  generating_text: "Generating text...",
+  generating_start_kf: "Generating start keyframe...",
+  generating_end_kf: "Generating end keyframe...",
+  generating_clip: "Generating video clip...",
+  failed: "Failed",
+};
+
+function PulseDot({ failed }: { failed?: boolean }) {
+  return (
+    <span
+      className={clsx(
+        "inline-block h-2 w-2 rounded-full",
+        failed ? "bg-red-400" : "bg-indigo-400 animate-pulse",
+      )}
+    />
+  );
+}
+
 export function SceneCard({
   scene,
   defaultExpanded = false,
@@ -56,10 +75,44 @@ export function SceneCard({
     scene.end_keyframe_url ||
     scene.clip_url
   );
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const genStatus = scene.generation_status ?? null;
+  const isGenerating = !!genStatus && genStatus !== "failed";
+
+  const [expanded, setExpanded] = useState(defaultExpanded || isGenerating);
   const [candidates, setCandidates] = useState<CandidateScore[]>([]);
   const [candidatesLoaded, setCandidatesLoaded] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; title: string } | null>(null);
+  const [flash, setFlash] = useState(false);
+
+  // Track previous asset states for arrival flash
+  const prevAssets = useRef({
+    start: scene.has_start_keyframe,
+    end: scene.has_end_keyframe,
+    clip: scene.has_clip,
+  });
+
+  useEffect(() => {
+    const prev = prevAssets.current;
+    const arrived =
+      (!prev.start && scene.has_start_keyframe) ||
+      (!prev.end && scene.has_end_keyframe) ||
+      (!prev.clip && scene.has_clip);
+    prevAssets.current = {
+      start: scene.has_start_keyframe,
+      end: scene.has_end_keyframe,
+      clip: scene.has_clip,
+    };
+    if (arrived) {
+      setFlash(true);
+      const t = setTimeout(() => setFlash(false), 1200);
+      return () => clearTimeout(t);
+    }
+  }, [scene.has_start_keyframe, scene.has_end_keyframe, scene.has_clip]);
+
+  // Auto-expand when generation_status becomes active
+  useEffect(() => {
+    if (isGenerating) setExpanded(true);
+  }, [isGenerating]);
 
   useEffect(() => {
     if (qualityMode && projectId && expanded && !candidatesLoaded) {
@@ -87,7 +140,9 @@ export function SceneCard({
   return (
     <div
       className={clsx(
-        "rounded-lg border border-gray-800 bg-gray-900 p-3",
+        "rounded-lg border bg-gray-900 p-3 transition-all",
+        flash ? "border-green-400 ring-2 ring-green-400/50" : "border-gray-800",
+        isGenerating && "border-indigo-700",
         hasExpandableContent && "cursor-pointer hover:border-gray-700",
       )}
       onClick={() => hasExpandableContent && setExpanded((prev) => !prev)}
@@ -132,6 +187,19 @@ export function SceneCard({
       >
         {scene.description}
       </p>
+      {genStatus && (
+        <div className="mb-2 flex items-center gap-1.5">
+          <PulseDot failed={genStatus === "failed"} />
+          <span
+            className={clsx(
+              "text-xs font-medium",
+              genStatus === "failed" ? "text-red-400" : "text-indigo-400 animate-pulse",
+            )}
+          >
+            {GEN_STATUS_LABELS[genStatus] ?? genStatus}
+          </span>
+        </div>
+      )}
       {expanded && (
         <div className="border-t border-gray-800 pt-1">
           {(scene.start_keyframe_url || scene.end_keyframe_url) && (

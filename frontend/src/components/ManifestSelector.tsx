@@ -122,12 +122,12 @@ export function ManifestSelector({
       <button
         type="button"
         onClick={openPicker}
-        className="flex items-center gap-2 rounded-lg border border-dashed border-gray-700 px-4 py-3 text-sm text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-300"
+        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-700 bg-gray-950 px-4 py-6 text-sm text-gray-500 transition-colors hover:border-gray-500 hover:text-gray-300"
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
           <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
         </svg>
-        Add
+        Select a manifest to attach reference images
       </button>
     );
   }

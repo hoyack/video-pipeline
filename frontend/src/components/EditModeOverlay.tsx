@@ -1,19 +1,23 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import clsx from "clsx";
-import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewScene, getDownloadUrl } from "../api/client.ts";
+import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewScene, getDownloadUrl, deleteProject } from "../api/client.ts";
 import type { ProjectDetail, SceneDetail, SceneEditPayload, EditProjectRequest, EnabledModelsResponse, SceneReference } from "../api/types.ts";
 import { usePolling } from "../hooks/usePolling.ts";
 import {
   STYLE_OPTIONS,
   ASPECT_RATIOS,
+  TOTAL_DURATION_MIN,
   TOTAL_DURATION_MAX,
+  TOTAL_DURATION_STEP,
   TEXT_MODELS,
   IMAGE_MODELS,
   VIDEO_MODELS,
+  estimatePartialCost,
 } from "../lib/constants.ts";
 import { SceneEditorCard } from "./SceneEditorCard.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
+import { ManifestSelector } from "./ManifestSelector.tsx";
 
 /** Schema for project export/import */
 interface ProjectSchema {
@@ -61,20 +65,29 @@ interface EditModeOverlayProps {
 
 export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: EditModeOverlayProps) {
   // Project-level state
+  const [title, setTitle] = useState(detail.title ?? "");
   const [prompt, setPrompt] = useState(detail.prompt);
-  const [style, setStyle] = useState(detail.style);
-  const [aspectRatio, setAspectRatio] = useState(detail.aspect_ratio);
-  const [clipDuration, setClipDuration] = useState(detail.clip_duration ?? 6);
+  const [style, setStyle] = useState(detail.style ?? "");
+  const [aspectRatio, setAspectRatio] = useState(detail.aspect_ratio ?? "");
+  const [clipDuration, setClipDuration] = useState(detail.clip_duration ?? 0);
   const [sceneCount, setSceneCount] = useState(detail.scene_count);
-  const [textModel, setTextModel] = useState(detail.text_model ?? TEXT_MODELS[0].id);
-  const [imageModel, setImageModel] = useState(detail.image_model ?? IMAGE_MODELS[0].id);
-  const [videoModel, setVideoModel] = useState(detail.video_model ?? VIDEO_MODELS[0].id);
+  const [textModel, setTextModel] = useState(detail.text_model ?? "");
+  const [imageModel, setImageModel] = useState(detail.image_model ?? "");
+  const [videoModel, setVideoModel] = useState(detail.video_model ?? "");
   const [visionModel, setVisionModel] = useState(detail.vision_model ?? "");
   const [enableAudio, setEnableAudio] = useState(detail.audio_enabled ?? false);
+  const [runThrough, setRunThrough] = useState<string | null>(null);
+  const [totalDuration, setTotalDuration] = useState(detail.scene_count * (detail.clip_duration ?? 6));
+  const [manifestId, setManifestId] = useState<string | null>(detail.manifest_id ?? null);
+
+  const isPartialMode = runThrough === "storyboard" || runThrough === "keyframes";
 
   // Scene edits
   const [sceneEdits, setSceneEdits] = useState<Record<number, Record<string, string>>>({});
   const [removedScenes, setRemovedScenes] = useState<Set<number>>(new Set());
+
+  // Accordion state — all collapsed by default
+  const [expandedScenes, setExpandedScenes] = useState<Set<number>>(new Set());
 
   const [commitMessage, setCommitMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -134,6 +147,23 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     });
   }, [detail.scenes, generatingSceneIndices]);
 
+  // Auto-mark trailing scenes as removed when scene count is reduced
+  useEffect(() => {
+    const realScenes = detail.scenes.filter(s => !s.is_empty_slot);
+    const newRemoved = new Set(removedScenes);
+    let changed = false;
+    for (const s of realScenes) {
+      if (s.scene_index >= sceneCount && !newRemoved.has(s.scene_index)) {
+        newRemoved.add(s.scene_index);
+        changed = true;
+      } else if (s.scene_index < sceneCount && newRemoved.has(s.scene_index)) {
+        newRemoved.delete(s.scene_index);
+        changed = true;
+      }
+    }
+    if (changed) setRemovedScenes(newRemoved);
+  }, [sceneCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function buildSchema(): ProjectSchema {
     // Merge current edits with scene data to get effective values
     function effective(scene: SceneDetail, field: string, original: string | null | undefined): string {
@@ -144,7 +174,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       version: 1,
       exported_at: new Date().toISOString(),
       project: {
-        title: detail.title,
+        title: title || null,
         prompt,
         style,
         aspect_ratio: aspectRatio,
@@ -155,7 +185,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         video_model: videoModel,
         vision_model: visionModel || null,
         audio_enabled: enableAudio,
-        manifest_id: detail.manifest_id,
+        manifest_id: manifestId,
         quality_mode: detail.quality_mode,
         candidate_count: detail.candidate_count,
       },
@@ -304,6 +334,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       text_model: textModel,
       image_model: imageModel,
       video_model: videoModel,
+      prompt: prompt || undefined,
     });
     // Record baseline SHA for revert-on-cancel
     handleRegenStarted(resp.head_sha ?? null);
@@ -317,7 +348,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     setGeneratingSceneIndices((prev) => new Set(prev).add(sceneIndex));
     // Refresh to pick up the new DB scene
     onRefresh?.();
-  }, [detail.project_id, sceneEdits, textModel, imageModel, videoModel, handleRegenStarted, onRefresh]);
+  }, [detail.project_id, sceneEdits, textModel, imageModel, videoModel, prompt, handleRegenStarted, onRefresh]);
 
   async function handleCancel() {
     if (regenDone.current && baselineSha.current && detail.project_id) {
@@ -372,8 +403,8 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     return [...filteredTextModels, ...ollamaVision];
   }, [filteredTextModels, modelSettings]);
 
-  const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel) ?? VIDEO_MODELS[0];
-  const allowedDurations = selectedVideoModel.allowedDurations;
+  const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel);
+  const allowedDurations = selectedVideoModel?.allowedDurations ?? [];
 
   function handleClipDurationChange(newClip: number) {
     setClipDuration(newClip);
@@ -381,8 +412,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
   function handleVideoModelChange(id: string) {
     setVideoModel(id);
-    const model = VIDEO_MODELS.find((m) => m.id === id) ?? VIDEO_MODELS[0];
-    if (!model.allowedDurations.includes(clipDuration)) {
+    const model = VIDEO_MODELS.find((m) => m.id === id);
+    if (!model) return;
+    if (clipDuration && !model.allowedDurations.includes(clipDuration)) {
       const nearest = model.allowedDurations.reduce((a, b) =>
         Math.abs(b - clipDuration) < Math.abs(a - clipDuration) ? b : a
       );
@@ -450,19 +482,38 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     });
   }
 
+  function toggleScene(idx: number) {
+    setExpandedScenes((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  function expandAllScenes() {
+    setExpandedScenes(new Set(allScenes.map((s) => s.scene_index)));
+  }
+
+  function collapseAllScenes() {
+    setExpandedScenes(new Set());
+  }
+
   function buildEditRequest(): EditProjectRequest {
     const req: EditProjectRequest = {};
 
+    if (title !== (detail.title ?? "")) req.title = title || undefined;
     if (prompt !== detail.prompt) req.prompt = prompt;
-    if (style !== detail.style) req.style = style;
-    if (aspectRatio !== detail.aspect_ratio) req.aspect_ratio = aspectRatio;
-    if (clipDuration !== (detail.clip_duration ?? 6)) req.clip_duration = clipDuration;
+    if (style !== (detail.style ?? "")) req.style = style;
+    if (aspectRatio !== (detail.aspect_ratio ?? "")) req.aspect_ratio = aspectRatio;
+    if (clipDuration !== (detail.clip_duration ?? 0)) req.clip_duration = clipDuration || undefined;
     if (sceneCount !== detail.scene_count) req.target_scene_count = sceneCount;
-    if (textModel !== (detail.text_model ?? TEXT_MODELS[0].id)) req.text_model = textModel;
-    if (imageModel !== (detail.image_model ?? IMAGE_MODELS[0].id)) req.image_model = imageModel;
-    if (videoModel !== (detail.video_model ?? VIDEO_MODELS[0].id)) req.video_model = videoModel;
+    if (textModel !== (detail.text_model ?? "")) req.text_model = textModel || undefined;
+    if (imageModel !== (detail.image_model ?? "")) req.image_model = imageModel || undefined;
+    if (videoModel !== (detail.video_model ?? "")) req.video_model = videoModel || undefined;
     if ((visionModel || undefined) !== (detail.vision_model || undefined)) req.vision_model = visionModel || undefined;
     if (enableAudio !== (detail.audio_enabled ?? false)) req.audio_enabled = enableAudio;
+    if (manifestId !== (detail.manifest_id ?? null)) req.manifest_id = manifestId;
 
     if (Object.keys(sceneEdits).length > 0) {
       const converted: Record<number, SceneEditPayload> = {};
@@ -505,6 +556,25 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     return n;
   }, 0);
 
+  // Cost estimate
+  const costEstimate = useMemo(() => {
+    const effectiveTotalDuration = isPartialMode
+      ? sceneCount * clipDuration
+      : totalDuration;
+    return estimatePartialCost(
+      effectiveTotalDuration, clipDuration,
+      textModel, imageModel, videoModel,
+      enableAudio, runThrough,
+    );
+  }, [sceneCount, clipDuration, totalDuration, textModel, imageModel, videoModel, enableAudio, runThrough, isPartialMode]);
+
+  const videoCostPerSecond = useMemo(() => {
+    const vm = VIDEO_MODELS.find((m) => m.id === videoModel);
+    return enableAudio && vm?.supportsAudio
+      ? (vm?.costPerSecondAudio ?? 0.40)
+      : (vm?.costPerSecond ?? 0.40);
+  }, [videoModel, enableAudio]);
+
   async function handleCommit() {
     if (!hasChanges()) return;
     setSubmitting(true);
@@ -531,12 +601,31 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     }
   }
 
-  async function handleRegenerate(scope: "stale" | "all") {
+  async function handleRegenerate(
+    scope: "storyboard" | "keyframes" | "clips" | "stitch_only" | "all_phases",
+  ) {
     setRegenScope(scope);
     setError(null);
     try {
-      bgOpBaselineSha.current = detail.head_sha ?? null;
-      await regenerateProject(detail.project_id, { scope });
+      // Auto-save pending edits so the backend uses the latest state
+      let currentSha = detail.head_sha ?? null;
+      const req = buildEditRequest();
+      const { expected_sha: _e, commit_message: _c, ...fieldChanges } = req;
+      if (Object.keys(fieldChanges).length > 0) {
+        const editResp = await editProject(detail.project_id, req);
+        currentSha = editResp.head_sha;
+        onRefresh?.();
+      }
+
+      bgOpBaselineSha.current = currentSha;
+      await regenerateProject(detail.project_id, {
+        scope,
+        ...(textModel ? { text_model: textModel } : {}),
+        ...(imageModel ? { image_model: imageModel } : {}),
+        ...(videoModel ? { video_model: videoModel } : {}),
+        ...(scope === "all_phases" ? { run_through: runThrough } : {}),
+      });
+      handleRegenStarted(detail.head_sha ?? null);
       setBgOpPending(scope);
       setRegenMessage(`Regeneration (${scope}) started — running in background.`);
     } catch (err) {
@@ -565,6 +654,12 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   function handleAssetChanged() {
     // Refresh detail data in-place without exiting edit mode
     onRefresh?.();
+  }
+
+  /** Compute CSS --fill percentage for dark-slider range inputs */
+  function sliderFill(value: number, min: number, max: number): React.CSSProperties {
+    const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+    return { "--fill": `${pct}%` } as React.CSSProperties;
   }
 
   const activeScenes = detail.scenes.filter((s) => !s.is_empty_slot && !removedScenes.has(s.scene_index));
@@ -608,15 +703,23 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-white">Edit Project</h2>
-          <div className="flex items-center gap-1.5 mt-0.5">
+        <div className="flex-1 mr-4">
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Untitled Project"
+            className={clsx(
+              "w-full bg-transparent text-lg font-bold focus:outline-none border-b pb-1 transition-colors",
+              title !== (detail.title ?? "")
+                ? "text-indigo-300 border-indigo-500"
+                : "text-white border-transparent hover:border-gray-700",
+            )}
+          />
+          <div className="flex items-center gap-1.5 mt-1">
             <code className="text-xs text-gray-500 font-mono">{detail.project_id}</code>
             <CopyButton text={detail.project_id} />
           </div>
-          <p className="text-sm text-gray-400 mt-1">
-            Modify settings or scene prompts in-place. Changes are saved as a versioned checkpoint.
-          </p>
           {staleCount > 0 && (
             <p className="mt-1 text-xs text-amber-400">
               {staleCount} stale asset{staleCount !== 1 ? "s" : ""} detected.
@@ -646,13 +749,6 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             </svg>
             Import
           </button>
-          <button
-            onClick={handleCancel}
-            disabled={cancelling}
-            className="rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-400 hover:border-gray-600 transition-colors disabled:opacity-50"
-          >
-            {cancelling ? "Reverting..." : "Cancel"}
-          </button>
         </div>
       </div>
 
@@ -666,37 +762,47 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </div>
       )}
 
-      {/* Regeneration toolbar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/50 px-3 py-2">
-        <span className="text-[11px] font-medium text-gray-500">Regenerate:</span>
-        {staleCount > 0 && (
-          <button
-            type="button"
-            onClick={() => handleRegenerate("stale")}
-            disabled={regenScope !== null || bgOpPending !== null}
-            className={clsx(
-              "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-              regenScope === "stale"
-                ? "bg-gray-800 text-gray-500"
-                : "bg-amber-900/50 text-amber-300 hover:bg-amber-800/50",
-            )}
-          >
-            {regenScope === "stale" ? "Regenerating..." : bgOpPending === "stale" ? "Regenerating..." : `Stale (${staleCount})`}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => handleRegenerate("all")}
-          disabled={regenScope !== null}
+      {/* Prompt */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label htmlFor="edit-prompt" className="text-sm font-medium text-gray-300">
+            Prompt
+          </label>
+          <div className="flex items-center gap-1">
+            <CopyButton text={prompt} />
+            <button
+              type="button"
+              onClick={() => setPromptEditorOpen(true)}
+              className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-gray-700/50 transition-colors"
+              title="Edit in markdown editor"
+            >
+              <svg className="h-3.5 w-3.5 text-gray-500 hover:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <textarea
+          id="edit-prompt"
+          rows={3}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
           className={clsx(
-            "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-            regenScope === "all"
-              ? "bg-gray-800 text-gray-500"
-              : "bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50",
+            "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1",
+            prompt !== detail.prompt
+              ? "border-amber-600 focus:ring-amber-500"
+              : "border-gray-700 focus:ring-blue-500",
           )}
-        >
-          {regenScope === "all" ? "Regenerating..." : bgOpPending === "all" ? "Regenerating..." : "All Assets"}
-        </button>
+        />
+        {promptEditorOpen && (
+          <MarkdownEditorModal
+            label="Project Prompt"
+            value={prompt}
+            onChange={setPrompt}
+            onClose={() => setPromptEditorOpen(false)}
+          />
+        )}
       </div>
 
       {/* Final Video */}
@@ -749,273 +855,96 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         )}
       </div>
 
-      {/* Prompt */}
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <label htmlFor="edit-prompt" className="text-sm font-medium text-gray-300">
-            Prompt
-          </label>
-          <div className="flex items-center gap-1">
-            <CopyButton text={prompt} />
-            <button
-              type="button"
-              onClick={() => setPromptEditorOpen(true)}
-              className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-gray-700/50 transition-colors"
-              title="Edit in markdown editor"
-            >
-              <svg className="h-3.5 w-3.5 text-gray-500 hover:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        <textarea
-          id="edit-prompt"
-          rows={3}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          className={clsx(
-            "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1",
-            prompt !== detail.prompt
-              ? "border-amber-600 focus:ring-amber-500"
-              : "border-gray-700 focus:ring-blue-500",
-          )}
+      {/* Asset Manifest */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
+        <h3 className="mb-2 text-sm font-medium text-gray-400">Asset Manifest</h3>
+        <ManifestSelector
+          selectedManifestId={manifestId}
+          onManifestSelect={setManifestId}
         />
-        {promptEditorOpen && (
-          <MarkdownEditorModal
-            label="Project Prompt"
-            value={prompt}
-            onChange={setPrompt}
-            onClose={() => setPromptEditorOpen(false)}
+      </div>
+
+      {/* Scene Count / Total Duration (dual mode) */}
+      {isPartialMode || !clipDuration ? (
+        <div>
+          <label htmlFor="edit-sceneCount" className="mb-2 block text-sm font-medium text-gray-300">
+            Scenes: {sceneCount}
+            {clipDuration
+              ? <span className="text-gray-500"> · {sceneCount * clipDuration}s total</span>
+              : <span className="text-gray-500"> · 0s total (select a scene length)</span>
+            }
+            {activeScenes.length !== sceneCount && <span className="text-gray-500"> · {activeScenes.length} active</span>}
+            {syntheticCount > 0 && <span className="text-gray-500">, {syntheticCount} new</span>}
+            {removedScenes.size > 0 && <span className="text-gray-500">, {removedScenes.size} removed</span>}
+          </label>
+          <input
+            id="edit-sceneCount"
+            type="range"
+            min={1}
+            max={50}
+            step={1}
+            value={sceneCount}
+            onChange={(e) => {
+              const count = Number(e.target.value);
+              setSceneCount(count);
+              setTotalDuration(count * clipDuration);
+            }}
+            className="dark-slider w-full"
+            style={sliderFill(sceneCount, 1, 50)}
           />
-        )}
-      </div>
-
-      {/* Style */}
-      <div>
-        <label className="mb-2 block text-sm font-medium text-gray-300">Style</label>
-        <div className="flex flex-wrap gap-2">
-          {STYLE_OPTIONS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setStyle(s)}
-              className={clsx(
-                "rounded-md border px-3 py-1.5 text-sm font-medium capitalize transition-colors",
-                style === s
-                  ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-              )}
-            >
-              {s.replace("_", " ")}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Aspect Ratio */}
-      <div>
-        <label className="mb-2 block text-sm font-medium text-gray-300">Aspect Ratio</label>
-        <div className="flex gap-2">
-          {ASPECT_RATIOS.map((ar) => (
-            <button
-              key={ar}
-              type="button"
-              onClick={() => setAspectRatio(ar)}
-              className={clsx(
-                "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
-                aspectRatio === ar
-                  ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-              )}
-            >
-              {ar}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Scene Length */}
-      <div>
-        <label className="mb-2 block text-sm font-medium text-gray-300">Scene Length</label>
-        <div className="flex gap-2">
-          {allowedDurations.map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => handleClipDurationChange(d)}
-              className={clsx(
-                "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
-                clipDuration === d
-                  ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-              )}
-            >
-              {d}s
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Scene Count */}
-      <div>
-        <label htmlFor="edit-sceneCount" className="mb-2 block text-sm font-medium text-gray-300">
-          Scene Count: {sceneCount} ({activeScenes.length} active{syntheticCount > 0 ? `, ${syntheticCount} new` : ""}{removedScenes.size > 0 ? `, ${removedScenes.size} removed` : ""})
-        </label>
-        <input
-          id="edit-sceneCount"
-          type="range"
-          min={1}
-          max={Math.ceil(TOTAL_DURATION_MAX / clipDuration)}
-          step={1}
-          value={sceneCount}
-          onChange={(e) => setSceneCount(Number(e.target.value))}
-          className="w-full accent-indigo-500"
-        />
-      </div>
-
-      {/* Models */}
-      <div className="space-y-4">
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">Text Model</label>
-          <div className="flex flex-wrap gap-2">
-            {allTextModels.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setTextModel(m.id)}
-                className={clsx(
-                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                  textModel === m.id
-                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                )}
-              >
-                {m.label}
-              </button>
-            ))}
+          <div className="mt-1 flex justify-between text-xs text-gray-600">
+            <span>1</span>
+            <span>50</span>
           </div>
         </div>
-
+      ) : (
         <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">
-            Vision Model
-            <span className="ml-2 text-xs text-gray-500 font-normal">
-              For image analysis, reverse-prompting, and scoring
-            </span>
+          <label htmlFor="edit-totalDuration" className="mb-2 block text-sm font-medium text-gray-300">
+            Total Duration: {totalDuration}s ({sceneCount} scenes{activeScenes.length !== sceneCount ? ` · ${activeScenes.length} active` : ""}{removedScenes.size > 0 ? ` · ${removedScenes.size} removed` : ""})
           </label>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setVisionModel("")}
-              className={clsx(
-                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                visionModel === ""
-                  ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-              )}
-            >
-              Same as Text
-            </button>
-            {allVisionModels.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setVisionModel(m.id)}
-                className={clsx(
-                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                  visionModel === m.id
-                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                )}
-              >
-                {m.label}
-              </button>
-            ))}
+          <input
+            id="edit-totalDuration"
+            type="range"
+            min={clipDuration}
+            max={TOTAL_DURATION_MAX}
+            step={TOTAL_DURATION_STEP}
+            value={totalDuration}
+            onChange={(e) => {
+              const dur = Number(e.target.value);
+              setTotalDuration(dur);
+              setSceneCount(Math.ceil(dur / clipDuration));
+            }}
+            className="dark-slider w-full"
+            style={sliderFill(totalDuration, clipDuration, TOTAL_DURATION_MAX)}
+          />
+          <div className="mt-1 flex justify-between text-xs text-gray-600">
+            <span>{clipDuration}s</span>
+            <span>{TOTAL_DURATION_MAX}s</span>
           </div>
         </div>
-
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">Image Model</label>
-          <div className="flex flex-wrap gap-2">
-            {filteredImageModels.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setImageModel(m.id)}
-                className={clsx(
-                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                  imageModel === m.id
-                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                )}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">Video Model</label>
-          <div className="flex flex-wrap gap-2">
-            {filteredVideoModels.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => handleVideoModelChange(m.id)}
-                className={clsx(
-                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                  videoModel === m.id
-                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                )}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Audio Toggle */}
-        {selectedVideoModel.supportsAudio && (
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-300">Audio</label>
-            <button
-              type="button"
-              onClick={() => setEnableAudio(!enableAudio)}
-              className={clsx(
-                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                enableAudio ? "bg-indigo-600" : "bg-gray-700",
-              )}
-            >
-              <span
-                className={clsx(
-                  "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-                  enableAudio ? "translate-x-6" : "translate-x-1",
-                )}
-              />
-            </button>
-            <span className="ml-2 text-sm text-gray-400">
-              {enableAudio ? "Enabled" : "Disabled"}
-            </span>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Scene Edits */}
       {allScenes.length > 0 && (
         <div>
-          <h3 className="mb-3 text-sm font-medium text-gray-400">
-            Scenes ({detail.scenes.length}{syntheticCount > 0 ? ` + ${syntheticCount} new` : ""})
-            {removedScenes.size > 0 && (
-              <span className="ml-1 text-red-400">
-                ({removedScenes.size} removed)
-              </span>
-            )}
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-medium text-gray-400">
+              Scenes ({detail.scenes.length}{syntheticCount > 0 ? ` + ${syntheticCount} new` : ""})
+              {removedScenes.size > 0 && (
+                <span className="ml-1 text-red-400">
+                  ({removedScenes.size} removed)
+                </span>
+              )}
+            </h3>
+            <button
+              type="button"
+              onClick={expandedScenes.size > 0 ? collapseAllScenes : expandAllScenes}
+              className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              {expandedScenes.size > 0 ? "Collapse All" : "Expand All"}
+            </button>
+          </div>
+          <div className="grid gap-3">
             {allScenes.map((scene) => (
               <SceneEditorCard
                 key={scene.scene_index}
@@ -1033,13 +962,348 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                 videoModel={videoModel}
                 imageModel={imageModel}
                 allSceneEdits={sceneEdits}
+                prompt={prompt}
                 onGenerateScene={handleGenerateScene}
                 isGeneratingAssets={generatingSceneIndices.has(scene.scene_index)}
+                expanded={expandedScenes.has(scene.scene_index)}
+                onToggleExpand={() => toggleScene(scene.scene_index)}
               />
             ))}
           </div>
         </div>
       )}
+
+      {/* Regeneration toolbar */}
+      {(() => {
+        const busy = regenScope !== null || bgOpPending !== null;
+        const showKeyframes = runThrough !== "storyboard";
+        const showClips = runThrough !== "storyboard" && runThrough !== "keyframes";
+        const showVideo = runThrough === null;
+
+        const storyboardDisabled = busy || !textModel;
+        const keyframesDisabled = busy || !textModel || !imageModel;
+        const clipsDisabled = busy || !textModel || !imageModel || !videoModel;
+        const videoDisabled = busy || !videoModel;
+        const allPhasesDisabled = busy || !textModel
+          || (showKeyframes && !imageModel)
+          || (showClips && !videoModel);
+
+        const chips: Array<{
+          scope: "storyboard" | "keyframes" | "clips" | "stitch_only" | "all_phases";
+          label: string;
+          disabled: boolean;
+          activeClass: string;
+          visible: boolean;
+        }> = [
+          {
+            scope: "storyboard", label: "Storyboard", disabled: storyboardDisabled,
+            activeClass: "bg-violet-900/50 text-violet-300 hover:bg-violet-800/50",
+            visible: true,
+          },
+          {
+            scope: "keyframes", label: "Keyframes", disabled: keyframesDisabled,
+            activeClass: "bg-blue-900/50 text-blue-300 hover:bg-blue-800/50",
+            visible: showKeyframes,
+          },
+          {
+            scope: "clips", label: "Clips", disabled: clipsDisabled,
+            activeClass: "bg-teal-900/50 text-teal-300 hover:bg-teal-800/50",
+            visible: showClips,
+          },
+          {
+            scope: "stitch_only", label: "Video", disabled: videoDisabled,
+            activeClass: "bg-green-900/50 text-green-300 hover:bg-green-800/50",
+            visible: showVideo,
+          },
+          {
+            scope: "all_phases", label: "All Phases", disabled: allPhasesDisabled,
+            activeClass: "bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50",
+            visible: true,
+          },
+        ];
+
+        return (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/50 px-3 py-2">
+            <span className="text-[11px] font-medium text-gray-500">Regenerate:</span>
+            {chips.filter(c => c.visible).map(({ scope, label, disabled, activeClass }) => {
+              const isActive = regenScope === scope || bgOpPending === scope;
+              return (
+                <button
+                  key={scope}
+                  type="button"
+                  onClick={() => handleRegenerate(scope)}
+                  disabled={disabled}
+                  className={clsx(
+                    "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    isActive
+                      ? "bg-gray-800 text-gray-500"
+                      : disabled
+                        ? "bg-gray-800 text-gray-600 cursor-not-allowed"
+                        : activeClass,
+                  )}
+                >
+                  {isActive ? "Regenerating..." : label}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {/* Cost Estimate */}
+      <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
+        <div>
+          Estimated cost: ~${costEstimate.toFixed(2)}
+          {runThrough && <span className="ml-1 text-xs text-indigo-400">(through {runThrough})</span>}
+        </div>
+        <div className="mt-1 text-xs text-gray-500">
+          {sceneCount} scene{sceneCount !== 1 ? "s" : ""}
+          {runThrough !== "storyboard" && <> &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img</>}
+          {runThrough !== "storyboard" && runThrough !== "keyframes" && <> &middot; ${videoCostPerSecond.toFixed(2)}/s video{enableAudio ? " (with audio)" : ""}</>}
+        </div>
+      </div>
+
+      {/* Generate Through (4-position slider) */}
+      <div>
+        <label className="mb-2 block text-sm font-medium text-gray-300">
+          Generate Through: <span className="text-indigo-300">{
+            runThrough === "storyboard" ? "Storyboard" :
+            runThrough === "keyframes" ? "Keyframes" :
+            runThrough === "video" ? "Clips" : "Video"
+          }</span>
+        </label>
+        <input
+          type="range"
+          min={1}
+          max={4}
+          step={1}
+          value={
+            runThrough === "storyboard" ? 1 :
+            runThrough === "keyframes" ? 2 :
+            runThrough === "video" ? 3 : 4
+          }
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setRunThrough(v === 1 ? "storyboard" : v === 2 ? "keyframes" : v === 3 ? "video" : null);
+          }}
+          className="dark-slider w-full"
+          style={sliderFill(
+            runThrough === "storyboard" ? 1 : runThrough === "keyframes" ? 2 : runThrough === "video" ? 3 : 4,
+            1, 4,
+          )}
+        />
+        <div className="mt-1 flex justify-between text-xs text-gray-500">
+          <span>Storyboard</span>
+          <span>Keyframes</span>
+          <span>Clips</span>
+          <span>Video</span>
+        </div>
+      </div>
+
+      {/* Models & Settings */}
+      <div className="space-y-4">
+        {/* Text Model + Vision Model (side by side) */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-300">Text Model</label>
+            <div className="flex flex-wrap gap-2">
+              {allTextModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setTextModel(textModel === m.id ? "" : m.id)}
+                  className={clsx(
+                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                    textModel === m.id
+                      ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-300">
+              Vision Model
+              <span className="ml-2 text-xs text-gray-500 font-normal">
+                For image analysis &amp; scoring
+              </span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {allVisionModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setVisionModel(visionModel === m.id ? "" : m.id)}
+                  className={clsx(
+                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                    visionModel === m.id
+                      ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Image Model + Aspect Ratio (visible from Keyframes+) */}
+        {runThrough !== "storyboard" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-300">Image Model</label>
+              <div className="flex flex-wrap gap-2">
+                {filteredImageModels.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setImageModel(imageModel === m.id ? "" : m.id)}
+                    className={clsx(
+                      "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                      imageModel === m.id
+                        ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                        : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-300">Aspect Ratio</label>
+              <div className="flex gap-2">
+                {ASPECT_RATIOS.map((ar) => (
+                  <button
+                    key={ar}
+                    type="button"
+                    onClick={() => setAspectRatio(aspectRatio === ar ? "" : ar)}
+                    className={clsx(
+                      "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
+                      aspectRatio === ar
+                        ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                        : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                    )}
+                  >
+                    {ar}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Video Model + Scene Length + Audio (visible from Clips+) */}
+        {runThrough !== "storyboard" && runThrough !== "keyframes" && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-300">Video Model</label>
+                <div className="flex flex-wrap gap-2">
+                  {filteredVideoModels.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => videoModel === m.id ? setVideoModel("") : handleVideoModelChange(m.id)}
+                      className={clsx(
+                        "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                        videoModel === m.id
+                          ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                          : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-300">Scene Length</label>
+                <div className="flex gap-2">
+                  {allowedDurations.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => handleClipDurationChange(clipDuration === d ? 0 : d)}
+                      className={clsx(
+                        "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
+                        clipDuration === d
+                          ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                          : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                      )}
+                    >
+                      {d}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Audio Toggle */}
+            {selectedVideoModel?.supportsAudio && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-300">Audio</label>
+                <button
+                  type="button"
+                  onClick={() => setEnableAudio(!enableAudio)}
+                  className={clsx(
+                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                    enableAudio ? "bg-indigo-600" : "bg-gray-700",
+                  )}
+                >
+                  <span
+                    className={clsx(
+                      "inline-block h-4 w-4 rounded-full bg-white transition-transform",
+                      enableAudio ? "translate-x-6" : "translate-x-1",
+                    )}
+                  />
+                </button>
+                <span className="ml-2 text-sm text-gray-400">
+                  {enableAudio ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Style (always visible) */}
+        <div>
+          <label className="mb-2 block text-sm font-medium text-gray-300">Style</label>
+          <div className="flex flex-wrap gap-2">
+            {STYLE_OPTIONS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStyle(style === s ? "" : s)}
+                className={clsx(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium capitalize transition-colors",
+                  style === s
+                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                )}
+              >
+                {s.replace("_", " ")}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Quality Mode (read-only) */}
+        {detail.quality_mode && (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-amber-900/50 border border-amber-700 px-2.5 py-0.5 text-xs font-medium text-amber-300">
+              Quality Mode: {detail.candidate_count ?? 2}x candidates
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Commit message */}
       <div>
@@ -1074,7 +1338,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       )}
 
       {/* Actions */}
-      <div className="flex gap-3">
+      <div className="flex items-center gap-3">
         <button
           onClick={handleCommit}
           disabled={submitting || !hasChanges()}
@@ -1093,6 +1357,20 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           className="rounded-lg border border-gray-700 px-4 py-2.5 text-sm font-medium text-gray-300 hover:border-gray-600 transition-colors disabled:opacity-50"
         >
           {cancelling ? "Reverting..." : "Cancel"}
+        </button>
+        <button
+          onClick={async () => {
+            if (!confirm("Delete this project? This cannot be undone.")) return;
+            try {
+              await deleteProject(detail.project_id);
+              onCancel();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Delete failed");
+            }
+          }}
+          className="ml-auto rounded-lg border border-red-800 px-4 py-2.5 text-sm font-medium text-red-400 hover:bg-red-900/50 hover:border-red-700 transition-colors"
+        >
+          Delete
         </button>
       </div>
     </div>

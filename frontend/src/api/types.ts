@@ -96,6 +96,7 @@ export interface SceneDetail {
   rewritten_keyframe_prompt?: string | null;
   rewritten_video_prompt?: string | null;
   is_empty_slot?: boolean;
+  generation_status?: string | null;
 }
 
 /** Response from GET /api/projects/{id} */
@@ -103,8 +104,8 @@ export interface ProjectDetail {
   project_id: string;
   title?: string | null;
   prompt: string;
-  style: string;
-  aspect_ratio: string;
+  style?: string | null;
+  aspect_ratio?: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -149,6 +150,7 @@ export interface EditProjectRequest {
   video_model?: string;
   vision_model?: string;
   audio_enabled?: boolean;
+  manifest_id?: string | null;
   scene_edits?: Record<number, SceneEditPayload>;
   removed_scenes?: number[];
   commit_message?: string;
@@ -197,8 +199,12 @@ export interface RegenerateSceneRequest {
 
 /** Request body for POST /api/projects/{id}/regenerate */
 export interface RegenerateProjectRequest {
-  scope: "stale" | "all" | "stitch_only";
+  scope: "stale" | "all" | "stitch_only" | "storyboard" | "keyframes" | "clips" | "all_phases";
   scene_indices?: number[];
+  text_model?: string;
+  image_model?: string;
+  video_model?: string;
+  run_through?: string | null;
 }
 
 /** Item in GET /api/projects list */
@@ -216,8 +222,8 @@ export interface ProjectListItem {
   audio_enabled?: boolean | null;
   vision_model?: string | null;
   run_through?: string | null;
-  style: string;
-  aspect_ratio: string;
+  style?: string | null;
+  aspect_ratio?: string | null;
   thumbnail_url?: string | null;
 }
 
@@ -470,6 +476,7 @@ export interface RegenerateTextRequest {
   extra_context?: string;
   text_model?: string;
   scene_edits?: Record<string, string>;
+  prompt?: string;
 }
 
 /** Response from POST /api/projects/{id}/scenes/{idx}/regenerate-text */
@@ -483,6 +490,7 @@ export interface GenerateSceneFieldsRequest {
   scene_index: number;
   all_scene_edits?: Record<number, Record<string, string>>;
   text_model?: string;
+  prompt?: string;
 }
 
 /** Response from POST /api/projects/{id}/generate-scene-fields */
@@ -501,6 +509,7 @@ export interface GenerateNewSceneRequest {
   text_model?: string;
   image_model?: string;
   video_model?: string;
+  prompt?: string;
 }
 
 /** Response from POST /api/projects/{id}/generate-new-scene */
@@ -512,6 +521,48 @@ export interface GenerateNewSceneResponse {
   video_motion_prompt: string;
   transition_notes: string;
   head_sha?: string | null;
+}
+
+/** Request body for POST /api/projects (draft project creation) */
+export interface CreateDraftProjectRequest {
+  prompt?: string;
+  title?: string;
+  style?: string;
+  aspect_ratio?: string;
+  clip_duration?: number;
+  scene_count?: number;
+  text_model?: string;
+  image_model?: string;
+  video_model?: string;
+  enable_audio?: boolean;
+  manifest_id?: string | null;
+  quality_mode?: boolean;
+  candidate_count?: number;
+  vision_model?: string | null;
+}
+
+/** Response from POST /api/projects */
+export interface CreateDraftProjectResponse {
+  project_id: string;
+  status: string;
+  scene_count: number;
+}
+
+/** Request body for POST /api/projects/{id}/generate */
+export interface StartGenerationRequest {
+  run_through?: string | null;
+  text_model?: string;
+  image_model?: string;
+  video_model?: string;
+  vision_model?: string;
+  clip_duration?: number;
+  enable_audio?: boolean;
+}
+
+/** Response from POST /api/projects/{id}/generate */
+export interface StartGenerationResponse {
+  project_id: string;
+  status: string;
 }
 
 /** Processing progress response */

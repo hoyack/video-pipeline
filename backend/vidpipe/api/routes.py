@@ -280,8 +280,8 @@ class ProjectDetail(BaseModel):
     project_id: str
     title: Optional[str] = None
     prompt: str
-    style: str
-    aspect_ratio: str
+    style: Optional[str] = None
+    aspect_ratio: Optional[str] = None
     status: str
     created_at: str
     updated_at: str
@@ -329,6 +329,7 @@ class EditProjectRequest(BaseModel):
     video_model: Optional[str] = None
     vision_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
+    manifest_id: Optional[str] = None
     scene_edits: Optional[dict[int, SceneEditPayload]] = None
     removed_scenes: Optional[list[int]] = None
     commit_message: Optional[str] = None
@@ -363,8 +364,8 @@ class ProjectListItem(BaseModel):
     vision_model: Optional[str] = None
     # Selective stage execution
     run_through: Optional[str] = None
-    style: str = ""
-    aspect_ratio: str = ""
+    style: Optional[str] = None
+    aspect_ratio: Optional[str] = None
     thumbnail_url: Optional[str] = None
 
 
@@ -613,14 +614,14 @@ class CreateProjectRequest(BaseModel):
     """Request schema for POST /api/projects (draft project creation)."""
     prompt: str = ""
     title: str = ""
-    style: str = "cinematic"
-    aspect_ratio: str = "16:9"
-    clip_duration: int = 6
-    scene_count: int = 3
-    text_model: str = "gemini-2.5-flash"
-    image_model: str = "gemini-2.5-flash-image"
-    video_model: str = "veo-3.1-fast-generate-001"
-    enable_audio: bool = True
+    style: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    clip_duration: Optional[int] = None
+    scene_count: int = 1
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    enable_audio: bool = False
     manifest_id: Optional[str] = None
     quality_mode: bool = False
     candidate_count: int = 1
@@ -806,36 +807,42 @@ async def create_draft_project(request: CreateProjectRequest):
     Does NOT start the pipeline. The project remains in "draft" status until
     POST /api/projects/{id}/generate is called.
     """
-    # Validate aspect ratio
-    if request.aspect_ratio not in ("16:9", "9:16"):
-        raise HTTPException(status_code=422, detail=f"aspect_ratio must be 16:9 or 9:16, got {request.aspect_ratio}")
+    # Validate aspect ratio (skip if None — draft may not have one yet)
+    if request.aspect_ratio is not None:
+        if request.aspect_ratio not in ("16:9", "9:16"):
+            raise HTTPException(status_code=422, detail=f"aspect_ratio must be 16:9 or 9:16, got {request.aspect_ratio}")
 
-    # Validate clip duration per video model
-    allowed = ALLOWED_DURATIONS.get(request.video_model, [5, 6, 7, 8])
-    if request.clip_duration not in allowed:
-        raise HTTPException(
-            status_code=422,
-            detail=f"clip_duration {request.clip_duration} not supported for {request.video_model}. Allowed: {allowed}",
-        )
+    # Validate clip duration per video model (skip if either is None)
+    if request.clip_duration is not None and request.video_model is not None:
+        allowed = ALLOWED_DURATIONS.get(request.video_model, [5, 6, 7, 8])
+        if request.clip_duration not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"clip_duration {request.clip_duration} not supported for {request.video_model}. Allowed: {allowed}",
+            )
 
-    # Validate model IDs
-    if not (request.text_model in ALLOWED_TEXT_MODELS or request.text_model.startswith("ollama/")):
-        raise HTTPException(status_code=422, detail=f"Invalid text_model: {request.text_model}")
-    if request.image_model not in ALLOWED_IMAGE_MODELS:
-        raise HTTPException(status_code=422, detail=f"Invalid image_model: {request.image_model}")
-    if request.video_model not in ALLOWED_VIDEO_MODELS:
-        raise HTTPException(status_code=422, detail=f"Invalid video_model: {request.video_model}")
+    # Validate model IDs (skip if None — draft may not have them yet)
+    if request.text_model is not None:
+        if not (request.text_model in ALLOWED_TEXT_MODELS or request.text_model.startswith("ollama/")):
+            raise HTTPException(status_code=422, detail=f"Invalid text_model: {request.text_model}")
+    if request.image_model is not None:
+        if request.image_model not in ALLOWED_IMAGE_MODELS:
+            raise HTTPException(status_code=422, detail=f"Invalid image_model: {request.image_model}")
+    if request.video_model is not None:
+        if request.video_model not in ALLOWED_VIDEO_MODELS:
+            raise HTTPException(status_code=422, detail=f"Invalid video_model: {request.video_model}")
     if request.vision_model is not None and not (
         request.vision_model in ALLOWED_TEXT_MODELS or request.vision_model.startswith("ollama/")
     ):
         raise HTTPException(status_code=422, detail=f"Invalid vision_model: {request.vision_model}")
 
-    # Validate audio
-    if request.enable_audio and request.video_model not in AUDIO_CAPABLE_MODELS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Audio generation not supported for {request.video_model}",
-        )
+    # Validate audio (only check if video_model is also specified)
+    if request.enable_audio and request.video_model is not None:
+        if request.video_model not in AUDIO_CAPABLE_MODELS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Audio generation not supported for {request.video_model}",
+            )
 
     # Validate quality mode
     if request.candidate_count < 1 or request.candidate_count > 4:
@@ -848,14 +855,15 @@ async def create_draft_project(request: CreateProjectRequest):
         raise HTTPException(status_code=422, detail="scene_count must be 1-20")
 
     async with async_session() as session:
+        clip_dur = request.clip_duration or 0
         project = Project(
             title=request.title or None,
             prompt=request.prompt,
-            style=request.style,
-            aspect_ratio=request.aspect_ratio,
-            target_clip_duration=request.clip_duration,
+            style=request.style or "",
+            aspect_ratio=request.aspect_ratio or "",
+            target_clip_duration=clip_dur,
             target_scene_count=request.scene_count,
-            total_duration=request.scene_count * request.clip_duration,
+            total_duration=request.scene_count * (request.clip_duration or 6),
             text_model=request.text_model,
             image_model=request.image_model,
             video_model=request.video_model,
@@ -978,6 +986,41 @@ async def start_generation(
                 if body.enable_audio and project.video_model not in AUDIO_CAPABLE_MODELS:
                     raise HTTPException(status_code=422, detail=f"Audio not supported for {project.video_model}")
                 project.audio_enabled = body.enable_audio
+
+        # Verify project is fully configured before launching pipeline
+        run_through = project.run_through
+        required_fields: dict[str, object] = {
+            "text_model": project.text_model,
+            "image_model": project.image_model,
+            "video_model": project.video_model,
+            "aspect_ratio": project.aspect_ratio,
+        }
+        if run_through == "storyboard":
+            required_fields = {"text_model": project.text_model}
+        elif run_through == "keyframes":
+            required_fields = {
+                "text_model": project.text_model,
+                "image_model": project.image_model,
+            }
+        missing = [k for k, v in required_fields.items() if not v]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot start generation: missing required fields: {', '.join(missing)}",
+            )
+
+        # Ensure clip_duration is set (default to 6 if missing)
+        if not project.target_clip_duration:
+            project.target_clip_duration = 6
+            project.total_duration = (project.target_scene_count or 1) * 6
+
+        # Ensure style has a value (default to "cinematic")
+        if not project.style:
+            project.style = "cinematic"
+
+        # Ensure aspect_ratio is set for non-storyboard runs
+        if not project.aspect_ratio and run_through != "storyboard":
+            raise HTTPException(status_code=422, detail="Cannot start generation: aspect_ratio is required")
 
         # Transition status
         if project.status == "draft":
@@ -1460,7 +1503,7 @@ async def delete_project(project_id: uuid.UUID):
     Only terminal-status projects (complete, failed, stopped) can be deleted.
     DB records are preserved for cost tracking.
     """
-    DELETABLE_STATUSES = {"complete", "failed", "stopped"}
+    DELETABLE_STATUSES = {"complete", "failed", "stopped", "draft"}
 
     async with async_session() as session:
         result = await session.execute(
@@ -2293,7 +2336,7 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
             raise HTTPException(status_code=404, detail="Project not found")
 
         # Must be terminal
-        if project.status not in ("complete", "failed", "stopped", "staged"):
+        if project.status not in ("complete", "failed", "stopped", "staged", "draft"):
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot edit project in status '{project.status}'"
@@ -2329,6 +2372,20 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
                 if old_val != value:
                     setattr(project, attr, value)
                     changes.append({"type": "project_field", "field": attr, "old": str(old_val), "new": str(value)})
+
+        # Handle manifest_id change (requires UUID parsing + snapshot)
+        if body.manifest_id is not None:
+            manifest_uuid = uuid.UUID(body.manifest_id)
+            old_manifest = project.manifest_id
+            if old_manifest != manifest_uuid:
+                manifest = await manifest_service.get_manifest(session, manifest_uuid)
+                if not manifest:
+                    raise HTTPException(status_code=404, detail=f"Manifest {body.manifest_id} not found")
+                project.manifest_id = manifest_uuid
+                project.manifest_version = manifest.version
+                await manifest_service.create_snapshot(session, manifest_uuid, project.id)
+                await manifest_service.increment_usage(session, manifest_uuid)
+                changes.append({"type": "project_field", "field": "manifest_id", "old": str(old_manifest), "new": str(manifest_uuid)})
 
         # Apply scene edits
         if body.scene_edits:
@@ -3764,6 +3821,7 @@ class RegenerateTextRequest(BaseModel):
     extra_context: str = ""
     text_model: Optional[str] = None  # override project's text_model (use current edit-mode selection)
     scene_edits: Optional[dict[str, str]] = None
+    prompt: Optional[str] = None  # override project prompt (use current edit-mode value)
 
 
 class _RegenTextResult(BaseModel):
@@ -3927,9 +3985,10 @@ async def regenerate_scene_text(
         f"Return a JSON object with a single 'text' field containing the regenerated content."
     )
 
-    # Build user prompt with context
+    # Build user prompt with context — prefer in-flight prompt from edit form
+    effective_prompt = body.prompt or project.prompt
     parts = []
-    parts.append(f"PROJECT CONCEPT: {project.prompt}")
+    parts.append(f"PROJECT CONCEPT: {effective_prompt}")
     if project.style_guide:
         sg = project.style_guide
         if isinstance(sg, dict):
@@ -3989,6 +4048,7 @@ class GenerateSceneFieldsRequest(BaseModel):
     scene_index: int
     all_scene_edits: Optional[dict[int, dict[str, str]]] = None
     text_model: Optional[str] = None
+    prompt: Optional[str] = None  # override project prompt (use current edit-mode value)
 
 
 class GenerateSceneFieldsResponse(BaseModel):
@@ -4066,9 +4126,10 @@ async def generate_scene_fields(
         f"  scene_description, start_frame_prompt, end_frame_prompt, video_motion_prompt, transition_notes"
     )
 
-    # Build user prompt with context
+    # Build user prompt with context — prefer in-flight prompt from edit form
+    effective_prompt = body.prompt or project.prompt
     parts = []
-    parts.append(f"PROJECT CONCEPT: {project.prompt}")
+    parts.append(f"PROJECT CONCEPT: {effective_prompt}")
     if project.style_guide:
         sg = project.style_guide
         if isinstance(sg, dict):
@@ -4135,6 +4196,7 @@ class GenerateNewSceneRequest(BaseModel):
     text_model: Optional[str] = None
     image_model: Optional[str] = None
     video_model: Optional[str] = None
+    prompt: Optional[str] = None  # override project prompt (use current edit-mode value)
 
 
 class GenerateNewSceneResponse(BaseModel):
@@ -4225,8 +4287,10 @@ async def generate_new_scene(
             f"  scene_description, start_frame_prompt, end_frame_prompt, video_motion_prompt, transition_notes"
         )
 
+        # Prefer in-flight prompt from edit form over saved DB value
+        effective_prompt = body.prompt or project.prompt
         parts = []
-        parts.append(f"PROJECT CONCEPT: {project.prompt}")
+        parts.append(f"PROJECT CONCEPT: {effective_prompt}")
         if project.style_guide:
             sg = project.style_guide
             if isinstance(sg, dict):
@@ -4872,8 +4936,12 @@ async def _regenerate_clip(session, project, scene, file_mgr, prompt_override=No
 # ============================================================================
 
 class RegenerateProjectRequest(BaseModel):
-    scope: str  # "stale", "all", "stitch_only"
+    scope: str  # "stale", "all", "stitch_only", "storyboard", "keyframes", "clips", "all_phases"
     scene_indices: Optional[list[int]] = None
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    run_through: Optional[str] = None  # For "all_phases": how far to go
 
 
 @router.post("/projects/{project_id}/regenerate")
@@ -4899,7 +4967,100 @@ async def regenerate_project(
 
     if body.scope == "stitch_only":
         background_tasks.add_task(_run_restitch, project_id)
+    elif body.scope == "storyboard":
+        effective_text_model = body.text_model or project.text_model
+        if not effective_text_model:
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot regenerate storyboard: missing text_model",
+            )
+        background_tasks.add_task(
+            _run_storyboard_regeneration, project_id,
+            text_model_override=body.text_model,
+        )
+    elif body.scope == "keyframes":
+        effective_text_model = body.text_model or project.text_model
+        effective_image_model = body.image_model or project.image_model
+        if not effective_text_model or not effective_image_model:
+            missing = []
+            if not effective_text_model:
+                missing.append("text_model")
+            if not effective_image_model:
+                missing.append("image_model")
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot regenerate keyframes: missing {', '.join(missing)}",
+            )
+        background_tasks.add_task(
+            _run_keyframes_regeneration, project_id,
+            image_model_override=body.image_model,
+            text_model_override=body.text_model,
+        )
+    elif body.scope == "clips":
+        effective_text_model = body.text_model or project.text_model
+        effective_image_model = body.image_model or project.image_model
+        effective_video_model = body.video_model or project.video_model
+        missing = []
+        if not effective_text_model:
+            missing.append("text_model")
+        if not effective_image_model:
+            missing.append("image_model")
+        if not effective_video_model:
+            missing.append("video_model")
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot regenerate clips: missing {', '.join(missing)}",
+            )
+        background_tasks.add_task(
+            _run_clips_regeneration, project_id,
+            video_model_override=body.video_model,
+            text_model_override=body.text_model,
+        )
+    elif body.scope == "all_phases":
+        # Validate models based on run_through
+        effective_text_model = body.text_model or project.text_model
+        if not effective_text_model:
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot regenerate all phases: missing text_model",
+            )
+        run_through = body.run_through
+        if run_through != "storyboard":
+            effective_image_model = body.image_model or project.image_model
+            if not effective_image_model:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Cannot regenerate all phases: missing image_model",
+                )
+        if run_through not in ("storyboard", "keyframes"):
+            effective_video_model = body.video_model or project.video_model
+            if not effective_video_model:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Cannot regenerate all phases: missing video_model",
+                )
+        background_tasks.add_task(
+            _run_all_phases_regeneration, project_id,
+            run_through=run_through,
+            text_model_override=body.text_model,
+            image_model_override=body.image_model,
+            video_model_override=body.video_model,
+        )
     else:
+        # "stale" or "all" — legacy full regen
+        missing = []
+        if not project.text_model:
+            missing.append("text_model")
+        if not project.image_model:
+            missing.append("image_model")
+        if not project.video_model:
+            missing.append("video_model")
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot regenerate: missing required model settings: {', '.join(missing)}",
+            )
         background_tasks.add_task(_run_project_regeneration, project_id, body.scope, body.scene_indices)
 
     from starlette.responses import JSONResponse
@@ -4924,6 +5085,243 @@ async def _run_restitch(project_id: uuid.UUID):
         from vidpipe.services.checkpoint_service import create_checkpoint
         await create_checkpoint(session, project, "Re-stitched video")
         await session.commit()
+
+
+async def _run_storyboard_regeneration(
+    project_id: uuid.UUID,
+    text_model_override: Optional[str] = None,
+):
+    """Background task to regenerate storyboard text only."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(Project).where(Project.id == project_id))
+            project = result.scalar_one_or_none()
+            if not project:
+                return
+
+            # Persist text_model override so generate_storyboard picks it up
+            if text_model_override and text_model_override != project.text_model:
+                project.text_model = text_model_override
+                await session.flush()
+
+            saved_status = project.status
+
+            # Load user settings so Ollama cloud credentials are available
+            us_result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+            )
+            user_settings = us_result.scalar_one_or_none()
+
+            from vidpipe.services.llm import get_adapter
+            text_adapter = get_adapter(project.text_model, user_settings=user_settings)
+
+            from vidpipe.pipeline.storyboard import generate_storyboard
+            await generate_storyboard(session, project, text_adapter=text_adapter)
+
+            # generate_storyboard sets status to "keyframing" — restore original
+            project.status = saved_status
+
+            from vidpipe.services.checkpoint_service import create_checkpoint
+            await create_checkpoint(session, project, "Regenerated storyboard text")
+            await session.commit()
+    except Exception as e:
+        logger.error("Storyboard regeneration failed for %s: %s", project_id, e, exc_info=True)
+
+
+async def _run_keyframes_regeneration(
+    project_id: uuid.UUID,
+    image_model_override: Optional[str] = None,
+    text_model_override: Optional[str] = None,
+):
+    """Background task to regenerate stale/missing keyframes only."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(Project).where(Project.id == project_id))
+            project = result.scalar_one_or_none()
+            if not project:
+                return
+
+            # Persist model overrides
+            if image_model_override and image_model_override != project.image_model:
+                project.image_model = image_model_override
+                await session.flush()
+            if text_model_override and text_model_override != project.text_model:
+                project.text_model = text_model_override
+                await session.flush()
+
+            saved_status = project.status
+
+            # Load user settings for adapter creation
+            us_result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+            )
+            user_settings = us_result.scalar_one_or_none()
+
+            from vidpipe.services.llm import get_adapter
+            text_adapter = get_adapter(project.text_model, user_settings=user_settings)
+
+            # Delete stale keyframe records so gap-filling regenerates them
+            from vidpipe.services.checkpoint_service import compute_keyframe_staleness
+            from vidpipe.db.models import SceneManifest as SceneManifestModel
+
+            scenes_result = await session.execute(
+                select(Scene).where(Scene.project_id == project.id).order_by(Scene.scene_index)
+            )
+            scenes = scenes_result.scalars().all()
+
+            for scene in scenes:
+                kf_result = await session.execute(select(Keyframe).where(Keyframe.scene_id == scene.id))
+                kfs = kf_result.scalars().all()
+                sm_result = await session.execute(
+                    select(SceneManifestModel).where(
+                        SceneManifestModel.project_id == project.id,
+                        SceneManifestModel.scene_index == scene.scene_index,
+                    )
+                )
+                sm = sm_result.scalar_one_or_none()
+
+                for kf in kfs:
+                    staleness = compute_keyframe_staleness(scene, kf, sm)
+                    if staleness in ("stale", "missing"):
+                        await session.delete(kf)
+                await session.flush()
+
+            from vidpipe.pipeline.keyframes import generate_keyframes
+            await generate_keyframes(session, project, text_adapter=text_adapter)
+
+            # generate_keyframes sets status — restore original
+            project.status = saved_status
+
+            from vidpipe.services.checkpoint_service import create_checkpoint
+            await create_checkpoint(session, project, "Regenerated stale keyframes")
+            await session.commit()
+    except Exception as e:
+        logger.error("Keyframes regeneration failed for %s: %s", project_id, e, exc_info=True)
+
+
+async def _run_clips_regeneration(
+    project_id: uuid.UUID,
+    video_model_override: Optional[str] = None,
+    text_model_override: Optional[str] = None,
+):
+    """Background task to regenerate stale/missing video clips only."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(Project).where(Project.id == project_id))
+            project = result.scalar_one_or_none()
+            if not project:
+                return
+
+            # Persist model overrides
+            if video_model_override and video_model_override != project.video_model:
+                project.video_model = video_model_override
+                await session.flush()
+            if text_model_override and text_model_override != project.text_model:
+                project.text_model = text_model_override
+                await session.flush()
+
+            saved_status = project.status
+
+            # Load user settings for adapter creation
+            us_result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+            )
+            user_settings = us_result.scalar_one_or_none()
+
+            from vidpipe.services.llm import get_adapter
+            text_adapter = get_adapter(project.text_model, user_settings=user_settings)
+            vision_adapter = None
+            if project.vision_model:
+                vision_adapter = get_adapter(project.vision_model, user_settings=user_settings)
+
+            # Delete stale clip records and reset scene status so generate_videos picks them up
+            from vidpipe.services.checkpoint_service import compute_clip_staleness
+            from vidpipe.db.models import SceneManifest as SceneManifestModel
+
+            scenes_result = await session.execute(
+                select(Scene).where(Scene.project_id == project.id).order_by(Scene.scene_index)
+            )
+            scenes = scenes_result.scalars().all()
+
+            for scene in scenes:
+                clip_result = await session.execute(
+                    select(VideoClip).where(VideoClip.scene_id == scene.id)
+                )
+                clip = clip_result.scalar_one_or_none()
+                sm_result = await session.execute(
+                    select(SceneManifestModel).where(
+                        SceneManifestModel.project_id == project.id,
+                        SceneManifestModel.scene_index == scene.scene_index,
+                    )
+                )
+                sm = sm_result.scalar_one_or_none()
+
+                staleness = compute_clip_staleness(scene, clip, sm)
+                if staleness in ("stale", "missing"):
+                    if clip:
+                        await session.delete(clip)
+                    # generate_videos filters on status == "keyframes_done"
+                    scene.status = "keyframes_done"
+            await session.flush()
+
+            from vidpipe.pipeline.video_gen import generate_videos
+            await generate_videos(
+                session, project,
+                text_adapter=text_adapter,
+                vision_adapter=vision_adapter,
+            )
+
+            # Restore original status
+            project.status = saved_status
+
+            from vidpipe.services.checkpoint_service import create_checkpoint
+            await create_checkpoint(session, project, "Regenerated stale clips")
+            await session.commit()
+    except Exception as e:
+        logger.error("Clips regeneration failed for %s: %s", project_id, e, exc_info=True)
+
+
+async def _run_all_phases_regeneration(
+    project_id: uuid.UUID,
+    run_through: Optional[str] = None,
+    text_model_override: Optional[str] = None,
+    image_model_override: Optional[str] = None,
+    video_model_override: Optional[str] = None,
+):
+    """Background task to chain per-phase regeneration up to run_through."""
+    try:
+        # Always run storyboard
+        await _run_storyboard_regeneration(
+            project_id, text_model_override=text_model_override,
+        )
+
+        if run_through == "storyboard":
+            return
+
+        # Keyframes
+        await _run_keyframes_regeneration(
+            project_id,
+            image_model_override=image_model_override,
+            text_model_override=text_model_override,
+        )
+
+        if run_through == "keyframes":
+            return
+
+        # Clips
+        await _run_clips_regeneration(
+            project_id,
+            video_model_override=video_model_override,
+            text_model_override=text_model_override,
+        )
+
+        if run_through == "video":
+            return
+
+        # Full pipeline — also restitch
+        await _run_restitch(project_id)
+    except Exception as e:
+        logger.error("All-phases regeneration failed for %s: %s", project_id, e, exc_info=True)
 
 
 async def _run_project_regeneration(

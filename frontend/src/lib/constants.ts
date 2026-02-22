@@ -170,7 +170,7 @@ export function qualityModeCostMultiplier(candidateCount: number): number {
 }
 
 /** Terminal statuses — pipeline is no longer running */
-export const TERMINAL_STATUSES = new Set(["complete", "failed", "stopped", "staged"]);
+export const TERMINAL_STATUSES = new Set(["complete", "failed", "stopped", "staged", "draft"]);
 
 /** Slow stages where polling can back off */
 export const SLOW_STAGES = new Set(["video_gen"]);

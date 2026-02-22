@@ -101,6 +101,10 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
         if (!cancelled) {
           setDetail(d);
           setError(null);
+          // Auto-enter edit mode for draft projects
+          if (d.status === "draft") {
+            setEditing(true);
+          }
         }
       })
       .catch((err) => {
@@ -163,7 +167,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
 
   if (editing && detail) {
     return (
-      <div className="mx-auto max-w-3xl space-y-6">
+      <div className="mx-auto max-w-5xl space-y-6">
         <EditModeOverlay
           detail={detail}
           onCommitted={() => {
@@ -272,16 +276,20 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
             <StatusBadge status={detail.status} />
           </div>
         </div>
+        {detail.style && (
         <div>
           <span className="text-xs text-gray-500">Style</span>
           <p className="mt-1 text-sm capitalize text-gray-200">
             {detail.style.replace("_", " ")}
           </p>
         </div>
+        )}
+        {detail.aspect_ratio && (
         <div>
           <span className="text-xs text-gray-500">Aspect Ratio</span>
           <p className="mt-1 text-sm text-gray-200">{detail.aspect_ratio}</p>
         </div>
+        )}
         <div>
           <span className="text-xs text-gray-500">Scenes</span>
           <p className="mt-1 text-sm text-gray-200">{detail.scene_count}</p>

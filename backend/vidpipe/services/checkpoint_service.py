@@ -236,6 +236,21 @@ async def create_checkpoint(
 
     parent_sha = project.head_sha  # None for first checkpoint
 
+    # Skip if snapshot is unchanged (same SHA as current head)
+    if sha == parent_sha:
+        logger.info(
+            "Checkpoint skipped for project %s — snapshot unchanged (sha=%s): %s",
+            project.id, sha[:8], message,
+        )
+        # Return existing checkpoint so callers don't break
+        existing = await session.execute(
+            select(ProjectCheckpoint).where(
+                ProjectCheckpoint.project_id == project.id,
+                ProjectCheckpoint.sha == sha,
+            )
+        )
+        return existing.scalar_one()
+
     checkpoint = ProjectCheckpoint(
         project_id=project.id,
         sha=sha,

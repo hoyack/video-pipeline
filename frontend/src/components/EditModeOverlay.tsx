@@ -18,6 +18,9 @@ import { SceneEditorCard } from "./SceneEditorCard.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
 import { ManifestSelector } from "./ManifestSelector.tsx";
+import { RegenProgressBar } from "./RegenProgressBar.tsx";
+import { useProjectWebSocket } from "../hooks/useProjectWebSocket.ts";
+import type { WsEvent } from "../api/wsTypes.ts";
 
 /** Schema for project export/import */
 interface ProjectSchema {
@@ -108,16 +111,90 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   // Track scenes currently generating assets in background
   const [generatingSceneIndices, setGeneratingSceneIndices] = useState<Set<number>>(new Set());
 
-  // Poll for completion when any background operation is running
+  // WebSocket progress state
+  const [wsProgress, setWsProgress] = useState<{
+    phase: string | null;
+    totalScenes: number;
+    completedScenes: number;
+    currentSceneIndex: number | null;
+    currentStatus: string | null;
+  }>({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+
+  const handleWsEvent = useCallback((event: WsEvent) => {
+    switch (event.type) {
+      case "phase_started":
+        setWsProgress({ phase: event.phase, totalScenes: event.total_scenes, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+        break;
+      case "phase_completed":
+        setWsProgress(prev => ({ ...prev, phase: null, currentSceneIndex: null, currentStatus: null }));
+        break;
+      case "scene_status":
+        setWsProgress(prev => ({ ...prev, currentSceneIndex: event.scene_index, currentStatus: event.status }));
+        onRefresh?.();
+        break;
+      case "scene_keyframe_ready":
+      case "scene_clip_ready":
+        setWsProgress(prev => ({ ...prev, completedScenes: prev.completedScenes + 1 }));
+        onRefresh?.();
+        break;
+      case "scene_text_ready":
+      case "stitch_ready":
+      case "refresh":
+        onRefresh?.();
+        break;
+      case "checkpoint_created":
+        // Intermediate progress — just refresh data, don't clear bgOpPending
+        onRefresh?.();
+        break;
+      case "regen_complete": {
+        // Final signal: all phases done — clear bgOpPending and show feedback
+        const op = bgOpPending;
+        setBgOpPending(null);
+        bgOpBaselineSha.current = null;
+        setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+        if (op === "stitch") {
+          setStitchMessage("Re-stitch complete — video updated.");
+        } else if (op) {
+          setRegenMessage(`Regeneration (${op}) complete.`);
+        }
+        onRefresh?.();
+        break;
+      }
+      case "error":
+        setError(event.message);
+        if (bgOpPending) {
+          setBgOpPending(null);
+          bgOpBaselineSha.current = null;
+          setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+        }
+        break;
+      case "scene_regen_started":
+      case "scene_regen_done":
+        if (event.type === "scene_regen_done") {
+          onRefresh?.();
+        }
+        break;
+    }
+  }, [bgOpPending, onRefresh]);
+
+  const wsEnabled = bgOpPending !== null || generatingSceneIndices.size > 0;
+  const { connected: wsConnected } = useProjectWebSocket({
+    projectId: detail.project_id,
+    enabled: wsEnabled,
+    onEvent: handleWsEvent,
+  });
+
+  // Poll for completion when any background operation is running (fallback when WS is not connected)
   usePolling(
     () => { onRefresh?.(); },
     5000,
-    generatingSceneIndices.size > 0 || bgOpPending !== null,
+    (generatingSceneIndices.size > 0 || bgOpPending !== null) && !wsConnected,
   );
 
   // Detect background operation completion: head_sha changes after checkpoint
   useEffect(() => {
     if (!bgOpPending || !bgOpBaselineSha.current) return;
+    if (wsConnected) return;  // WS handles completion via regen_complete
     if (detail.head_sha && detail.head_sha !== bgOpBaselineSha.current) {
       const op = bgOpPending;
       setBgOpPending(null);
@@ -128,7 +205,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         setRegenMessage(`Regeneration (${op}) complete.`);
       }
     }
-  }, [detail.head_sha, bgOpPending]);
+  }, [detail.head_sha, bgOpPending, wsConnected]);
 
   // Completion detection: remove from generating set when assets arrive
   useEffect(() => {
@@ -614,6 +691,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       if (Object.keys(fieldChanges).length > 0) {
         const editResp = await editProject(detail.project_id, req);
         currentSha = editResp.head_sha;
+        setSceneEdits({});  // Clear — edits now persisted in DB
         onRefresh?.();
       }
 
@@ -965,6 +1043,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                 prompt={prompt}
                 onGenerateScene={handleGenerateScene}
                 isGeneratingAssets={generatingSceneIndices.has(scene.scene_index)}
+                wsConnected={wsConnected}
                 expanded={expandedScenes.has(scene.scene_index)}
                 onToggleExpand={() => toggleScene(scene.scene_index)}
               />
@@ -1049,6 +1128,18 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           </div>
         );
       })()}
+
+      {/* WebSocket progress bar — shown during background operations */}
+      {bgOpPending && (
+        <RegenProgressBar
+          phase={wsProgress.phase}
+          totalScenes={wsProgress.totalScenes}
+          completedScenes={wsProgress.completedScenes}
+          currentSceneIndex={wsProgress.currentSceneIndex}
+          currentStatus={wsProgress.currentStatus}
+          wsConnected={wsConnected}
+        />
+      )}
 
       {/* Cost Estimate */}
       <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">

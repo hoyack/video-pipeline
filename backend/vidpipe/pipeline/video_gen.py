@@ -830,6 +830,9 @@ async def generate_videos(
     )
     scenes = result.scalars().all()
 
+    from vidpipe.services.event_bus import event_bus
+    event_bus.emit(project.id, "phase_started", phase="clips", total_scenes=len(scenes))
+
     for scene in scenes:
         # Per-scene stop flag check (VGED-11)
         await session.refresh(project)
@@ -856,6 +859,7 @@ async def generate_videos(
         # Set generation_status before video generation (VGED-05)
         scene.generation_status = "generating_clip"
         await session.commit()
+        event_bus.emit(project.id, "scene_status", scene_index=scene.scene_index, status="generating_clip", phase="clips")
 
         try:
             if is_comfyui:
@@ -873,14 +877,18 @@ async def generate_videos(
             # Clear generation_status after successful generation (VGED-05)
             scene.generation_status = None
             await session.commit()
+            event_bus.emit(project.id, "scene_clip_ready", scene_index=scene.scene_index)
+            event_bus.emit(project.id, "refresh")
         except Exception as e:
             # On exception: set generation_status to "failed" (VGED-05)
             scene.generation_status = "failed"
             await session.commit()
+            event_bus.emit(project.id, "error", phase="clips", scene_index=scene.scene_index, message=str(e))
             raise
 
     # Update project status
     project.status = "stitching"
+    event_bus.emit(project.id, "phase_completed", phase="clips")
     await session.commit()
 
 

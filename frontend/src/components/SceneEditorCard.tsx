@@ -40,6 +40,8 @@ interface SceneEditorCardProps {
   onGenerateScene?: (sceneIndex: number) => Promise<void>;
   /** True when background asset generation is in progress for this scene */
   isGeneratingAssets?: boolean;
+  /** When true, parent WS handles refreshes — suppress per-scene polling */
+  wsConnected?: boolean;
   /** Whether this card is expanded (accordion) */
   expanded?: boolean;
   /** Toggle expand/collapse */
@@ -226,6 +228,7 @@ export function SceneEditorCard({
   prompt,
   onGenerateScene,
   isGeneratingAssets,
+  wsConnected,
   expanded,
   onToggleExpand,
 }: SceneEditorCardProps) {
@@ -265,6 +268,9 @@ export function SceneEditorCard({
   const [emptySlotGenerating, setEmptySlotGenerating] = useState(false);
   const [emptySlotGenError, setEmptySlotGenError] = useState<string | null>(null);
 
+  // Derived: pipeline generation_status from DB (set during bulk regen)
+  const genStatus = scene.generation_status ?? null;
+
   // Map target → scene URL field
   function getUrlForTarget(target: string): string | null | undefined {
     if (target === "start_keyframe") return scene.start_keyframe_url;
@@ -285,7 +291,7 @@ export function SceneEditorCard({
     onAssetChanged?.();
   }, [onAssetChanged]);
 
-  usePolling(handlePollTick, POLL_INTERVAL, !!pollingTarget);
+  usePolling(handlePollTick, POLL_INTERVAL, !!pollingTarget && !wsConnected);
 
   // Detect completion: URL changed from baseline
   useEffect(() => {
@@ -678,22 +684,31 @@ export function SceneEditorCard({
             </span>
             <StalenessBadge staleness={scene.start_keyframe_staleness} />
           </div>
-          {scene.start_keyframe_url ? (
-            <img
-              src={scene.start_keyframe_url}
-              alt={`Scene ${idx + 1} start`}
-              onClick={() => { setLightboxUrl(scene.start_keyframe_url!); setLightboxLabel(`Scene ${idx + 1} — Start Keyframe`); }}
-              className={clsx(
-                "mt-0.5 w-full rounded border cursor-pointer hover:brightness-110 transition",
-                scene.start_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
-              )}
-              loading="lazy"
-            />
-          ) : (
-            <div className="mt-0.5 flex h-16 items-center justify-center rounded border border-dashed border-gray-700 bg-gray-950 text-[10px] text-gray-600">
-              No keyframe
-            </div>
-          )}
+          <div className="relative mt-0.5">
+            {scene.start_keyframe_url ? (
+              <img
+                src={scene.start_keyframe_url}
+                alt={`Scene ${idx + 1} start`}
+                onClick={() => { setLightboxUrl(scene.start_keyframe_url!); setLightboxLabel(`Scene ${idx + 1} — Start Keyframe`); }}
+                className={clsx(
+                  "w-full rounded border cursor-pointer hover:brightness-110 transition",
+                  scene.start_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
+                )}
+                loading="lazy"
+              />
+            ) : (
+              <div className="flex h-16 items-center justify-center rounded border border-dashed border-gray-700 bg-gray-950 text-[10px] text-gray-600">
+                {genStatus === "generating_start_kf" ? (
+                  <span className="flex items-center gap-1 text-indigo-400"><Spinner className="h-3 w-3" /> Generating...</span>
+                ) : "No keyframe"}
+              </div>
+            )}
+            {genStatus === "generating_start_kf" && scene.start_keyframe_url && (
+              <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-950/60">
+                <span className="flex items-center gap-1 text-[10px] text-indigo-400"><Spinner className="h-3 w-3" /> Regenerating...</span>
+              </div>
+            )}
+          </div>
           {projectId && (
             <div className="mt-1">
               <div className="flex gap-1">
@@ -758,22 +773,31 @@ export function SceneEditorCard({
             </span>
             <StalenessBadge staleness={scene.end_keyframe_staleness} />
           </div>
-          {scene.end_keyframe_url ? (
-            <img
-              src={scene.end_keyframe_url}
-              alt={`Scene ${idx + 1} end`}
-              onClick={() => { setLightboxUrl(scene.end_keyframe_url!); setLightboxLabel(`Scene ${idx + 1} — End Keyframe`); }}
-              className={clsx(
-                "mt-0.5 w-full rounded border cursor-pointer hover:brightness-110 transition",
-                scene.end_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
-              )}
-              loading="lazy"
-            />
-          ) : (
-            <div className="mt-0.5 flex h-16 items-center justify-center rounded border border-dashed border-gray-700 bg-gray-950 text-[10px] text-gray-600">
-              No keyframe
-            </div>
-          )}
+          <div className="relative mt-0.5">
+            {scene.end_keyframe_url ? (
+              <img
+                src={scene.end_keyframe_url}
+                alt={`Scene ${idx + 1} end`}
+                onClick={() => { setLightboxUrl(scene.end_keyframe_url!); setLightboxLabel(`Scene ${idx + 1} — End Keyframe`); }}
+                className={clsx(
+                  "w-full rounded border cursor-pointer hover:brightness-110 transition",
+                  scene.end_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
+                )}
+                loading="lazy"
+              />
+            ) : (
+              <div className="flex h-16 items-center justify-center rounded border border-dashed border-gray-700 bg-gray-950 text-[10px] text-gray-600">
+                {genStatus === "generating_end_kf" ? (
+                  <span className="flex items-center gap-1 text-indigo-400"><Spinner className="h-3 w-3" /> Generating...</span>
+                ) : "No keyframe"}
+              </div>
+            )}
+            {genStatus === "generating_end_kf" && scene.end_keyframe_url && (
+              <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-950/60">
+                <span className="flex items-center gap-1 text-[10px] text-indigo-400"><Spinner className="h-3 w-3" /> Regenerating...</span>
+              </div>
+            )}
+          </div>
           {projectId && (
             <div className="mt-1">
               <div className="flex gap-1">
@@ -840,23 +864,32 @@ export function SceneEditorCard({
           </span>
           <StalenessBadge staleness={scene.clip_staleness} />
         </div>
-        {scene.clip_url ? (
-          /* eslint-disable-next-line jsx-a11y/media-has-caption */
-          <video
-            src={scene.clip_url}
-            className={clsx(
-              "mt-0.5 w-full rounded border",
-              scene.clip_staleness === "stale" ? "border-amber-700" : "border-gray-700",
-            )}
-            controls
-            preload="metadata"
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <div className="mt-0.5 flex h-16 items-center justify-center rounded border border-dashed border-gray-700 bg-gray-950 text-[10px] text-gray-600">
-            No clip
-          </div>
-        )}
+        <div className="relative mt-0.5">
+          {scene.clip_url ? (
+            /* eslint-disable-next-line jsx-a11y/media-has-caption */
+            <video
+              src={scene.clip_url}
+              className={clsx(
+                "w-full rounded border",
+                scene.clip_staleness === "stale" ? "border-amber-700" : "border-gray-700",
+              )}
+              controls
+              preload="metadata"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div className="flex h-16 items-center justify-center rounded border border-dashed border-gray-700 bg-gray-950 text-[10px] text-gray-600">
+              {genStatus === "generating_clip" ? (
+                <span className="flex items-center gap-1 text-indigo-400"><Spinner className="h-3 w-3" /> Generating clip...</span>
+              ) : "No clip"}
+            </div>
+          )}
+          {genStatus === "generating_clip" && scene.clip_url && (
+            <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-950/60">
+              <span className="flex items-center gap-1 text-[10px] text-indigo-400"><Spinner className="h-3 w-3" /> Regenerating clip...</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Clip staleness + actions */}
@@ -930,7 +963,7 @@ export function SceneEditorCard({
         onChange={(v) => onChange(idx, "scene_description", v)}
         onClear={() => onChange(idx, "scene_description", "")}
         onRegen={projectId && textModel ? () => handleTextRegen("scene_description") : undefined}
-        regenerating={regenTextFields.has("scene_description")}
+        regenerating={regenTextFields.has("scene_description") || genStatus === "generating_text"}
         showContext={showTextContextFor === "scene_description"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "scene_description" ? null : "scene_description")}
         contextValue={textExtraContext["scene_description"] ?? ""}
@@ -945,7 +978,7 @@ export function SceneEditorCard({
         onClear={() => onChange(idx, "start_frame_prompt", "")}
         staleness={scene.start_keyframe_staleness}
         onRegen={projectId && textModel ? () => handleTextRegen("start_frame_prompt") : undefined}
-        regenerating={regenTextFields.has("start_frame_prompt")}
+        regenerating={regenTextFields.has("start_frame_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "start_frame_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "start_frame_prompt" ? null : "start_frame_prompt")}
         contextValue={textExtraContext["start_frame_prompt"] ?? ""}
@@ -960,7 +993,7 @@ export function SceneEditorCard({
         onClear={() => onChange(idx, "end_frame_prompt", "")}
         staleness={scene.end_keyframe_staleness}
         onRegen={projectId && textModel ? () => handleTextRegen("end_frame_prompt") : undefined}
-        regenerating={regenTextFields.has("end_frame_prompt")}
+        regenerating={regenTextFields.has("end_frame_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "end_frame_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "end_frame_prompt" ? null : "end_frame_prompt")}
         contextValue={textExtraContext["end_frame_prompt"] ?? ""}
@@ -975,7 +1008,7 @@ export function SceneEditorCard({
         onClear={() => onChange(idx, "video_motion_prompt", "")}
         staleness={scene.clip_staleness}
         onRegen={projectId && textModel ? () => handleTextRegen("video_motion_prompt") : undefined}
-        regenerating={regenTextFields.has("video_motion_prompt")}
+        regenerating={regenTextFields.has("video_motion_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "video_motion_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "video_motion_prompt" ? null : "video_motion_prompt")}
         contextValue={textExtraContext["video_motion_prompt"] ?? ""}
@@ -989,7 +1022,7 @@ export function SceneEditorCard({
         onChange={(v) => onChange(idx, "transition_notes", v)}
         onClear={() => onChange(idx, "transition_notes", "")}
         onRegen={projectId && textModel ? () => handleTextRegen("transition_notes") : undefined}
-        regenerating={regenTextFields.has("transition_notes")}
+        regenerating={regenTextFields.has("transition_notes") || genStatus === "generating_text"}
         showContext={showTextContextFor === "transition_notes"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "transition_notes" ? null : "transition_notes")}
         contextValue={textExtraContext["transition_notes"] ?? ""}

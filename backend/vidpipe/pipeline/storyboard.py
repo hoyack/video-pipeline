@@ -318,9 +318,13 @@ async def generate_storyboard(
     )
     existing_scenes = list(existing_scenes_result.scalars().all())
 
-    # Partition into filled (user-provided text) and empty (need generation)
-    filled_scenes = [s for s in existing_scenes if s.scene_description and s.scene_description.strip()]
-    empty_scenes = [s for s in existing_scenes if not s.scene_description or not s.scene_description.strip()]
+    # Partition into complete (all key fields filled) and incomplete (need generation)
+    def _scene_is_complete(s):
+        return (bool(s.scene_description and s.scene_description.strip())
+                and bool(s.start_frame_prompt and s.start_frame_prompt.strip()))
+
+    filled_scenes = [s for s in existing_scenes if _scene_is_complete(s)]
+    empty_scenes = [s for s in existing_scenes if not _scene_is_complete(s)]
 
     if existing_scenes and not empty_scenes:
         # All scenes already have text — skip storyboard generation entirely
@@ -356,6 +360,15 @@ async def generate_storyboard(
             context_lines.append(
                 f"Scene {s.scene_index} (provided by user): {s.scene_description}"
             )
+        # Include partial scenes (have description but missing prompts) as context
+        partial_with_desc = [s for s in empty_scenes
+                             if s.scene_description and s.scene_description.strip()]
+        for s in partial_with_desc:
+            context_lines.append(
+                f"Scene {s.scene_index} (user-provided description — keep this description, "
+                f"generate start_frame_prompt/end_frame_prompt/video_motion_prompt/transition_notes): "
+                f"{s.scene_description}"
+            )
         empty_indices = [s.scene_index for s in empty_scenes]
         filled_context = (
             "\n\nEXISTING SCENES (provided by user — do NOT regenerate these):\n"
@@ -390,6 +403,9 @@ async def generate_storyboard(
         s.generation_status = "generating_text"
     if empty_scenes:
         await session.commit()
+
+    from vidpipe.services.event_bus import event_bus
+    event_bus.emit(project.id, "phase_started", phase="storyboard", total_scenes=project.target_scene_count)
 
     # Retry strategy: up to 3 attempts, reduce temperature on each retry
     attempt = 0
@@ -435,14 +451,13 @@ async def generate_storyboard(
         for scene_data in storyboard.scenes:
             existing = existing_by_index.get(scene_data.scene_index)
             if existing:
-                # Only update if the scene was empty (preserve user-provided text)
-                if not existing.scene_description or not existing.scene_description.strip():
-                    existing.scene_description = scene_data.scene_description
-                    existing.start_frame_prompt = scene_data.start_frame_prompt
-                    existing.end_frame_prompt = scene_data.end_frame_prompt
-                    existing.video_motion_prompt = scene_data.video_motion_prompt
-                    existing.transition_notes = scene_data.transition_notes
-                    existing.status = "pending"
+                # Per-field update: only fill in empty fields, preserve user-provided text
+                for attr in ("scene_description", "start_frame_prompt", "end_frame_prompt",
+                             "video_motion_prompt", "transition_notes"):
+                    current = getattr(existing, attr)
+                    if not current or not current.strip():
+                        setattr(existing, attr, getattr(scene_data, attr))
+                existing.status = "pending"
                 existing.generation_status = None  # Clear generation_status
             else:
                 # Scene index from LLM not in existing rows — create new
@@ -457,6 +472,7 @@ async def generate_storyboard(
                     status="pending",
                 )
                 session.add(scene)
+            event_bus.emit(project.id, "scene_text_ready", scene_index=scene_data.scene_index)
         # Clear generation_status on filled scenes too
         for s in filled_scenes:
             s.generation_status = None
@@ -474,6 +490,7 @@ async def generate_storyboard(
                 status="pending",
             )
             session.add(scene)
+            event_bus.emit(project.id, "scene_text_ready", scene_index=scene_data.scene_index)
 
     # Persist scene and audio manifests if manifest-aware mode
     if use_manifests:
@@ -552,6 +569,8 @@ async def generate_storyboard(
 
     # Update project status to indicate storyboard completion
     project.status = "keyframing"
+    event_bus.emit(project.id, "phase_completed", phase="storyboard")
+    event_bus.emit(project.id, "refresh")
 
     # Commit all changes
     await session.commit()

@@ -116,6 +116,10 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
         logger.info(f"Project {project.id}: Stitching complete -> {output_path}")
         await session.commit()
 
+        from vidpipe.services.event_bus import event_bus
+        event_bus.emit(project.id, "stitch_ready")
+        event_bus.emit(project.id, "refresh")
+
     except subprocess.CalledProcessError as e:
         # ffmpeg error
         stderr = e.stderr.decode() if e.stderr else "No error output"
@@ -123,6 +127,8 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
         project.status = "failed"
         project.error_message = f"Video stitching failed: {stderr[:500]}"
         await session.commit()
+        from vidpipe.services.event_bus import event_bus
+        event_bus.emit(project.id, "error", phase="stitch", message=f"ffmpeg error: {stderr[:200]}")
         raise
 
     except Exception as e:
@@ -131,6 +137,8 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
         project.status = "failed"
         project.error_message = f"Stitching error: {str(e)[:500]}"
         await session.commit()
+        from vidpipe.services.event_bus import event_bus
+        event_bus.emit(project.id, "error", phase="stitch", message=str(e)[:200])
         raise
 
 

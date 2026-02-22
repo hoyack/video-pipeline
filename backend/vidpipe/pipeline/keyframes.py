@@ -465,6 +465,9 @@ async def generate_keyframes(
     # Track previous scene's end frame for inheritance
     previous_end_frame_bytes = None
 
+    from vidpipe.services.event_bus import event_bus
+    event_bus.emit(project.id, "phase_started", phase="keyframes", total_scenes=len(scenes))
+
     # Process each scene sequentially (no parallelization)
     for scene in scenes:
         # Per-scene stop flag check (VGED-11)
@@ -508,6 +511,7 @@ async def generate_keyframes(
             if not existing_start_kf:
                 scene.generation_status = "generating_start_kf"
                 await session.commit()
+                event_bus.emit(project.id, "scene_status", scene_index=scene.scene_index, status="generating_start_kf", phase="keyframes")
 
             # Phase 10: Adaptive Prompt Rewriting for manifest projects
             # Also resolves asset reference images for multimodal keyframe generation
@@ -759,6 +763,7 @@ async def generate_keyframes(
                 # Update generation_status for end frame (VGED-05)
                 scene.generation_status = "generating_end_kf"
                 await session.commit()
+                event_bus.emit(project.id, "scene_status", scene_index=scene.scene_index, status="generating_end_kf", phase="keyframes")
 
                 style_label = project.style.replace("_", " ")
                 conditioning_prompt = (
@@ -837,6 +842,8 @@ async def generate_keyframes(
 
             # Commit after each scene for crash recovery
             await session.commit()
+            event_bus.emit(project.id, "scene_keyframe_ready", scene_index=scene.scene_index, position="end")
+            event_bus.emit(project.id, "refresh")
 
             # Rate limiting delay (KEYF-05)
             await asyncio.sleep(settings.pipeline.image_gen_delay)
@@ -849,4 +856,5 @@ async def generate_keyframes(
 
     # Update project status after all keyframes generated
     project.status = "generating_video"
+    event_bus.emit(project.id, "phase_completed", phase="keyframes")
     await session.commit()

@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_ as sa_and, case, func as sa_func, select
@@ -2387,6 +2387,40 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
                 await manifest_service.increment_usage(session, manifest_uuid)
                 changes.append({"type": "project_field", "field": "manifest_id", "old": str(old_manifest), "new": str(manifest_uuid)})
 
+        # Handle scene expansion (target_scene_count increase) — BEFORE scene edits
+        # so that newly-created rows exist when scene_edits tries to find them.
+        if body.target_scene_count is not None:
+            existing_result = await session.execute(
+                select(sa_func.count(Scene.id)).where(
+                    Scene.project_id == project.id,
+                    Scene.status != "removed",
+                )
+            )
+            existing_count = existing_result.scalar() or 0
+            if body.target_scene_count > existing_count:
+                # Get max scene_index
+                max_idx_result = await session.execute(
+                    select(sa_func.max(Scene.scene_index)).where(
+                        Scene.project_id == project.id
+                    )
+                )
+                max_idx = max_idx_result.scalar() or 0
+                for i in range(body.target_scene_count - existing_count):
+                    new_idx = max_idx + 1 + i
+                    new_scene = Scene(
+                        project_id=project.id,
+                        scene_index=new_idx,
+                        scene_description="",
+                        start_frame_prompt="",
+                        end_frame_prompt="",
+                        video_motion_prompt="",
+                        status="pending",
+                    )
+                    session.add(new_scene)
+                    changes.append({"type": "scene_added", "scene_index": new_idx})
+            # Flush so new Scene rows are visible to subsequent queries
+            await session.flush()
+
         # Apply scene edits
         if body.scene_edits:
             for scene_idx, edits in body.scene_edits.items():
@@ -2431,37 +2465,6 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
                 if scene:
                     scene.status = "removed"
                     changes.append({"type": "scene_removed", "scene_index": scene_idx})
-
-        # Handle scene expansion (target_scene_count increase)
-        if body.target_scene_count is not None:
-            existing_result = await session.execute(
-                select(sa_func.count(Scene.id)).where(
-                    Scene.project_id == project.id,
-                    Scene.status != "removed",
-                )
-            )
-            existing_count = existing_result.scalar() or 0
-            if body.target_scene_count > existing_count:
-                # Get max scene_index
-                max_idx_result = await session.execute(
-                    select(sa_func.max(Scene.scene_index)).where(
-                        Scene.project_id == project.id
-                    )
-                )
-                max_idx = max_idx_result.scalar() or 0
-                for i in range(body.target_scene_count - existing_count):
-                    new_idx = max_idx + 1 + i
-                    new_scene = Scene(
-                        project_id=project.id,
-                        scene_index=new_idx,
-                        scene_description="",
-                        start_frame_prompt="",
-                        end_frame_prompt="",
-                        video_motion_prompt="",
-                        status="pending",
-                    )
-                    session.add(new_scene)
-                    changes.append({"type": "scene_added", "scene_index": new_idx})
 
         if not changes:
             raise HTTPException(status_code=400, detail="No changes to commit")
@@ -4419,6 +4422,8 @@ async def _run_scene_regeneration(
     scene_edits: Optional[dict[str, str]] = None,
 ):
     """Background task for scene regeneration."""
+    from vidpipe.services.event_bus import event_bus
+    event_bus.emit(project_id, "scene_regen_started", scene_index=scene_idx, targets=targets)
     logger.info("Regenerating scene %d for project %s: %s", scene_idx, project_id, targets)
 
     async with async_session() as session:
@@ -4537,6 +4542,8 @@ async def _run_scene_regeneration(
                     metadata={"regenerated": regenerated, "scene_index": scene_idx},
                 )
             await session.commit()
+            event_bus.emit(project_id, "scene_regen_done", scene_index=scene_idx)
+            event_bus.emit(project_id, "refresh")
 
 
 async def _regenerate_keyframe(session, project, scene, position, file_mgr, prompt_override=None, image_model_override=None, scene_edits=None):
@@ -5070,8 +5077,44 @@ async def regenerate_project(
     )
 
 
-async def _run_restitch(project_id: uuid.UUID):
+# ---------------------------------------------------------------------------
+# WebSocket: real-time pipeline progress
+# ---------------------------------------------------------------------------
+
+@router.websocket("/projects/{project_id}/ws")
+async def project_websocket(websocket: WebSocket, project_id: str):
+    """Push pipeline progress events to the frontend in real time."""
+    from vidpipe.services.event_bus import event_bus
+
+    await websocket.accept()
+    queue = event_bus.subscribe(project_id)
+
+    async def _send_events():
+        while True:
+            event = await queue.get()
+            await websocket.send_json(event)
+
+    async def _heartbeat():
+        while True:
+            await asyncio.sleep(30)
+            await websocket.send_json({"type": "heartbeat"})
+
+    async def _receive():
+        # Drain incoming messages (ping/pong) to detect disconnect
+        while True:
+            await websocket.receive_text()
+
+    try:
+        await asyncio.gather(_send_events(), _heartbeat(), _receive())
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        event_bus.unsubscribe(project_id, queue)
+
+
+async def _run_restitch(project_id: uuid.UUID, *, _emit_complete: bool = True):
     """Background task to re-stitch current clips."""
+    from vidpipe.services.event_bus import event_bus
     async with async_session() as session:
         result = await session.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one_or_none()
@@ -5083,15 +5126,21 @@ async def _run_restitch(project_id: uuid.UUID):
         await session.refresh(project)
 
         from vidpipe.services.checkpoint_service import create_checkpoint
-        await create_checkpoint(session, project, "Re-stitched video")
+        cp = await create_checkpoint(session, project, "Re-stitched video")
         await session.commit()
+        event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Re-stitched video")
+        if _emit_complete:
+            event_bus.emit(project_id, "regen_complete", scope="stitch")
 
 
 async def _run_storyboard_regeneration(
     project_id: uuid.UUID,
     text_model_override: Optional[str] = None,
+    *,
+    _emit_complete: bool = True,
 ):
     """Background task to regenerate storyboard text only."""
+    from vidpipe.services.event_bus import event_bus
     try:
         async with async_session() as session:
             result = await session.execute(select(Project).where(Project.id == project_id))
@@ -5122,16 +5171,24 @@ async def _run_storyboard_regeneration(
             project.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
-            await create_checkpoint(session, project, "Regenerated storyboard text")
+            cp = await create_checkpoint(session, project, "Regenerated storyboard text")
             await session.commit()
+            event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated storyboard text")
+            if _emit_complete:
+                event_bus.emit(project_id, "regen_complete", scope="storyboard")
     except Exception as e:
         logger.error("Storyboard regeneration failed for %s: %s", project_id, e, exc_info=True)
+        event_bus.emit(project_id, "error", phase="storyboard", message=str(e))
+        if not _emit_complete:
+            raise  # propagate to chained caller so subsequent phases are skipped
 
 
 async def _run_keyframes_regeneration(
     project_id: uuid.UUID,
     image_model_override: Optional[str] = None,
     text_model_override: Optional[str] = None,
+    *,
+    _emit_complete: bool = True,
 ):
     """Background task to regenerate stale/missing keyframes only."""
     try:
@@ -5193,16 +5250,26 @@ async def _run_keyframes_regeneration(
             project.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
-            await create_checkpoint(session, project, "Regenerated stale keyframes")
+            cp = await create_checkpoint(session, project, "Regenerated stale keyframes")
             await session.commit()
+            from vidpipe.services.event_bus import event_bus
+            event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale keyframes")
+            if _emit_complete:
+                event_bus.emit(project_id, "regen_complete", scope="keyframes")
     except Exception as e:
         logger.error("Keyframes regeneration failed for %s: %s", project_id, e, exc_info=True)
+        from vidpipe.services.event_bus import event_bus
+        event_bus.emit(project_id, "error", phase="keyframes", message=str(e))
+        if not _emit_complete:
+            raise  # propagate to chained caller so subsequent phases are skipped
 
 
 async def _run_clips_regeneration(
     project_id: uuid.UUID,
     video_model_override: Optional[str] = None,
     text_model_override: Optional[str] = None,
+    *,
+    _emit_complete: bool = True,
 ):
     """Background task to regenerate stale/missing video clips only."""
     try:
@@ -5275,10 +5342,18 @@ async def _run_clips_regeneration(
             project.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
-            await create_checkpoint(session, project, "Regenerated stale clips")
+            cp = await create_checkpoint(session, project, "Regenerated stale clips")
             await session.commit()
+            from vidpipe.services.event_bus import event_bus
+            event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale clips")
+            if _emit_complete:
+                event_bus.emit(project_id, "regen_complete", scope="clips")
     except Exception as e:
         logger.error("Clips regeneration failed for %s: %s", project_id, e, exc_info=True)
+        from vidpipe.services.event_bus import event_bus
+        event_bus.emit(project_id, "error", phase="clips", message=str(e))
+        if not _emit_complete:
+            raise  # propagate to chained caller so subsequent phases are skipped
 
 
 async def _run_all_phases_regeneration(
@@ -5289,13 +5364,16 @@ async def _run_all_phases_regeneration(
     video_model_override: Optional[str] = None,
 ):
     """Background task to chain per-phase regeneration up to run_through."""
+    from vidpipe.services.event_bus import event_bus
     try:
-        # Always run storyboard
+        # Always run storyboard (suppress per-phase regen_complete)
         await _run_storyboard_regeneration(
             project_id, text_model_override=text_model_override,
+            _emit_complete=False,
         )
 
         if run_through == "storyboard":
+            event_bus.emit(project_id, "regen_complete", scope="all_phases")
             return
 
         # Keyframes
@@ -5303,9 +5381,11 @@ async def _run_all_phases_regeneration(
             project_id,
             image_model_override=image_model_override,
             text_model_override=text_model_override,
+            _emit_complete=False,
         )
 
         if run_through == "keyframes":
+            event_bus.emit(project_id, "regen_complete", scope="all_phases")
             return
 
         # Clips
@@ -5313,15 +5393,19 @@ async def _run_all_phases_regeneration(
             project_id,
             video_model_override=video_model_override,
             text_model_override=text_model_override,
+            _emit_complete=False,
         )
 
         if run_through == "video":
+            event_bus.emit(project_id, "regen_complete", scope="all_phases")
             return
 
         # Full pipeline — also restitch
-        await _run_restitch(project_id)
+        await _run_restitch(project_id, _emit_complete=False)
+        event_bus.emit(project_id, "regen_complete", scope="all_phases")
     except Exception as e:
         logger.error("All-phases regeneration failed for %s: %s", project_id, e, exc_info=True)
+        event_bus.emit(project_id, "error", message=str(e))
 
 
 async def _run_project_regeneration(

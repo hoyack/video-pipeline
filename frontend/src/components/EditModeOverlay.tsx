@@ -105,6 +105,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [promptExpanded, setPromptExpanded] = useState(!detail.prompt);
   const [manifestExpanded, setManifestExpanded] = useState(!detail.manifest_id);
   const [scenesExpanded, setScenesExpanded] = useState(true);
+  const [videoExpanded, setVideoExpanded] = useState(true);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -958,44 +959,44 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </div>
       )}
 
-      {/* Final Video */}
-      <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-medium text-gray-400">Final Video</h3>
-          <div className="flex items-center gap-2">
-            {detail.status === "complete" && (
-              <a
-                href={`${getDownloadUrl(detail.project_id)}?dl=1`}
-                className="rounded px-2.5 py-1 text-[11px] font-medium text-green-300 bg-green-900/50 hover:bg-green-800/50 transition-colors"
-              >
-                Download
-              </a>
+      {/* Final Video — collapsible */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50">
+        <button
+          type="button"
+          onClick={() => setVideoExpanded(!videoExpanded)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Final Video</h3>
+            {!videoExpanded && detail.status === "complete" && (
+              <span className="text-xs text-gray-500 truncate">Ready</span>
             )}
-            <button
-              type="button"
-              onClick={handleRestitch}
-              disabled={stitching || regenScope !== null || bgOpPending !== null}
-              className={clsx(
-                "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-                stitching
-                  ? "bg-gray-800 text-gray-500"
-                  : "bg-green-900/50 text-green-300 hover:bg-green-800/50",
-              )}
-            >
-              {stitching ? "Stitching..." : detail.status === "complete" ? "Re-stitch" : "Stitch"}
-            </button>
           </div>
-        </div>
-        {detail.status === "complete" ? (
-          <video
-            src={`${getDownloadUrl(detail.project_id)}?v=${detail.head_sha ?? ""}`}
-            className="w-full rounded-lg border border-gray-700"
-            controls
-            preload="metadata"
-          />
-        ) : (
-          <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-950 text-xs text-gray-600">
-            No final video yet — stitch when all scenes have clips
+          <svg
+            className={clsx(
+              "h-4 w-4 text-gray-500 transition-transform shrink-0",
+              videoExpanded && "rotate-180",
+            )}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {videoExpanded && (
+          <div className="px-4 pb-4">
+            {detail.status === "complete" ? (
+              <video
+                src={`${getDownloadUrl(detail.project_id)}?v=${detail.head_sha ?? ""}`}
+                className="w-full rounded-lg border border-gray-700"
+                controls
+                preload="metadata"
+              />
+            ) : (
+              <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-950 text-xs text-gray-600">
+                No final video yet — stitch when all scenes have clips
+              </div>
+            )}
           </div>
         )}
       </div>

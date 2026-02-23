@@ -52,19 +52,19 @@ class FaceMatchResult(BaseModel):
 
 
 class SemanticAnalysis(BaseModel):
-    """Gemini Vision structured analysis of generated scene."""
+    """Gemini Vision structured analysis of generated shot."""
 
     manifest_adherence: float = 0.0  # 0-10
     visual_quality: float = 0.0  # 0-10
     continuity_issues: list[str] = []
     new_entities_description: list[dict] = []
-    overall_scene_description: str = ""
+    overall_shot_description: str = ""
 
 
 class CVAnalysisResult(BaseModel):
-    """Complete CV analysis output for a generated scene."""
+    """Complete CV analysis output for a generated shot."""
 
-    scene_index: int
+    shot_index: int
     frame_detections: list[FrameDetection] = []
     face_matches: list[FaceMatchResult] = []
     clip_embeddings: list[dict] = []  # [{frame_index, embedding_bytes}]
@@ -109,13 +109,13 @@ class CVAnalysisService:
 
     async def analyze_generated_content(
         self,
-        scene_index: int,
+        shot_index: int,
         keyframe_paths: Optional[list[str]],
         clip_path: Optional[str],
-        scene_manifest_json: Optional[dict],
+        shot_manifest_json: Optional[dict],
         existing_assets: list[Asset],
     ) -> CVAnalysisResult:
-        """Orchestrate full CV analysis on a generated scene.
+        """Orchestrate full CV analysis on a generated shot.
 
         Steps:
         1. Frame extraction (from clip or keyframes)
@@ -126,10 +126,10 @@ class CVAnalysisService:
         6. Compute continuity score
 
         Args:
-            scene_index: Zero-based scene index
+            shot_index: Zero-based shot index
             keyframe_paths: Paths to keyframe images (start/end frames)
             clip_path: Path to generated video clip (optional)
-            scene_manifest_json: Scene manifest for semantic analysis (optional)
+            shot_manifest_json: Shot manifest for semantic analysis (optional)
             existing_assets: Assets from Asset Registry for face/CLIP matching
 
         Returns:
@@ -137,7 +137,7 @@ class CVAnalysisService:
         """
         from vidpipe.config import settings
 
-        result = CVAnalysisResult(scene_index=scene_index)
+        result = CVAnalysisResult(shot_index=shot_index)
         cv_service = self._get_cv_service()
         face_service = self._get_face_service()
         clip_service = self._get_clip_service()
@@ -155,23 +155,23 @@ class CVAnalysisService:
                 max_frames=settings.cv_analysis.max_frames_per_clip,
             )
             # Extract those frames to a temp directory
-            tmp_dir = mkdtemp(prefix=f"cv_scene{scene_index}_")
+            tmp_dir = mkdtemp(prefix=f"cv_shot{shot_index}_")
             frame_paths = await asyncio.to_thread(
                 extract_frames, clip_path, frame_indices, tmp_dir
             )
             logger.info(
-                f"Scene {scene_index}: extracted {len(frame_paths)} frames from clip "
+                f"Shot {shot_index}: extracted {len(frame_paths)} frames from clip "
                 f"({time.time() - t0:.0f}ms)"
             )
         elif keyframe_paths:
             frame_paths = [p for p in keyframe_paths if Path(p).exists()]
             logger.info(
-                f"Scene {scene_index}: using {len(frame_paths)} keyframe paths"
+                f"Shot {shot_index}: using {len(frame_paths)} keyframe paths"
             )
 
         if not frame_paths:
             logger.warning(
-                f"Scene {scene_index}: no frames available for CV analysis"
+                f"Shot {shot_index}: no frames available for CV analysis"
             )
             return result
 
@@ -193,7 +193,7 @@ class CVAnalysisService:
 
         result.frame_detections = frame_detections
         logger.info(
-            f"Scene {scene_index}: YOLO detection: "
+            f"Shot {shot_index}: YOLO detection: "
             f"{(time.time() - t1) * 1000:.0f}ms for {len(frame_paths)} frames"
         )
 
@@ -213,7 +213,7 @@ class CVAnalysisService:
                 bbox = face_det["bbox"]
                 # Save face crop temporarily
                 tmp_crop_path = str(
-                    Path(mkdtemp(prefix=f"face_crop_s{scene_index}_f{fd.frame_index}_"))
+                    Path(mkdtemp(prefix=f"face_crop_s{shot_index}_f{fd.frame_index}_"))
                     / "crop.jpg"
                 )
                 try:
@@ -225,7 +225,7 @@ class CVAnalysisService:
                     )
                 except Exception as exc:
                     logger.warning(
-                        f"Scene {scene_index}: failed to save face crop: {exc}"
+                        f"Shot {shot_index}: failed to save face crop: {exc}"
                     )
                     continue
 
@@ -239,7 +239,7 @@ class CVAnalysisService:
                     continue
                 except Exception as exc:
                     logger.warning(
-                        f"Scene {scene_index}: face embedding failed: {exc}"
+                        f"Shot {shot_index}: face embedding failed: {exc}"
                     )
                     continue
 
@@ -276,7 +276,7 @@ class CVAnalysisService:
 
         result.face_matches = face_matches
         logger.info(
-            f"Scene {scene_index}: face matching: "
+            f"Shot {shot_index}: face matching: "
             f"{(time.time() - t2) * 1000:.0f}ms, "
             f"{sum(1 for m in face_matches if not m.is_new)} matched / "
             f"{len(face_matches)} total"
@@ -299,21 +299,21 @@ class CVAnalysisService:
                 )
             except Exception as exc:
                 logger.warning(
-                    f"Scene {scene_index}: CLIP embedding failed for frame {idx}: {exc}"
+                    f"Shot {shot_index}: CLIP embedding failed for frame {idx}: {exc}"
                 )
 
         result.clip_embeddings = clip_embeddings
         logger.info(
-            f"Scene {scene_index}: CLIP embeddings: "
+            f"Shot {shot_index}: CLIP embeddings: "
             f"{(time.time() - t3) * 1000:.0f}ms for {len(clip_embeddings)} frames"
         )
 
         # ── Step 5: Vision semantic analysis ─────────────────────────────────
-        if scene_manifest_json is not None:
+        if shot_manifest_json is not None:
             semantic = await self._run_semantic_analysis(
                 frame_paths=frame_paths,
                 detections=frame_detections,
-                scene_manifest_json=scene_manifest_json,
+                shot_manifest_json=shot_manifest_json,
                 face_matches=face_matches,
                 vision_adapter=self._vision_adapter,
             )
@@ -332,7 +332,7 @@ class CVAnalysisService:
         result.new_entity_count = sum(1 for m in face_matches if m.is_new)
 
         logger.info(
-            f"Scene {scene_index}: CV analysis complete — "
+            f"Shot {shot_index}: CV analysis complete — "
             f"continuity_score={result.continuity_score:.2f}, "
             f"new_entities={result.new_entity_count}"
         )
@@ -342,7 +342,7 @@ class CVAnalysisService:
         self,
         frame_paths: list[str],
         detections: list[FrameDetection],
-        scene_manifest_json: dict,
+        shot_manifest_json: dict,
         face_matches: list[FaceMatchResult],
         vision_adapter: Optional[LLMAdapter] = None,
     ) -> Optional[SemanticAnalysis]:
@@ -355,7 +355,7 @@ class CVAnalysisService:
         Args:
             frame_paths: Paths to extracted frames
             detections: YOLO detection results per frame
-            scene_manifest_json: Scene manifest dict with expected assets
+            shot_manifest_json: Shot manifest dict with expected assets
             face_matches: Face matching results
             vision_adapter: Optional LLMAdapter for vision. Falls back to
                 get_adapter("gemini-2.5-flash") if None.
@@ -398,25 +398,25 @@ class CVAnalysisService:
             )
 
             # Build manifest expectations summary
-            expected_assets = scene_manifest_json.get("asset_tags", [])
-            shot_type = scene_manifest_json.get("shot_type", "unknown")
+            expected_assets = shot_manifest_json.get("asset_tags", [])
+            shot_type = shot_manifest_json.get("shot_type", "unknown")
 
             manifest_summary = (
-                f"Scene manifest expects: {', '.join(expected_assets) if expected_assets else 'no specific assets'}. "
+                f"Shot manifest expects: {', '.join(expected_assets) if expected_assets else 'no specific assets'}. "
                 f"Shot type: {shot_type}."
             )
 
             full_prompt = (
-                f"Analyze this frame from a generated video scene.\n\n"
+                f"Analyze this frame from a generated video shot.\n\n"
                 f"{manifest_summary}\n\n"
                 f"Detection results: {detection_summary}\n\n"
                 f"[Analysis of {len(frame_paths)} sampled frames — showing representative first frame]\n\n"
                 f"Evaluate and return a JSON object with:\n"
-                f"1. manifest_adherence (0-10): How well does the scene match the manifest expectations?\n"
-                f"2. visual_quality (0-10): How visually coherent and high-quality is the scene?\n"
+                f"1. manifest_adherence (0-10): How well does the shot match the manifest expectations?\n"
+                f"2. visual_quality (0-10): How visually coherent and high-quality is the shot?\n"
                 f"3. continuity_issues: List of specific continuity problems noticed (empty list if none).\n"
                 f"4. new_entities_description: List of new/unexpected entities seen (objects, characters not in manifest).\n"
-                f"5. overall_scene_description: One-sentence description of what is happening in the scene.\n"
+                f"5. overall_shot_description: One-sentence description of what is happening in the shot.\n"
             )
 
             result = await adapter.analyze_image(
@@ -441,7 +441,7 @@ class CVAnalysisService:
         self,
         session: AsyncSession,
         project_id: uuid.UUID,
-        scene_index: int,
+        shot_index: int,
         result: CVAnalysisResult,
     ) -> None:
         """Persist matched asset detections as AssetAppearance records.
@@ -453,7 +453,7 @@ class CVAnalysisService:
         Args:
             session: Active database session (caller manages commit)
             project_id: Project UUID for the appearance record
-            scene_index: Scene index for the appearance record
+            shot_index: Shot index for the appearance record
             result: CVAnalysisResult containing face_matches to persist
         """
         appearances: list[AssetAppearance] = []
@@ -466,7 +466,7 @@ class CVAnalysisService:
             appearance = AssetAppearance(
                 asset_id=face_match.matched_asset_id,
                 project_id=project_id,
-                scene_index=scene_index,
+                shot_index=shot_index,
                 frame_index=face_match.frame_index,
                 bbox=face_match.bbox,
                 confidence=face_match.similarity,
@@ -481,9 +481,9 @@ class CVAnalysisService:
         if appearances:
             session.add_all(appearances)
             logger.info(
-                f"Scene {scene_index}: persisted {len(appearances)} AssetAppearance records"
+                f"Shot {shot_index}: persisted {len(appearances)} AssetAppearance records"
             )
         else:
             logger.info(
-                f"Scene {scene_index}: no matched asset appearances to persist"
+                f"Shot {shot_index}: no matched asset appearances to persist"
             )

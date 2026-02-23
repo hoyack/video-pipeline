@@ -15,8 +15,8 @@ class FileManager:
     Manage filesystem artifacts for video pipeline projects.
 
     Creates structured directories:
-    - {base_dir}/{project_id}/keyframes/ - Scene keyframe images
-    - {base_dir}/{project_id}/clips/ - Individual scene video clips
+    - {base_dir}/{project_id}/keyframes/ - Shot keyframe images
+    - {base_dir}/{project_id}/clips/ - Individual shot video clips
     - {base_dir}/{project_id}/output/ - Final assembled video
 
     Implements path traversal protection to prevent directory escape attacks.
@@ -70,14 +70,14 @@ class FileManager:
         return project_dir
 
     def save_keyframe(
-        self, project_id: uuid.UUID, scene_idx: int, position: str, data: bytes
+        self, project_id: uuid.UUID, shot_idx: int, position: str, data: bytes
     ) -> Path:
         """
-        Save keyframe image for a scene.
+        Save keyframe image for a shot.
 
         Args:
             project_id: UUID of the project
-            scene_idx: Scene index (0-based)
+            shot_idx: Shot index (0-based)
             position: Position identifier (e.g., 'start', 'end')
             data: PNG image data
 
@@ -85,7 +85,7 @@ class FileManager:
             Path to saved keyframe file
         """
         project_dir = self.get_project_dir(project_id)
-        filename = f"scene_{scene_idx}_{position}.png"
+        filename = f"shot_{shot_idx}_{position}.png"
         filepath = project_dir / "keyframes" / filename
 
         # Atomic write (Pattern 5)
@@ -93,20 +93,20 @@ class FileManager:
 
         return filepath
 
-    def save_clip(self, project_id: uuid.UUID, scene_idx: int, data: bytes) -> Path:
+    def save_clip(self, project_id: uuid.UUID, shot_idx: int, data: bytes) -> Path:
         """
-        Save video clip for a scene.
+        Save video clip for a shot.
 
         Args:
             project_id: UUID of the project
-            scene_idx: Scene index (0-based)
+            shot_idx: Shot index (0-based)
             data: MP4 video data
 
         Returns:
             Path to saved clip file
         """
         project_dir = self.get_project_dir(project_id)
-        filename = f"scene_{scene_idx}.mp4"
+        filename = f"shot_{shot_idx}.mp4"
         filepath = project_dir / "clips" / filename
 
         # Atomic write (Pattern 5)
@@ -115,7 +115,7 @@ class FileManager:
         return filepath
 
     def save_keyframe_versioned(
-        self, project_id: uuid.UUID, scene_idx: int, position: str, data: bytes
+        self, project_id: uuid.UUID, shot_idx: int, position: str, data: bytes
     ) -> Path:
         """Save keyframe with UUID-based filename to avoid overwriting previous versions.
 
@@ -123,13 +123,13 @@ class FileManager:
         """
         project_dir = self.get_project_dir(project_id)
         short_id = uuid.uuid4().hex[:8]
-        filename = f"scene_{scene_idx}_{position}_{short_id}.png"
+        filename = f"shot_{shot_idx}_{position}_{short_id}.png"
         filepath = project_dir / "keyframes" / filename
         filepath.write_bytes(data)
         return filepath
 
     def save_clip_versioned(
-        self, project_id: uuid.UUID, scene_idx: int, data: bytes
+        self, project_id: uuid.UUID, shot_idx: int, data: bytes
     ) -> Path:
         """Save clip with UUID-based filename to avoid overwriting previous versions.
 
@@ -137,7 +137,7 @@ class FileManager:
         """
         project_dir = self.get_project_dir(project_id)
         short_id = uuid.uuid4().hex[:8]
-        filename = f"scene_{scene_idx}_{short_id}.mp4"
+        filename = f"shot_{shot_idx}_{short_id}.mp4"
         filepath = project_dir / "clips" / filename
         filepath.write_bytes(data)
         return filepath

@@ -23,9 +23,9 @@ from vidpipe.db.models import (
     Keyframe,
     Project,
     ProjectCheckpoint,
-    Scene,
-    SceneAudioManifest,
-    SceneManifest,
+    Shot,
+    ShotAudioManifest,
+    ShotManifest,
     VideoClip,
 )
 
@@ -54,14 +54,14 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
     Structure:
     {
         "project": { ... project fields ... },
-        "scenes": [
+        "shots": [
             {
-                "scene_index": 0,
-                "scene_description": "...",
+                "shot_index": 0,
+                "shot_description": "...",
                 ...
                 "keyframes": [ { "position": "start", "file_path": "...", "file_hash": "...", ... } ],
                 "clip": { "local_path": "...", "file_hash": "...", ... } | null,
-                "scene_manifest": { ... } | null,
+                "shot_manifest": { ... } | null,
                 "audio_manifest": { ... } | null,
             }
         ],
@@ -76,7 +76,7 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
         "style": project.style,
         "aspect_ratio": project.aspect_ratio,
         "target_clip_duration": project.target_clip_duration,
-        "target_scene_count": project.target_scene_count,
+        "target_shot_count": project.target_shot_count,
         "total_duration": project.total_duration,
         "text_model": project.text_model,
         "image_model": project.image_model,
@@ -91,31 +91,31 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
         "status": project.status,
     }
 
-    # Load scenes ordered by index
-    scenes_result = await session.execute(
-        select(Scene)
-        .where(Scene.project_id == project.id)
-        .order_by(Scene.scene_index)
+    # Load shots ordered by index
+    shots_result = await session.execute(
+        select(Shot)
+        .where(Shot.project_id == project.id)
+        .order_by(Shot.shot_index)
     )
-    scenes = scenes_result.scalars().all()
+    shots = shots_result.scalars().all()
 
-    # Load scene manifests
+    # Load shot manifests
     sm_result = await session.execute(
-        select(SceneManifest).where(SceneManifest.project_id == project.id)
+        select(ShotManifest).where(ShotManifest.project_id == project.id)
     )
-    manifests_by_idx = {sm.scene_index: sm for sm in sm_result.scalars().all()}
+    manifests_by_idx = {sm.shot_index: sm for sm in sm_result.scalars().all()}
 
     # Load audio manifests
     am_result = await session.execute(
-        select(SceneAudioManifest).where(SceneAudioManifest.project_id == project.id)
+        select(ShotAudioManifest).where(ShotAudioManifest.project_id == project.id)
     )
-    audio_by_idx = {am.scene_index: am for am in am_result.scalars().all()}
+    audio_by_idx = {am.shot_index: am for am in am_result.scalars().all()}
 
-    scene_list = []
-    for scene in scenes:
+    shot_list = []
+    for shot in shots:
         # Keyframes
         kf_result = await session.execute(
-            select(Keyframe).where(Keyframe.scene_id == scene.id)
+            select(Keyframe).where(Keyframe.shot_id == shot.id)
         )
         keyframes = kf_result.scalars().all()
         kf_data = []
@@ -132,7 +132,7 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
 
         # Clip
         clip_result = await session.execute(
-            select(VideoClip).where(VideoClip.scene_id == scene.id)
+            select(VideoClip).where(VideoClip.shot_id == shot.id)
         )
         clip = clip_result.scalar_one_or_none()
         clip_data = None
@@ -148,8 +148,8 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
                 "operation_name": clip.operation_name,
             }
 
-        # Scene manifest
-        sm = manifests_by_idx.get(scene.scene_index)
+        # Shot manifest
+        sm = manifests_by_idx.get(shot.shot_index)
         sm_data = None
         if sm:
             sm_data = {
@@ -163,7 +163,7 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
             }
 
         # Audio manifest
-        am = audio_by_idx.get(scene.scene_index)
+        am = audio_by_idx.get(shot.shot_index)
         am_data = None
         if am:
             am_data = {
@@ -175,18 +175,18 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
                 "speaker_tags": am.speaker_tags,
             }
 
-        scene_list.append({
-            "scene_index": scene.scene_index,
-            "scene_id": str(scene.id),
-            "scene_description": scene.scene_description,
-            "start_frame_prompt": scene.start_frame_prompt,
-            "end_frame_prompt": scene.end_frame_prompt,
-            "video_motion_prompt": scene.video_motion_prompt,
-            "transition_notes": scene.transition_notes,
-            "status": scene.status,
+        shot_list.append({
+            "shot_index": shot.shot_index,
+            "shot_id": str(shot.id),
+            "shot_description": shot.shot_description,
+            "start_frame_prompt": shot.start_frame_prompt,
+            "end_frame_prompt": shot.end_frame_prompt,
+            "video_motion_prompt": shot.video_motion_prompt,
+            "transition_notes": shot.transition_notes,
+            "status": shot.status,
             "keyframes": kf_data,
             "clip": clip_data,
-            "scene_manifest": sm_data,
+            "shot_manifest": sm_data,
             "audio_manifest": am_data,
         })
 
@@ -210,7 +210,7 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
 
     return {
         "project": project_data,
-        "scenes": scene_list,
+        "shots": shot_list,
         "assets": assets_data,
     }
 
@@ -272,7 +272,7 @@ async def create_checkpoint(
 
 
 def compute_keyframe_staleness(
-    scene, keyframe, scene_manifest=None
+    shot, keyframe, shot_manifest=None
 ) -> str:
     """Compare keyframe.prompt_used against the current expected prompt.
 
@@ -283,13 +283,13 @@ def compute_keyframe_staleness(
 
     # Determine the current expected prompt
     if keyframe.position == "start":
-        current_prompt = scene.start_frame_prompt
+        current_prompt = shot.start_frame_prompt
     else:
-        current_prompt = scene.end_frame_prompt
+        current_prompt = shot.end_frame_prompt
 
-    # If scene_manifest has a rewritten prompt, that's the real expected prompt
-    if scene_manifest and scene_manifest.rewritten_keyframe_prompt:
-        current_prompt = scene_manifest.rewritten_keyframe_prompt
+    # If shot_manifest has a rewritten prompt, that's the real expected prompt
+    if shot_manifest and shot_manifest.rewritten_keyframe_prompt:
+        current_prompt = shot_manifest.rewritten_keyframe_prompt
 
     if not keyframe.prompt_used:
         return "stale"  # No record of what prompt was used
@@ -301,7 +301,7 @@ def compute_keyframe_staleness(
 
 
 def compute_clip_staleness(
-    scene, clip, scene_manifest=None
+    shot, clip, shot_manifest=None
 ) -> str:
     """Compare clip.prompt_used against the current expected video prompt.
 
@@ -311,9 +311,9 @@ def compute_clip_staleness(
         return "missing"
 
     # Determine the current expected prompt
-    current_prompt = scene.video_motion_prompt
-    if scene_manifest and scene_manifest.rewritten_video_prompt:
-        current_prompt = scene_manifest.rewritten_video_prompt
+    current_prompt = shot.video_motion_prompt
+    if shot_manifest and shot_manifest.rewritten_video_prompt:
+        current_prompt = shot_manifest.rewritten_video_prompt
 
     if not clip.prompt_used:
         return "stale"  # No record of what prompt was used
@@ -331,7 +331,7 @@ async def restore_from_snapshot(
 ) -> None:
     """Restore project state from a snapshot, creating a forward-commit checkpoint.
 
-    Restores Project fields, upserts/deletes Scene/Keyframe/VideoClip rows.
+    Restores Project fields, upserts/deletes Shot/Keyframe/VideoClip rows.
     Does NOT commit — caller is responsible.
     """
     proj_data = snapshot.get("project", {})
@@ -339,7 +339,7 @@ async def restore_from_snapshot(
     # Restore project-level fields
     restorable_fields = [
         "prompt", "title", "style", "aspect_ratio", "target_clip_duration",
-        "target_scene_count", "total_duration", "text_model", "image_model",
+        "target_shot_count", "total_duration", "text_model", "image_model",
         "video_model", "audio_enabled", "seed", "quality_mode", "candidate_count",
         "vision_model", "output_path",
     ]
@@ -347,52 +347,52 @@ async def restore_from_snapshot(
         if field in proj_data:
             setattr(project, field, proj_data[field])
 
-    # Delete existing scenes (cascades handled below manually)
-    existing_scenes = await session.execute(
-        select(Scene).where(Scene.project_id == project.id)
+    # Delete existing shots (cascades handled below manually)
+    existing_shots = await session.execute(
+        select(Shot).where(Shot.project_id == project.id)
     )
-    for scene in existing_scenes.scalars().all():
+    for shot in existing_shots.scalars().all():
         # Delete keyframes
-        kfs = await session.execute(select(Keyframe).where(Keyframe.scene_id == scene.id))
+        kfs = await session.execute(select(Keyframe).where(Keyframe.shot_id == shot.id))
         for kf in kfs.scalars().all():
             await session.delete(kf)
         # Delete clips
-        clips = await session.execute(select(VideoClip).where(VideoClip.scene_id == scene.id))
+        clips = await session.execute(select(VideoClip).where(VideoClip.shot_id == shot.id))
         for clip in clips.scalars().all():
             await session.delete(clip)
-        await session.delete(scene)
+        await session.delete(shot)
 
-    # Delete scene manifests and audio manifests
-    sms = await session.execute(select(SceneManifest).where(SceneManifest.project_id == project.id))
+    # Delete shot manifests and audio manifests
+    sms = await session.execute(select(ShotManifest).where(ShotManifest.project_id == project.id))
     for sm in sms.scalars().all():
         await session.delete(sm)
-    ams = await session.execute(select(SceneAudioManifest).where(SceneAudioManifest.project_id == project.id))
+    ams = await session.execute(select(ShotAudioManifest).where(ShotAudioManifest.project_id == project.id))
     for am in ams.scalars().all():
         await session.delete(am)
 
     await session.flush()
 
-    # Recreate scenes from snapshot
-    for scene_data in snapshot.get("scenes", []):
-        scene = Scene(
-            id=uuid.UUID(scene_data["scene_id"]) if scene_data.get("scene_id") else uuid.uuid4(),
+    # Recreate shots from snapshot
+    for shot_data in snapshot.get("shots", []):
+        shot = Shot(
+            id=uuid.UUID(shot_data["shot_id"]) if shot_data.get("shot_id") else uuid.uuid4(),
             project_id=project.id,
-            scene_index=scene_data["scene_index"],
-            scene_description=scene_data.get("scene_description", ""),
-            start_frame_prompt=scene_data.get("start_frame_prompt", ""),
-            end_frame_prompt=scene_data.get("end_frame_prompt", ""),
-            video_motion_prompt=scene_data.get("video_motion_prompt", ""),
-            transition_notes=scene_data.get("transition_notes"),
-            status=scene_data.get("status", "complete"),
+            shot_index=shot_data["shot_index"],
+            shot_description=shot_data.get("shot_description", ""),
+            start_frame_prompt=shot_data.get("start_frame_prompt", ""),
+            end_frame_prompt=shot_data.get("end_frame_prompt", ""),
+            video_motion_prompt=shot_data.get("video_motion_prompt", ""),
+            transition_notes=shot_data.get("transition_notes"),
+            status=shot_data.get("status", "complete"),
         )
-        session.add(scene)
+        session.add(shot)
         await session.flush()
 
         # Recreate keyframes
-        for kf_data in scene_data.get("keyframes", []):
+        for kf_data in shot_data.get("keyframes", []):
             kf = Keyframe(
                 id=uuid.UUID(kf_data["id"]) if kf_data.get("id") else uuid.uuid4(),
-                scene_id=scene.id,
+                shot_id=shot.id,
                 position=kf_data["position"],
                 prompt_used=kf_data.get("prompt_used", ""),
                 file_path=kf_data.get("file_path", ""),
@@ -402,11 +402,11 @@ async def restore_from_snapshot(
             session.add(kf)
 
         # Recreate clip
-        clip_data = scene_data.get("clip")
+        clip_data = shot_data.get("clip")
         if clip_data:
             clip = VideoClip(
                 id=uuid.UUID(clip_data["id"]) if clip_data.get("id") else uuid.uuid4(),
-                scene_id=scene.id,
+                shot_id=shot.id,
                 operation_name=clip_data.get("operation_name"),
                 source=clip_data.get("source", "generated"),
                 status=clip_data.get("status", "complete"),
@@ -416,12 +416,12 @@ async def restore_from_snapshot(
             )
             session.add(clip)
 
-        # Recreate scene manifest
-        sm_data = scene_data.get("scene_manifest")
+        # Recreate shot manifest
+        sm_data = shot_data.get("shot_manifest")
         if sm_data:
-            sm = SceneManifest(
+            sm = ShotManifest(
                 project_id=project.id,
-                scene_index=scene_data["scene_index"],
+                shot_index=shot_data["shot_index"],
                 manifest_json=sm_data.get("manifest_json", {}),
                 composition_shot_type=sm_data.get("composition_shot_type"),
                 composition_camera_movement=sm_data.get("composition_camera_movement"),
@@ -433,11 +433,11 @@ async def restore_from_snapshot(
             session.add(sm)
 
         # Recreate audio manifest
-        am_data = scene_data.get("audio_manifest")
+        am_data = shot_data.get("audio_manifest")
         if am_data:
-            am = SceneAudioManifest(
+            am = ShotAudioManifest(
                 project_id=project.id,
-                scene_index=scene_data["scene_index"],
+                shot_index=shot_data["shot_index"],
                 dialogue_json=am_data.get("dialogue_json"),
                 sfx_json=am_data.get("sfx_json"),
                 ambient_json=am_data.get("ambient_json"),
@@ -471,24 +471,24 @@ def compute_diff(old_snapshot: dict, new_snapshot: dict) -> list[dict]:
                 "new": str(new_val) if new_val is not None else None,
             })
 
-    # Compare scenes
-    old_scenes = {s["scene_index"]: s for s in old_snapshot.get("scenes", [])}
-    new_scenes = {s["scene_index"]: s for s in new_snapshot.get("scenes", [])}
+    # Compare shots
+    old_shots = {s["shot_index"]: s for s in old_snapshot.get("shots", [])}
+    new_shots = {s["shot_index"]: s for s in new_snapshot.get("shots", [])}
 
-    for idx in sorted(set(old_scenes.keys()) | set(new_scenes.keys())):
-        if idx not in old_scenes:
-            changes.append({"type": "scene_added", "scene_index": idx})
-        elif idx not in new_scenes:
-            changes.append({"type": "scene_removed", "scene_index": idx})
+    for idx in sorted(set(old_shots.keys()) | set(new_shots.keys())):
+        if idx not in old_shots:
+            changes.append({"type": "shot_added", "shot_index": idx})
+        elif idx not in new_shots:
+            changes.append({"type": "shot_removed", "shot_index": idx})
         else:
-            old_s = old_scenes[idx]
-            new_s = new_scenes[idx]
-            for field in ["scene_description", "start_frame_prompt", "end_frame_prompt",
+            old_s = old_shots[idx]
+            new_s = new_shots[idx]
+            for field in ["shot_description", "start_frame_prompt", "end_frame_prompt",
                           "video_motion_prompt", "transition_notes", "status"]:
                 if old_s.get(field) != new_s.get(field):
                     changes.append({
-                        "type": "scene_field",
-                        "scene_index": idx,
+                        "type": "shot_field",
+                        "shot_index": idx,
                         "field": field,
                     })
 
@@ -504,11 +504,11 @@ def extract_file_paths_from_snapshot(snapshot: dict) -> set[str]:
     if proj.get("output_path"):
         paths.add(proj["output_path"])
 
-    for scene in snapshot.get("scenes", []):
-        for kf in scene.get("keyframes", []):
+    for shot in snapshot.get("shots", []):
+        for kf in shot.get("keyframes", []):
             if kf.get("file_path"):
                 paths.add(kf["file_path"])
-        clip = scene.get("clip")
+        clip = shot.get("clip")
         if clip and clip.get("local_path"):
             paths.add(clip["local_path"])
 

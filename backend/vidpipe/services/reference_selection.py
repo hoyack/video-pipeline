@@ -1,7 +1,7 @@
 """Reference selection service for Veo 3-reference passthrough.
 
-Implements scene-type-aware selection logic that picks up to 3 optimal reference
-images per scene based on asset roles and scene composition type.
+Implements shot-type-aware selection logic that picks up to 3 optimal reference
+images per shot based on asset roles and shot composition type.
 
 Spec reference: Phase 8 - Veo Reference Passthrough and Clean Sheets
 """
@@ -16,35 +16,35 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.db.models import Asset, AssetCleanReference
-from vidpipe.schemas.storyboard_enhanced import SceneManifestSchema
+from vidpipe.schemas.storyboard_enhanced import ShotManifestSchema
 
 logger = logging.getLogger(__name__)
 
 
-def select_references_for_scene(
-    scene_manifest_json: dict,
+def select_references_for_shot(
+    shot_manifest_json: dict,
     all_assets: list[Asset],
 ) -> list[Asset]:
-    """Select up to 3 optimal reference images for a scene.
+    """Select up to 3 optimal reference images for a shot.
 
-    Implements scene-type-aware selection:
+    Implements shot-type-aware selection:
     - close_up: Prioritize face crops of subject role
     - two_shot: Up to 2 unique characters, fill with environment
     - establishing: Prioritize environments, then props, characters last
     - default (medium_shot, wide_shot): Subject > interaction_target > background
 
     Args:
-        scene_manifest_json: Scene manifest JSON (from SceneManifest.manifest_json)
+        shot_manifest_json: Shot manifest JSON (from ShotManifest.manifest_json)
         all_assets: All manifest assets available for this project
 
     Returns:
         List of up to 3 Asset objects selected for Veo reference passthrough
     """
     try:
-        # Parse scene manifest into pydantic model
-        manifest = SceneManifestSchema(**scene_manifest_json)
+        # Parse shot manifest into pydantic model
+        manifest = ShotManifestSchema(**shot_manifest_json)
     except Exception as e:
-        logger.warning(f"Failed to parse scene manifest: {e}")
+        logger.warning(f"Failed to parse shot manifest: {e}")
         return []
 
     if not manifest.placements:
@@ -63,10 +63,10 @@ def select_references_for_scene(
     if not placed_assets:
         return []
 
-    # Extract shot type for scene-aware selection
+    # Extract shot type for shot-aware selection
     shot_type = manifest.composition.shot_type.lower()
 
-    # Scene-type-aware selection logic
+    # Shot-type-aware selection logic
     if shot_type == "close_up":
         # Prioritize face crops of subject role
         return _select_close_up_references(placed_assets)
@@ -121,7 +121,7 @@ def _select_close_up_references(placed_assets: list[tuple[Asset, object]]) -> li
 
 
 def _select_two_shot_references(placed_assets: list[tuple[Asset, object]]) -> list[Asset]:
-    """Select references for two_shot scenes.
+    """Select references for two_shot shots.
 
     Priority:
     1. Up to 2 unique CHARACTER assets from subject/interaction_target roles
@@ -199,7 +199,7 @@ def _select_establishing_references(placed_assets: list[tuple[Asset, object]]) -
 
 
 def _select_default_references(placed_assets: list[tuple[Asset, object]]) -> list[Asset]:
-    """Select references for default scene types (medium_shot, wide_shot, etc.).
+    """Select references for default shot types (medium_shot, wide_shot, etc.).
 
     Priority:
     1. Subject role first

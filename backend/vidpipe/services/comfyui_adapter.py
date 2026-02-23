@@ -139,19 +139,19 @@ class ComfyUIVideoAdapter:
         char_ref_bytes: list[bytes],
         aspect_ratio: str,
         seed: int,
-        scene_index: int,
+        shot_index: int,
         video_model: str,
     ) -> str:
         """Upload assets, build workflow, and queue prompt.
 
         Args:
-            video_prompt: Motion/scene prompt text.
+            video_prompt: Motion/shot prompt text.
             start_frame_bytes: PNG bytes for the start keyframe.
             end_frame_bytes: PNG bytes for the end keyframe (None for I2V).
             char_ref_bytes: List of character reference image bytes (0-2).
             aspect_ratio: "16:9" or "9:16".
             seed: Random seed for reproducibility.
-            scene_index: Scene number (for filename prefixes).
+            shot_index: Shot number (for filename prefixes).
             video_model: Model ID (e.g. "wan-2.2-i2v" or "wan-2.2-ref-i2v").
 
         Returns:
@@ -161,9 +161,9 @@ class ComfyUIVideoAdapter:
 
         # Upload start keyframe
         start_fn = await self.client.upload_image(
-            start_frame_bytes, f"scene_{scene_index}_start.png"
+            start_frame_bytes, f"shot_{shot_index}_start.png"
         )
-        logger.info("Scene %d: uploaded start keyframe as %s", scene_index, start_fn)
+        logger.info("Shot %d: uploaded start keyframe as %s", shot_index, start_fn)
 
         width, height = wan_resolution(aspect_ratio)
 
@@ -180,14 +180,14 @@ class ComfyUIVideoAdapter:
         else:
             # FLF2V: upload end keyframe + optional character references
             end_fn = await self.client.upload_image(
-                end_frame_bytes, f"scene_{scene_index}_end.png"
+                end_frame_bytes, f"shot_{shot_index}_end.png"
             )
-            logger.info("Scene %d: uploaded end keyframe as %s", scene_index, end_fn)
+            logger.info("Shot %d: uploaded end keyframe as %s", shot_index, end_fn)
 
             char_ref_fns: list[str] = []
             for i, ref_bytes in enumerate(char_ref_bytes[:2]):
                 fn = await self.client.upload_image(
-                    ref_bytes, f"scene_{scene_index}_charref{i + 1:02d}.png"
+                    ref_bytes, f"shot_{shot_index}_charref{i + 1:02d}.png"
                 )
                 char_ref_fns.append(fn)
 
@@ -204,10 +204,10 @@ class ComfyUIVideoAdapter:
             )
 
         # Log what we injected into the workflow for diagnostics
-        _log_workflow_injection(workflow, scene_index, video_model)
+        _log_workflow_injection(workflow, shot_index, video_model)
 
         prompt_id = await self.client.queue_prompt(workflow)
-        logger.info("Scene %d: ComfyUI prompt queued: %s", scene_index, prompt_id)
+        logger.info("Shot %d: ComfyUI prompt queued: %s", shot_index, prompt_id)
         return f"comfyui:{prompt_id}"
 
     async def poll(self, operation_id: str) -> tuple[str, Optional[str]]:
@@ -360,7 +360,7 @@ class ComfyUIVideoAdapter:
 # ---------------------------------------------------------------------------
 
 def _log_workflow_injection(
-    workflow: dict, scene_index: int, video_model: str
+    workflow: dict, shot_index: int, video_model: str
 ) -> None:
     """Log key parameters injected into a ComfyUI workflow before submission."""
     # Positive prompt (node 93)
@@ -377,14 +377,14 @@ def _log_workflow_injection(
     n86_seed = workflow.get("86", {}).get("inputs", {}).get("noise_seed", "")
 
     logger.info(
-        "Scene %d [%s] workflow injection:\n"
+        "Shot %d [%s] workflow injection:\n"
         "  positive_prompt: %.120s%s\n"
         "  negative_prompt: %.80s%s\n"
         "  start_image: %s\n"
         "  end_image: %s\n"
         "  dimensions: %dx%d, %d frames\n"
         "  seed: %s",
-        scene_index, video_model,
+        shot_index, video_model,
         n93_text, "..." if len(n93_text) > 120 else "",
         n89_text, "..." if len(n89_text) > 80 else "",
         n97_image or "(none)",

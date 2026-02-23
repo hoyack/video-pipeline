@@ -4,7 +4,7 @@ Identifies new entities detected in generated content that do not match
 existing assets, and registers qualifying ones into the Asset Registry
 after quality-gating via reverse-prompting.
 
-Design constraint: Extracted assets do NOT auto-add to scene manifests.
+Design constraint: Extracted assets do NOT auto-add to shot manifests.
 They enrich the Asset Registry only. Manifests remain "intent"
 (storyboard-driven); CV analysis is "validation."
 """
@@ -212,7 +212,7 @@ async def extract_and_register_new_entities(
     session: AsyncSession,
     project_id: uuid.UUID,
     manifest_id: uuid.UUID,
-    scene_index: int,
+    shot_index: int,
     new_entities: list[NewEntityDetection],
     source: str = "CLIP_EXTRACT",
 ) -> list[Asset]:
@@ -232,7 +232,7 @@ async def extract_and_register_new_entities(
         session: Active database session (caller manages commit)
         project_id: Project UUID (for logging context)
         manifest_id: Target manifest for new assets
-        scene_index: Scene index (for logging)
+        shot_index: Shot index (for logging)
         new_entities: New entity detections from identify_new_entities()
         source: Source tag for Asset.source column
 
@@ -265,7 +265,7 @@ async def extract_and_register_new_entities(
         from pathlib import Path as _Path
         if not entity.crop_path or not _Path(entity.crop_path).exists():
             logger.warning(
-                f"Scene {scene_index}: entity {idx} has no valid crop_path, skipping"
+                f"Shot {shot_index}: entity {idx} has no valid crop_path, skipping"
             )
             continue
 
@@ -278,7 +278,7 @@ async def extract_and_register_new_entities(
                 )
             except Exception as exc:
                 logger.warning(
-                    f"Scene {scene_index}: reverse-prompt failed for entity {idx}: {exc}"
+                    f"Shot {shot_index}: reverse-prompt failed for entity {idx}: {exc}"
                 )
                 continue
 
@@ -287,7 +287,7 @@ async def extract_and_register_new_entities(
 
             if quality_score < threshold:
                 logger.info(
-                    f"Scene {scene_index}: Entity skipped: "
+                    f"Shot {shot_index}: Entity skipped: "
                     f"quality {quality_score:.1f} < threshold {threshold:.1f}"
                 )
                 continue
@@ -302,12 +302,12 @@ async def extract_and_register_new_entities(
                     face_embedding_bytes = face_emb.tobytes()
                 except ValueError:
                     logger.info(
-                        f"Scene {scene_index}: No face in CHARACTER crop, "
+                        f"Shot {shot_index}: No face in CHARACTER crop, "
                         "skipping face embedding"
                     )
                 except Exception as exc:
                     logger.warning(
-                        f"Scene {scene_index}: face embedding failed: {exc}"
+                        f"Shot {shot_index}: face embedding failed: {exc}"
                     )
 
             # Step 3: CLIP embedding
@@ -319,7 +319,7 @@ async def extract_and_register_new_entities(
                 clip_embedding_bytes = clip_emb.tobytes()
             except Exception as exc:
                 logger.warning(
-                    f"Scene {scene_index}: CLIP embedding failed: {exc}"
+                    f"Shot {shot_index}: CLIP embedding failed: {exc}"
                 )
 
             # Step 4: Generate manifest_tag
@@ -361,7 +361,7 @@ async def extract_and_register_new_entities(
             registered_assets.append(asset)
 
             logger.info(
-                f"Scene {scene_index}: Registered new asset {manifest_tag} "
+                f"Shot {shot_index}: Registered new asset {manifest_tag} "
                 f"({asset_type}) '{asset_name}' — quality={quality_score:.1f}"
             )
 
@@ -372,7 +372,7 @@ async def extract_and_register_new_entities(
             manifest.asset_count = (manifest.asset_count or 0) + len(registered_assets)
 
     logger.info(
-        f"Scene {scene_index}: extract_and_register_new_entities complete — "
+        f"Shot {shot_index}: extract_and_register_new_entities complete — "
         f"{len(registered_assets)}/{len(new_entities)} entities registered"
     )
     return registered_assets

@@ -3,7 +3,7 @@
 Evaluates generated video candidates across four weighted dimensions:
   - manifest_adherence (0.35): via CVAnalysisService face matching
   - visual_quality     (0.25): via Gemini Flash visual assessment
-  - continuity         (0.25): via CLIP embeddings between scenes
+  - continuity         (0.25): via CLIP embeddings between shots
   - prompt_adherence   (0.15): via Gemini Flash prompt match assessment
 
 Spec reference: Phase 11 - Multi-Candidate Quality Mode
@@ -145,29 +145,29 @@ class CandidateScoringService:
     async def score_candidate(
         self,
         candidate_video_path: str,
-        scene_index: int,
-        scene_manifest_json: Optional[dict],
+        shot_index: int,
+        shot_manifest_json: Optional[dict],
         rewritten_video_prompt: str,
         existing_assets: list,
-        previous_scene_clip_path: Optional[str] = None,
+        previous_shot_clip_path: Optional[str] = None,
     ) -> dict:
         """Score a single candidate video across four quality dimensions.
 
         Args:
             candidate_video_path: Path to the candidate .mp4 file.
-            scene_index: Zero-based scene index (0 means first scene).
-            scene_manifest_json: Scene manifest dict for adherence scoring.
-            rewritten_video_prompt: The rewritten video prompt for this scene.
+            shot_index: Zero-based shot index (0 means first shot).
+            shot_manifest_json: Shot manifest dict for adherence scoring.
+            rewritten_video_prompt: The rewritten video prompt for this shot.
             existing_assets: List of Asset ORM objects for face matching.
-            previous_scene_clip_path: Path to the previous scene's clip
-                (used for continuity scoring; None if scene_index == 0).
+            previous_shot_clip_path: Path to the previous shot's clip
+                (used for continuity scoring; None if shot_index == 0).
 
         Returns:
             Dict with keys: manifest_adherence_score, visual_quality_score,
             continuity_score, prompt_adherence_score, composite_score,
             scoring_details, scoring_cost.
         """
-        tmp_dir = tempfile.mkdtemp(prefix=f"scoring_scene{scene_index}_")
+        tmp_dir = tempfile.mkdtemp(prefix=f"scoring_shot{shot_index}_")
         scoring_cost = 0.0
         scoring_details: dict = {}
 
@@ -175,8 +175,8 @@ class CandidateScoringService:
             # ── a. Manifest Adherence (weight 0.35) ───────────────────────────
             manifest_adherence = await self._score_manifest_adherence(
                 candidate_video_path,
-                scene_index,
-                scene_manifest_json,
+                shot_index,
+                shot_manifest_json,
                 existing_assets,
                 scoring_details,
             )
@@ -184,8 +184,8 @@ class CandidateScoringService:
             # ── b. Continuity (weight 0.25) ───────────────────────────────────
             continuity = await self._score_continuity(
                 candidate_video_path,
-                scene_index,
-                previous_scene_clip_path,
+                shot_index,
+                previous_shot_clip_path,
                 tmp_dir,
                 scoring_details,
             )
@@ -208,7 +208,7 @@ class CandidateScoringService:
             )
 
             logger.info(
-                f"Scene {scene_index} candidate scored: composite={composite:.2f} "
+                f"Shot {shot_index} candidate scored: composite={composite:.2f} "
                 f"(manifest={manifest_adherence:.1f}, visual={visual_quality:.1f}, "
                 f"continuity={continuity:.1f}, prompt={prompt_adherence:.1f})"
             )
@@ -231,8 +231,8 @@ class CandidateScoringService:
     async def _score_manifest_adherence(
         self,
         clip_path: str,
-        scene_index: int,
-        scene_manifest_json: Optional[dict],
+        shot_index: int,
+        shot_manifest_json: Optional[dict],
         existing_assets: list,
         scoring_details: dict,
     ) -> float:
@@ -243,10 +243,10 @@ class CandidateScoringService:
         try:
             cv_service = self._get_cv_service()
             result = await cv_service.analyze_generated_content(
-                scene_index=scene_index,
+                shot_index=shot_index,
                 keyframe_paths=None,
                 clip_path=clip_path,
-                scene_manifest_json=scene_manifest_json,
+                shot_manifest_json=shot_manifest_json,
                 existing_assets=existing_assets,
             )
 
@@ -259,8 +259,8 @@ class CandidateScoringService:
 
             # Fallback: count face matches vs expected characters
             expected_faces = 0
-            if scene_manifest_json:
-                asset_tags = scene_manifest_json.get("asset_tags", [])
+            if shot_manifest_json:
+                asset_tags = shot_manifest_json.get("asset_tags", [])
                 # Count CHAR_ tags as expected characters
                 expected_faces = sum(1 for t in asset_tags if str(t).startswith("CHAR_"))
 
@@ -272,24 +272,24 @@ class CandidateScoringService:
             return score
 
         except Exception as e:
-            logger.warning(f"Manifest adherence scoring failed (scene {scene_index}): {e}")
+            logger.warning(f"Manifest adherence scoring failed (shot {shot_index}): {e}")
             scoring_details["manifest_adherence_error"] = str(e)
             return 5.0  # neutral fallback
 
     async def _score_continuity(
         self,
         candidate_clip_path: str,
-        scene_index: int,
+        shot_index: int,
         previous_clip_path: Optional[str],
         tmp_dir: str,
         scoring_details: dict,
     ) -> float:
-        """Score visual continuity with the previous scene using CLIP embeddings.
+        """Score visual continuity with the previous shot using CLIP embeddings.
 
-        Returns a score in [0, 10]. Scene 0 always scores 10 (no prior scene).
+        Returns a score in [0, 10]. Shot 0 always scores 10 (no prior shot).
         """
-        if scene_index == 0:
-            scoring_details["continuity_source"] = "first_scene"
+        if shot_index == 0:
+            scoring_details["continuity_source"] = "first_shot"
             return 10.0
 
         if not previous_clip_path:
@@ -316,11 +316,11 @@ class CandidateScoringService:
 
             scoring_details["continuity_source"] = "clip_similarity"
             scoring_details["continuity_raw_similarity"] = similarity
-            logger.info(f"Scene {scene_index} continuity: similarity={similarity:.3f} → score={score:.1f}")
+            logger.info(f"Shot {shot_index} continuity: similarity={similarity:.3f} → score={score:.1f}")
             return score
 
         except Exception as e:
-            logger.warning(f"Continuity scoring failed (scene {scene_index}): {e}")
+            logger.warning(f"Continuity scoring failed (shot {shot_index}): {e}")
             scoring_details["continuity_error"] = str(e)
             return 5.0  # neutral fallback
 
@@ -353,11 +353,11 @@ class CandidateScoringService:
                 "You are a professional video quality assessor. "
                 "Analyze the provided video frame and return a JSON object with two scores (0-10):\n"
                 "- visual_quality: Rate the sharpness, coherence, absence of artifacts, and compositional quality.\n"
-                "- prompt_adherence: Rate how well this frame matches the scene description provided.\n"
+                "- prompt_adherence: Rate how well this frame matches the shot description provided.\n"
             )
 
             user_prompt = (
-                f"Scene description to evaluate against:\n{rewritten_video_prompt}\n\n"
+                f"Shot description to evaluate against:\n{rewritten_video_prompt}\n\n"
                 "Rate this frame's visual_quality and prompt_adherence (0-10 each)."
             )
 
@@ -386,22 +386,22 @@ class CandidateScoringService:
     async def score_all_candidates(
         self,
         candidates_info: list[dict],
-        scene_index: int,
-        scene_manifest_json: Optional[dict],
+        shot_index: int,
+        shot_manifest_json: Optional[dict],
         rewritten_video_prompt: str,
         existing_assets: list,
-        previous_scene_clip_path: Optional[str] = None,
+        previous_shot_clip_path: Optional[str] = None,
     ) -> list[dict]:
         """Score all candidates in parallel with Semaphore(3) for rate limiting.
 
         Args:
             candidates_info: List of dicts, each with at minimum
                 ``{"local_path": str}`` for the candidate video path.
-            scene_index: Zero-based scene index.
-            scene_manifest_json: Scene manifest dict for adherence scoring.
+            shot_index: Zero-based shot index.
+            shot_manifest_json: Shot manifest dict for adherence scoring.
             rewritten_video_prompt: Rewritten video prompt for prompt adherence.
             existing_assets: List of Asset ORM objects for face matching.
-            previous_scene_clip_path: Path to previous scene clip for continuity.
+            previous_shot_clip_path: Path to previous shot clip for continuity.
 
         Returns:
             List of score dicts in the same order as ``candidates_info``.
@@ -412,11 +412,11 @@ class CandidateScoringService:
             async with semaphore:
                 return await self.score_candidate(
                     candidate_video_path=info["local_path"],
-                    scene_index=scene_index,
-                    scene_manifest_json=scene_manifest_json,
+                    shot_index=shot_index,
+                    shot_manifest_json=shot_manifest_json,
                     rewritten_video_prompt=rewritten_video_prompt,
                     existing_assets=existing_assets,
-                    previous_scene_clip_path=previous_scene_clip_path,
+                    previous_shot_clip_path=previous_shot_clip_path,
                 )
 
         results = await asyncio.gather(

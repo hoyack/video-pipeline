@@ -14,7 +14,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Keyframe, Manifest, ManifestSnapshot, Project, Scene
+from vidpipe.db.models import Asset, Keyframe, Manifest, ManifestSnapshot, Project, Shot
 
 # Valid enum constants
 VALID_CATEGORIES = {"CHARACTERS", "ENVIRONMENT", "FULL_PRODUCTION", "STYLE_KIT", "BRAND_KIT", "CUSTOM"}
@@ -74,7 +74,7 @@ async def create_manifest_from_project(
 ) -> tuple[Manifest, list[Asset]]:
     """Create a manifest pre-populated from a project's storyboard data.
 
-    Extracts characters, scene environments, and style guide from
+    Extracts characters, shot environments, and style guide from
     storyboard_raw and creates corresponding assets.
 
     Args:
@@ -134,44 +134,44 @@ async def create_manifest_from_project(
             asset.reverse_prompt = reverse_prompt
         assets_list.append(asset)
 
-    # --- Environments (one per scene, using start keyframe) ---
-    scenes_data = storyboard.get("scenes", [])
+    # --- Environments (one per shot, using start keyframe) ---
+    shots_data = storyboard.get("shots", [])
 
-    # Query actual scenes + keyframes from the database for file paths
-    scene_result = await session.execute(
-        select(Scene)
-        .where(Scene.project_id == project_id)
-        .order_by(Scene.scene_index)
+    # Query actual shots + keyframes from the database for file paths
+    shot_result = await session.execute(
+        select(Shot)
+        .where(Shot.project_id == project_id)
+        .order_by(Shot.shot_index)
     )
-    db_scenes = list(scene_result.scalars().all())
+    db_shots = list(shot_result.scalars().all())
 
-    # Build map of scene_index -> start keyframe file_path
+    # Build map of shot_index -> start keyframe file_path
     keyframe_map: dict[int, str] = {}
-    if db_scenes:
-        scene_ids = [s.id for s in db_scenes]
+    if db_shots:
+        shot_ids = [s.id for s in db_shots]
         kf_result = await session.execute(
             select(Keyframe).where(
-                Keyframe.scene_id.in_(scene_ids),
+                Keyframe.shot_id.in_(shot_ids),
                 Keyframe.position == "start",
             )
         )
         keyframes = kf_result.scalars().all()
-        scene_id_to_index = {s.id: s.scene_index for s in db_scenes}
+        shot_id_to_index = {s.id: s.shot_index for s in db_shots}
         for kf in keyframes:
-            idx = scene_id_to_index.get(kf.scene_id)
+            idx = shot_id_to_index.get(kf.shot_id)
             if idx is not None:
                 keyframe_map[idx] = kf.file_path
 
-    for i, scene_data in enumerate(scenes_data):
-        scene_desc = scene_data.get("scene_description", "")
-        start_prompt = scene_data.get("start_frame_prompt", "")
+    for i, shot_data in enumerate(shots_data):
+        shot_desc = shot_data.get("shot_description", "")
+        start_prompt = shot_data.get("start_frame_prompt", "")
 
         asset = await create_asset(
             session,
             manifest_id=manifest.id,
-            name=f"Scene {i + 1} Environment",
+            name=f"Shot {i + 1} Environment",
             asset_type="ENVIRONMENT",
-            description=scene_desc or None,
+            description=shot_desc or None,
         )
         asset.source = "project_import"
         if start_prompt:
@@ -767,7 +767,7 @@ def format_asset_registry(assets: list[Asset]) -> str:
         Formatted text block for LLM context injection
     """
     if not assets:
-        return "No assets registered. Describe all visual elements in scenes."
+        return "No assets registered. Describe all visual elements in shots."
 
     lines = ["AVAILABLE ASSETS FOR THIS PROJECT:", "━" * 40]
 

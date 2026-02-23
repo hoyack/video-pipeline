@@ -156,7 +156,7 @@ def build_wan22_flf2v_workflow(
     API format, and injects runtime parameters.
 
     Args:
-        prompt: Motion/scene prompt for CLIPTextEncode node 93
+        prompt: Motion/shot prompt for CLIPTextEncode node 93
         start_keyframe_filename: Uploaded filename for node 97 (start frame)
         end_keyframe_filename: Uploaded filename for node 200 (end frame)
         char_ref_01_filename: Uploaded filename for node 201 (char ref 1, QC passthrough).
@@ -525,7 +525,7 @@ def build_wan22_i2v_workflow(
     - Node 86: noise seed (KSamplerAdvanced)
 
     Args:
-        prompt: Motion/scene prompt for positive CLIP encoding
+        prompt: Motion/shot prompt for positive CLIP encoding
         negative_prompt: Quality-negative prompt for negative CLIP encoding
         image_filename: Uploaded filename for start image
         width: Video width (default 832 for 16:9)

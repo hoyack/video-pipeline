@@ -86,7 +86,7 @@ Analyze this CHARACTER image and produce a JSON response with:
 
 1. "reverse_prompt": Write a detailed prompt that would recreate this character in an AI image/video generator. Include: physical build, skin tone, hair (color, style, length), facial features (eye color/shape, nose, jaw, facial hair), expression, clothing (every garment with color and material), accessories, pose, lighting on the subject, and camera angle. Be specific enough that the generated result would be recognizable as this person. Write in prompt style, not prose. ~100-150 words.
 
-2. "visual_description": Narrative description for a production bible. What is distinctive/signature about this character? What must stay consistent across scenes? What is variable (removable accessories, changeable expressions)? ~50-80 words.
+2. "visual_description": Narrative description for a production bible. What is distinctive/signature about this character? What must stay consistent across shots? What is variable (removable accessories, changeable expressions)? ~50-80 words.
 
 3. "quality_score": Rate 1-10 how suitable this image is as a reference for AI generation (clear, well-lit, good angle, unoccluded = higher score).
 

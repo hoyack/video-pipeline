@@ -1,13 +1,13 @@
 """PromptRewriterService — adaptive prompt rewriting via Gemini 2.5 Flash.
 
-Assembles five structured inputs per scene and calls Gemini to produce
+Assembles five structured inputs per shot and calls Gemini to produce
 cinematography-formula prompts with LLM-reasoned reference selection.
 
 Inputs assembled:
-  1. Original storyboard prompt (scene.start_frame_prompt or scene.video_motion_prompt)
-  2. Manifest metadata (shot_type, camera_movement, placements from scene_manifest_json)
+  1. Original storyboard prompt (shot.start_frame_prompt or shot.video_motion_prompt)
+  2. Manifest metadata (shot_type, camera_movement, placements from shot_manifest_json)
   3. Asset reverse_prompts (from placed asset registry entries)
-  4. Continuity patch (from previous scene's cv_analysis_json)
+  4. Continuity patch (from previous shot's cv_analysis_json)
   5. Audio direction (from audio_manifest_json — video only)
 
 Called from:
@@ -21,7 +21,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from vidpipe.db.models import Asset, Scene
+from vidpipe.db.models import Asset, Shot
 from vidpipe.schemas.prompt_rewrite import RewrittenKeyframePromptOutput, RewrittenVideoPromptOutput
 from vidpipe.services.llm import get_adapter, LLMAdapter
 
@@ -39,15 +39,15 @@ Your output must follow this EXACT formula:
 [Cinematography] + [Subject] + [Action] + [Context] + [Style & Ambiance]
 
 RULES:
-1. Start with shot type and camera details from the scene manifest
+1. Start with shot type and camera details from the shot manifest
 2. Describe subjects using their EXACT reverse_prompt details (not what you imagine)
 3. Include spatial positions from manifest placements (left/right/center/foreground/background)
 4. Include wardrobe_note details for continuity
-5. Apply any continuity corrections from the previous scene's CV analysis
+5. Apply any continuity corrections from the previous shot's CV analysis
 6. Preserve the original prompt's narrative intent, but upgrade its visual specificity
 7. Keep under 400 words (Imagen sweet spot for keyframes)
 8. Select exactly 3 reference asset tags — explain why
-9. Assets marked ★ PLACED IN SCENE (MUST SELECT) MUST be included in your reference selection FIRST. Fill remaining slots with other relevant assets.
+9. Assets marked ★ PLACED IN SHOT (MUST SELECT) MUST be included in your reference selection FIRST. Fill remaining slots with other relevant assets.
 
 WHAT NOT TO DO:
 - Do not re-invent character descriptions (use reverse_prompt verbatim)
@@ -71,10 +71,10 @@ RULES:
    - SFX: brief description at timing
    - Ambient: base soundscape
    - Music: style, mood, transition
-5. Apply continuity corrections from CV analysis of previous scene
+5. Apply continuity corrections from CV analysis of previous shot
 6. Keep under 500 words (Veo 3.1 prompt sweet spot)
 7. Select exactly 3 reference asset tags — explain why
-8. Assets marked ★ PLACED IN SCENE (MUST SELECT) MUST be included in your reference selection FIRST. Fill remaining slots with other relevant assets.
+8. Assets marked ★ PLACED IN SHOT (MUST SELECT) MUST be included in your reference selection FIRST. Fill remaining slots with other relevant assets.
 
 CRITICAL:
 - Include ALL audio direction from the manifest (Veo generates audio from this)
@@ -91,7 +91,7 @@ class PromptRewriterService:
     """Assembles final generation prompts by injecting manifest metadata,
     asset reverse_prompts, continuity corrections, and audio direction.
 
-    Called once per scene for keyframe generation, and once per scene
+    Called once per shot for keyframe generation, and once per shot
     for video generation (separate calls with different formula).
     """
 
@@ -103,8 +103,8 @@ class PromptRewriterService:
 
     async def rewrite_keyframe_prompt(
         self,
-        scene: Scene,
-        scene_manifest_json: dict,
+        shot: Shot,
+        shot_manifest_json: dict,
         placed_assets: list[Asset],
         previous_cv_analysis: Optional[dict],
         all_assets: list[Asset],
@@ -112,10 +112,10 @@ class PromptRewriterService:
         """Rewrite keyframe prompt with manifest enrichment.
 
         Args:
-            scene: Scene ORM row (provides start_frame_prompt, scene_index)
-            scene_manifest_json: scene_manifest_row.manifest_json dict
+            shot: Shot ORM row (provides start_frame_prompt, shot_index)
+            shot_manifest_json: shot_manifest_row.manifest_json dict
             placed_assets: Asset instances for tags present in placements
-            previous_cv_analysis: cv_analysis_json from scene N-1 (None if scene 0)
+            previous_cv_analysis: cv_analysis_json from shot N-1 (None if shot 0)
             all_assets: All assets in the manifest (for reference listing)
 
         Returns:
@@ -127,7 +127,7 @@ class PromptRewriterService:
         async with self._semaphore:
             system_prompt = KEYFRAME_REWRITER_SYSTEM_PROMPT
             user_context = self._assemble_keyframe_context(
-                scene, scene_manifest_json, placed_assets, previous_cv_analysis, all_assets
+                shot, shot_manifest_json, placed_assets, previous_cv_analysis, all_assets
             )
             return await self._call_rewriter(
                 system_prompt, user_context, RewrittenKeyframePromptOutput
@@ -135,8 +135,8 @@ class PromptRewriterService:
 
     async def rewrite_video_prompt(
         self,
-        scene: Scene,
-        scene_manifest_json: dict,
+        shot: Shot,
+        shot_manifest_json: dict,
         audio_manifest_json: Optional[dict],
         placed_assets: list[Asset],
         previous_cv_analysis: Optional[dict],
@@ -145,11 +145,11 @@ class PromptRewriterService:
         """Rewrite video prompt with manifest enrichment and audio direction.
 
         Args:
-            scene: Scene ORM row (provides video_motion_prompt, scene_index)
-            scene_manifest_json: scene_manifest_row.manifest_json dict
+            shot: Shot ORM row (provides video_motion_prompt, shot_index)
+            shot_manifest_json: shot_manifest_row.manifest_json dict
             audio_manifest_json: dict with dialogue_lines, sfx, ambient, music (or None)
             placed_assets: Asset instances for tags present in placements
-            previous_cv_analysis: cv_analysis_json from scene N-1 (None if scene 0)
+            previous_cv_analysis: cv_analysis_json from shot N-1 (None if shot 0)
             all_assets: All assets in the manifest (for reference listing)
 
         Returns:
@@ -161,7 +161,7 @@ class PromptRewriterService:
         async with self._semaphore:
             system_prompt = VIDEO_REWRITER_SYSTEM_PROMPT
             user_context = self._assemble_video_context(
-                scene, scene_manifest_json, audio_manifest_json,
+                shot, shot_manifest_json, audio_manifest_json,
                 placed_assets, previous_cv_analysis, all_assets
             )
             return await self._call_rewriter(
@@ -176,7 +176,7 @@ class PromptRewriterService:
 
         Args:
             system_prompt: Role/instructions string
-            user_context: Assembled scene data block
+            user_context: Assembled shot data block
             schema: Pydantic model class for response_schema
 
         Returns:
@@ -200,8 +200,8 @@ class PromptRewriterService:
 
     def _assemble_keyframe_context(
         self,
-        scene: Scene,
-        scene_manifest_json: dict,
+        shot: Shot,
+        shot_manifest_json: dict,
         placed_assets: list[Asset],
         previous_cv_analysis: Optional[dict],
         all_assets: list[Asset],
@@ -209,19 +209,19 @@ class PromptRewriterService:
         """Assemble the user context block for keyframe rewriting."""
         placed_tags = {
             p["asset_tag"]
-            for p in scene_manifest_json.get("placements", [])
+            for p in shot_manifest_json.get("placements", [])
             if "asset_tag" in p
         }
         sections = [
             "=== ORIGINAL PROMPT ===",
-            scene.start_frame_prompt,
+            shot.start_frame_prompt,
             "",
-            "=== SCENE COMPOSITION ===",
-            _format_composition(scene_manifest_json),
+            "=== SHOT COMPOSITION ===",
+            _format_composition(shot_manifest_json),
             "",
-            _format_placed_assets(scene_manifest_json, all_assets),
+            _format_placed_assets(shot_manifest_json, all_assets),
             "",
-            _build_continuity_patch(previous_cv_analysis, scene.scene_index),
+            _build_continuity_patch(previous_cv_analysis, shot.shot_index),
             "",
             _list_available_references(all_assets, placed_tags=placed_tags),
         ]
@@ -229,8 +229,8 @@ class PromptRewriterService:
 
     def _assemble_video_context(
         self,
-        scene: Scene,
-        scene_manifest_json: dict,
+        shot: Shot,
+        shot_manifest_json: dict,
         audio_manifest_json: Optional[dict],
         placed_assets: list[Asset],
         previous_cv_analysis: Optional[dict],
@@ -239,19 +239,19 @@ class PromptRewriterService:
         """Assemble the user context block for video rewriting."""
         placed_tags = {
             p["asset_tag"]
-            for p in scene_manifest_json.get("placements", [])
+            for p in shot_manifest_json.get("placements", [])
             if "asset_tag" in p
         }
         sections = [
             "=== ORIGINAL PROMPT ===",
-            scene.video_motion_prompt,
+            shot.video_motion_prompt,
             "",
-            "=== SCENE COMPOSITION ===",
-            _format_composition(scene_manifest_json),
+            "=== SHOT COMPOSITION ===",
+            _format_composition(shot_manifest_json),
             "",
-            _format_placed_assets(scene_manifest_json, all_assets),
+            _format_placed_assets(shot_manifest_json, all_assets),
             "",
-            _build_continuity_patch(previous_cv_analysis, scene.scene_index),
+            _build_continuity_patch(previous_cv_analysis, shot.shot_index),
             "",
             _format_audio_direction(audio_manifest_json),
             "",
@@ -264,9 +264,9 @@ class PromptRewriterService:
 # Module-level helper functions
 # ---------------------------------------------------------------------------
 
-def _format_composition(scene_manifest_json: dict) -> str:
-    """Format composition metadata from scene manifest."""
-    composition = scene_manifest_json.get("composition", {})
+def _format_composition(shot_manifest_json: dict) -> str:
+    """Format composition metadata from shot manifest."""
+    composition = shot_manifest_json.get("composition", {})
     if not composition:
         return "No composition metadata available."
 
@@ -281,14 +281,14 @@ def _format_composition(scene_manifest_json: dict) -> str:
     if focal_point:
         lines.append(f"Focal point: {focal_point}")
 
-    continuity_notes = scene_manifest_json.get("continuity_notes", "")
+    continuity_notes = shot_manifest_json.get("continuity_notes", "")
     if continuity_notes:
         lines.append(f"Storyboard continuity notes: {continuity_notes}")
 
     return "\n".join(lines)
 
 
-def _format_placed_assets(scene_manifest_json: dict, all_assets: list[Asset]) -> str:
+def _format_placed_assets(shot_manifest_json: dict, all_assets: list[Asset]) -> str:
     """Format placed asset descriptions for LLM rewriter context.
 
     Follows truncation rules from research Pattern 4:
@@ -296,9 +296,9 @@ def _format_placed_assets(scene_manifest_json: dict, all_assets: list[Asset]) ->
     - visual_description: included only if quality >= 7.0, truncated to 150 chars
     """
     asset_map = {a.manifest_tag: a for a in all_assets}
-    placements = scene_manifest_json.get("placements", [])
+    placements = shot_manifest_json.get("placements", [])
 
-    lines = ["PLACED ASSETS IN THIS SCENE:", "=" * 40]
+    lines = ["PLACED ASSETS IN THIS SHOT:", "=" * 40]
 
     if not placements:
         lines.append("No asset placements specified.")
@@ -341,36 +341,36 @@ def _format_placed_assets(scene_manifest_json: dict, all_assets: list[Asset]) ->
     return "\n".join(lines)
 
 
-def _build_continuity_patch(previous_cv_analysis: Optional[dict], scene_index: int) -> str:
-    """Build continuity correction block from previous scene's CV analysis.
+def _build_continuity_patch(previous_cv_analysis: Optional[dict], shot_index: int) -> str:
+    """Build continuity correction block from previous shot's CV analysis.
 
-    Guards scene_index == 0 (first scene has no previous scene CV data).
+    Guards shot_index == 0 (first shot has no previous shot CV data).
 
     Args:
-        previous_cv_analysis: cv_analysis_json from scene N-1, or None
-        scene_index: Current scene index (0-based)
+        previous_cv_analysis: cv_analysis_json from shot N-1, or None
+        shot_index: Current shot index (0-based)
 
     Returns:
         Formatted continuity block string for LLM context
     """
-    if scene_index == 0 or previous_cv_analysis is None:
-        return "CONTINUITY: This is the first scene — no previous scene continuity needed."
+    if shot_index == 0 or previous_cv_analysis is None:
+        return "CONTINUITY: This is the first shot — no previous shot continuity needed."
 
     semantic = previous_cv_analysis.get("semantic_analysis") or {}
     issues = semantic.get("continuity_issues") or []
-    scene_desc = semantic.get("overall_scene_description", "")
+    shot_desc = semantic.get("overall_shot_description", "")
     score = previous_cv_analysis.get("continuity_score", 0.0)
 
     lines = [
-        f"CONTINUITY PATCH (from Scene {scene_index - 1} CV Analysis):",
-        f"Previous scene continuity score: {score:.1f}/10",
+        f"CONTINUITY PATCH (from Shot {shot_index - 1} CV Analysis):",
+        f"Previous shot continuity score: {score:.1f}/10",
     ]
 
-    if scene_desc:
-        lines.append(f"What scene {scene_index - 1} actually showed: {scene_desc}")
+    if shot_desc:
+        lines.append(f"What shot {shot_index - 1} actually showed: {shot_desc}")
 
     if issues:
-        lines.append("Issues flagged (MUST address in this scene):")
+        lines.append("Issues flagged (MUST address in this shot):")
         for issue in issues:
             lines.append(f"  - {issue}")
     else:
@@ -442,11 +442,11 @@ def _list_available_references(
     The LLM selects from this list for selected_reference_tags.
 
     Deduplicates by manifest_tag (keeps highest quality_score per tag).
-    Marks placed CHARACTER assets with ★ PLACED IN SCENE (MUST SELECT).
+    Marks placed CHARACTER assets with ★ PLACED IN SHOT (MUST SELECT).
 
     Args:
         all_assets: All Asset instances in the manifest
-        placed_tags: Set of manifest_tags placed in the current scene
+        placed_tags: Set of manifest_tags placed in the current shot
 
     Returns:
         Formatted available references block for LLM context
@@ -497,7 +497,7 @@ def _list_available_references(
             placed_assets = fallback_chars
             unplaced_assets = [a for a in with_images if a not in placed_assets]
             logger.warning(
-                "No placed assets resolved from scene manifest tags %s; "
+                "No placed assets resolved from shot manifest tags %s; "
                 "falling back to all %d CHARACTER assets as MUST SELECT",
                 placed_tags, len(placed_assets),
             )
@@ -508,7 +508,7 @@ def _list_available_references(
         lines.append(
             f"  [{asset.manifest_tag}] {asset.name} ({asset.asset_type}){face_note}"
             f" — quality: {quality_str} — HAS REFERENCE IMAGE"
-            f" — ★ PLACED IN SCENE (MUST SELECT)"
+            f" — ★ PLACED IN SHOT (MUST SELECT)"
         )
 
     for asset in unplaced_assets:

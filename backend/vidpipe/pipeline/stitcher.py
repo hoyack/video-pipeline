@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Scene, VideoClip
+from vidpipe.db.models import Project, Shot, VideoClip
 from vidpipe.services.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 async def stitch_videos(session: AsyncSession, project: Project) -> None:
     """Stitch completed video clips into final output.
 
-    Queries all completed clips for the project, concatenates them in scene order
+    Queries all completed clips for the project, concatenates them in shot order
     using either concat demuxer (hard cuts) or xfade filter (crossfades),
     and saves the result to tmp/{project_id}/output/final.mp4.
 
@@ -44,13 +44,13 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
     """
     file_mgr = FileManager()
 
-    # Query completed clips in scene order (STCH-04)
+    # Query completed clips in shot order (STCH-04)
     result = await session.execute(
         select(VideoClip)
-        .join(Scene)
-        .where(Scene.project_id == project.id)
+        .join(Shot)
+        .where(Shot.project_id == project.id)
         .where(VideoClip.status == "complete")
-        .order_by(Scene.scene_index)
+        .order_by(Shot.shot_index)
     )
     clips = result.scalars().all()
 

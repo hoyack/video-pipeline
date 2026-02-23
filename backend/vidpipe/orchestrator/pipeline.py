@@ -18,7 +18,7 @@ from typing import Callable, Dict, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Project, PipelineRun, Scene, Keyframe, VideoClip, AssetAppearance, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel
+from vidpipe.db.models import Project, PipelineRun, Shot, Keyframe, VideoClip, AssetAppearance, ShotManifest as ShotManifestModel, ShotAudioManifest as ShotAudioManifestModel
 from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
 from vidpipe.orchestrator.state import get_resume_step
 from vidpipe.pipeline.storyboard import generate_storyboard
@@ -48,24 +48,24 @@ class PipelineStaged(Exception):
 async def _generate_expansion_if_needed(
     session: AsyncSession, project: Project, text_adapter=None,
 ) -> None:
-    """Generate storyboard entries for expansion scenes if needed.
+    """Generate storyboard entries for expansion shots if needed.
 
-    After a fork with delete-then-expand, the project may have fewer Scene
-    records than target_scene_count. This generates the missing scenes using
-    the existing storyboard as context, creating Scene records and updating
+    After a fork with delete-then-expand, the project may have fewer Shot
+    records than target_shot_count. This generates the missing shots using
+    the existing storyboard as context, creating Shot records and updating
     storyboard_raw before keyframing begins.
 
-    For manifest-aware projects (manifest_id set), generates enhanced scenes
-    with scene_manifest and audio_manifest, creating SceneManifest and
-    SceneAudioManifest rows for the new scenes.
+    For manifest-aware projects (manifest_id set), generates enhanced shots
+    with shot_manifest and audio_manifest, creating ShotManifest and
+    ShotAudioManifest rows for the new shots.
     """
-    target = project.target_scene_count or 0
+    target = project.target_shot_count or 0
     if target <= 0:
         return
 
-    # Count existing scenes
+    # Count existing shots
     result = await session.execute(
-        select(func.count(Scene.id)).where(Scene.project_id == project.id)
+        select(func.count(Shot.id)).where(Shot.project_id == project.id)
     )
     existing_count = result.scalar() or 0
 
@@ -75,14 +75,14 @@ async def _generate_expansion_if_needed(
     num_new = target - existing_count
     logger.info(
         f"Project {project.id}: expanding storyboard — "
-        f"{existing_count} scenes exist, {target} needed, generating {num_new}"
+        f"{existing_count} shots exist, {target} needed, generating {num_new}"
     )
 
-    from vidpipe.api.routes import _generate_expansion_scenes
+    from vidpipe.api.routes import _generate_expansion_shots
 
-    kept_sb_scenes = []
-    if project.storyboard_raw and "scenes" in project.storyboard_raw:
-        kept_sb_scenes = project.storyboard_raw["scenes"]
+    kept_sb_shots = []
+    if project.storyboard_raw and "shots" in project.storyboard_raw:
+        kept_sb_shots = project.storyboard_raw["shots"]
 
     # For manifest-aware projects, load assets and use enhanced schema
     asset_registry_block = None
@@ -92,48 +92,48 @@ async def _generate_expansion_if_needed(
         if assets:
             asset_registry_block = format_asset_registry(assets)
 
-    new_scene_data = await _generate_expansion_scenes(
-        project, kept_sb_scenes, num_new, start_index=existing_count,
+    new_shot_data = await _generate_expansion_shots(
+        project, kept_sb_shots, num_new, start_index=existing_count,
         asset_registry_block=asset_registry_block,
         text_adapter=text_adapter,
     )
 
-    for sd in new_scene_data:
-        scene = Scene(
+    for sd in new_shot_data:
+        shot = Shot(
             project_id=project.id,
-            scene_index=sd.get("scene_index", existing_count),
-            scene_description=sd.get("scene_description", ""),
+            shot_index=sd.get("shot_index", existing_count),
+            shot_description=sd.get("shot_description", ""),
             start_frame_prompt=sd.get("start_frame_prompt", ""),
             end_frame_prompt=sd.get("end_frame_prompt", ""),
             video_motion_prompt=sd.get("video_motion_prompt", ""),
             transition_notes=sd.get("transition_notes", ""),
             status="pending",
         )
-        session.add(scene)
+        session.add(shot)
 
-        # Create SceneManifest row for manifest-aware expansion scenes
-        sm_data = sd.get("scene_manifest")
+        # Create ShotManifest row for manifest-aware expansion shots
+        sm_data = sd.get("shot_manifest")
         if sm_data:
             placements = sm_data.get("placements", [])
             composition = sm_data.get("composition", {})
-            scene_manifest = SceneManifestModel(
+            shot_manifest = ShotManifestModel(
                 project_id=project.id,
-                scene_index=sd.get("scene_index", existing_count),
+                shot_index=sd.get("shot_index", existing_count),
                 manifest_json=sm_data,
                 composition_shot_type=composition.get("shot_type"),
                 composition_camera_movement=composition.get("camera_movement"),
                 asset_tags=[p.get("asset_tag") for p in placements if p.get("asset_tag")],
                 new_asset_count=len(sm_data.get("new_asset_declarations") or []),
             )
-            session.add(scene_manifest)
+            session.add(shot_manifest)
 
-        # Create SceneAudioManifest row for manifest-aware expansion scenes
+        # Create ShotAudioManifest row for manifest-aware expansion shots
         am_data = sd.get("audio_manifest")
         if am_data:
             dialogue_lines = am_data.get("dialogue_lines", [])
-            audio_manifest = SceneAudioManifestModel(
+            audio_manifest = ShotAudioManifestModel(
                 project_id=project.id,
-                scene_index=sd.get("scene_index", existing_count),
+                shot_index=sd.get("shot_index", existing_count),
                 dialogue_json=dialogue_lines,
                 sfx_json=am_data.get("sfx", []),
                 ambient_json=am_data.get("ambient"),
@@ -145,14 +145,14 @@ async def _generate_expansion_if_needed(
             )
             session.add(audio_manifest)
 
-    # Update storyboard_raw with the new scenes
+    # Update storyboard_raw with the new shots
     if project.storyboard_raw:
         sb = dict(project.storyboard_raw)
-        sb.setdefault("scenes", []).extend(new_scene_data)
+        sb.setdefault("shots", []).extend(new_shot_data)
         project.storyboard_raw = sb
 
     await session.commit()
-    logger.info(f"Project {project.id}: expansion complete, {num_new} scenes added")
+    logger.info(f"Project {project.id}: expansion complete, {num_new} shots added")
 
 
 async def _check_stage_boundary(
@@ -286,7 +286,7 @@ async def run_pipeline(
 
         # Step 2: Keyframe generation
         if project.status == "keyframing":
-            # Check if expansion scenes are needed (fork delete-then-expand)
+            # Check if expansion shots are needed (fork delete-then-expand)
             await _generate_expansion_if_needed(session, project, text_adapter=text_adapter)
 
             step_start = time.monotonic()
@@ -328,7 +328,7 @@ async def run_pipeline(
             await session.commit()
 
             step_duration = time.monotonic() - step_start
-            # Note: video_gen duration includes per-scene CV analysis (Phase 9)
+            # Note: video_gen duration includes per-shot CV analysis (Phase 9)
             step_log["video_gen"] = step_duration
             logger.info(f"Video generation step completed in {step_duration:.2f}s")
 
@@ -420,9 +420,9 @@ async def run_pipeline(
 async def _check_completed_steps(session: AsyncSession, project: Project) -> Dict[str, bool]:
     """Query database to determine which pipeline steps are complete.
 
-    Note: Video generation (Phase 9+) includes per-scene CV analysis
+    Note: Video generation (Phase 9+) includes per-shot CV analysis
     for progressive asset enrichment. Analysis results are stored in
-    scene_manifests.cv_analysis_json.
+    shot_manifests.cv_analysis_json.
 
     Args:
         session: Database session
@@ -430,64 +430,64 @@ async def _check_completed_steps(session: AsyncSession, project: Project) -> Dic
 
     Returns:
         Dict with keys:
-            - has_storyboard: True if project has scenes
-            - has_keyframes: True if all scenes have both start and end keyframes
-            - has_clips: True if all scenes have completed video clips
+            - has_storyboard: True if project has shots
+            - has_keyframes: True if all shots have both start and end keyframes
+            - has_clips: True if all shots have completed video clips
     """
-    # Check for storyboard (has scenes WITH content)
-    # Draft projects have Scene rows but empty descriptions — those need storyboarding
-    scene_count_result = await session.execute(
-        select(func.count(Scene.id)).where(Scene.project_id == project.id)
+    # Check for storyboard (has shots WITH content)
+    # Draft projects have Shot rows but empty descriptions — those need storyboarding
+    shot_count_result = await session.execute(
+        select(func.count(Shot.id)).where(Shot.project_id == project.id)
     )
-    scene_count = scene_count_result.scalar()
+    shot_count = shot_count_result.scalar()
 
-    # A storyboard is "done" only if scenes exist AND at least one has non-empty text
-    # (draft projects create empty Scene rows that still need LLM generation)
+    # A storyboard is "done" only if shots exist AND at least one has non-empty text
+    # (draft projects create empty Shot rows that still need LLM generation)
     has_storyboard = False
-    if scene_count > 0:
+    if shot_count > 0:
         filled_count_result = await session.execute(
-            select(func.count(Scene.id)).where(
-                Scene.project_id == project.id,
-                Scene.scene_description != "",
-                Scene.start_frame_prompt != "",
+            select(func.count(Shot.id)).where(
+                Shot.project_id == project.id,
+                Shot.shot_description != "",
+                Shot.start_frame_prompt != "",
             )
         )
         filled_count = filled_count_result.scalar() or 0
         has_storyboard = filled_count > 0
 
-    # Check for keyframes (all scenes have both start and end keyframes)
+    # Check for keyframes (all shots have both start and end keyframes)
     if has_storyboard:
-        # Get total scenes
-        total_scenes = scene_count
+        # Get total shots
+        total_shots = shot_count
 
-        # Count scenes with both start and end keyframes
-        scenes_with_keyframes_result = await session.execute(
-            select(func.count(func.distinct(Scene.id)))
-            .select_from(Scene)
-            .join(Keyframe, Keyframe.scene_id == Scene.id)
-            .where(Scene.project_id == project.id)
-            .group_by(Scene.id)
+        # Count shots with both start and end keyframes
+        shots_with_keyframes_result = await session.execute(
+            select(func.count(func.distinct(Shot.id)))
+            .select_from(Shot)
+            .join(Keyframe, Keyframe.shot_id == Shot.id)
+            .where(Shot.project_id == project.id)
+            .group_by(Shot.id)
             .having(func.count(Keyframe.id) >= 2)
         )
-        scenes_with_keyframes = len(scenes_with_keyframes_result.all())
+        shots_with_keyframes = len(shots_with_keyframes_result.all())
 
-        has_keyframes = scenes_with_keyframes == total_scenes
+        has_keyframes = shots_with_keyframes == total_shots
     else:
         has_keyframes = False
 
-    # Check for completed clips (all scenes have non-pending clips)
+    # Check for completed clips (all shots have non-pending clips)
     if has_storyboard:
-        # Count scenes with completed clips
-        scenes_with_clips_result = await session.execute(
-            select(func.count(func.distinct(Scene.id)))
-            .select_from(Scene)
-            .join(VideoClip, VideoClip.scene_id == Scene.id)
-            .where(Scene.project_id == project.id)
+        # Count shots with completed clips
+        shots_with_clips_result = await session.execute(
+            select(func.count(func.distinct(Shot.id)))
+            .select_from(Shot)
+            .join(VideoClip, VideoClip.shot_id == Shot.id)
+            .where(Shot.project_id == project.id)
             .where(VideoClip.status.in_(["completed", "rai_filtered"]))
         )
-        scenes_with_clips = scenes_with_clips_result.scalar()
+        shots_with_clips = shots_with_clips_result.scalar()
 
-        has_clips = scenes_with_clips == scene_count
+        has_clips = shots_with_clips == shot_count
     else:
         has_clips = False
 

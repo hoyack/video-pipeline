@@ -65,9 +65,9 @@ def get_resume_step(status: str, completed_steps: Dict[str, bool]) -> str:
     Args:
         status: Current project status
         completed_steps: Dict with keys:
-            - has_storyboard: project has scenes (count > 0)
-            - has_keyframes: all scenes have both start and end keyframes
-            - has_clips: all scenes have completed video clips
+            - has_storyboard: project has shots (count > 0)
+            - has_keyframes: all shots have both start and end keyframes
+            - has_clips: all shots have completed video clips
 
     Returns:
         Status string representing the step to resume from

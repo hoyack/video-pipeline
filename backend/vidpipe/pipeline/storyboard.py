@@ -1,9 +1,9 @@
 """Storyboard generation using Gemini structured output.
 
-Transforms user text prompts into scene-by-scene breakdowns with:
+Transforms user text prompts into shot-by-shot breakdowns with:
 - Keyframe image prompts (start/end)
 - Motion descriptions for video interpolation
-- Cross-scene style guide for visual consistency
+- Cross-shot style guide for visual consistency
 
 Spec reference: STOR-01 through STOR-05
 """
@@ -16,9 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, retry_if_exception_type
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Scene
-from vidpipe.db.models import SceneManifest as SceneManifestModel
-from vidpipe.db.models import SceneAudioManifest as SceneAudioManifestModel
+from vidpipe.db.models import Project, Shot
+from vidpipe.db.models import ShotManifest as ShotManifestModel
+from vidpipe.db.models import ShotAudioManifest as ShotAudioManifestModel
 from vidpipe.schemas.storyboard import StoryboardOutput
 from vidpipe.schemas.storyboard_enhanced import EnhancedStoryboardOutput
 from vidpipe.services.llm import get_adapter, LLMAdapter
@@ -28,14 +28,14 @@ logger = logging.getLogger(__name__)
 
 
 def _remap_unrecognized_tags(
-    scene_manifest_dict: dict,
+    shot_manifest_dict: dict,
     asset_tags_set: set[str],
     manifest_characters: list[str],
 ) -> dict:
     """Remap unrecognized CHARACTER tags to existing manifest assets.
 
     Deterministic backstop that catches LLM mistakes before persisting
-    scene manifests. Does not require an LLM call.
+    shot manifests. Does not require an LLM call.
 
     Strategy:
     1. Collect all placement tags not in asset_tags_set
@@ -47,19 +47,19 @@ def _remap_unrecognized_tags(
     5. Remove remapped entries from new_asset_declarations
 
     Args:
-        scene_manifest_dict: Mutable dict of scene_manifest (placements, new_asset_declarations, etc.)
+        shot_manifest_dict: Mutable dict of shot_manifest (placements, new_asset_declarations, etc.)
         asset_tags_set: Set of valid manifest tags (e.g., {"CHAR_01", "CHAR_02", "ENV_01"})
         manifest_characters: Ordered list of CHARACTER tags from the manifest
             (e.g., ["CHAR_01", "CHAR_02", "CHAR_03"])
 
     Returns:
-        The mutated scene_manifest_dict (also mutated in-place)
+        The mutated shot_manifest_dict (also mutated in-place)
     """
     if not manifest_characters:
-        return scene_manifest_dict
+        return shot_manifest_dict
 
-    placements = scene_manifest_dict.get("placements", [])
-    new_declarations = scene_manifest_dict.get("new_asset_declarations") or []
+    placements = shot_manifest_dict.get("placements", [])
+    new_declarations = shot_manifest_dict.get("new_asset_declarations") or []
 
     # Build set of CHARACTER tags declared in new_asset_declarations
     declared_char_tags = set()
@@ -80,7 +80,7 @@ def _remap_unrecognized_tags(
                     unrecognized_char_tags.append(tag)
 
     if not unrecognized_char_tags:
-        return scene_manifest_dict
+        return shot_manifest_dict
 
     # Build the remap: match by order (CHAR_04 -> CHAR_01, CHAR_05 -> CHAR_02, etc.)
     remap: dict[str, str] = {}
@@ -89,7 +89,7 @@ def _remap_unrecognized_tags(
             remap[bad_tag] = manifest_characters[i]
 
     if not remap:
-        return scene_manifest_dict
+        return shot_manifest_dict
 
     # Apply remap to placements
     remapped_count = 0
@@ -116,7 +116,7 @@ def _remap_unrecognized_tags(
                     "Tag remap: removed new_asset_declaration for %s (remapped to %s)",
                     decl_tag, remap[decl_tag],
                 )
-        scene_manifest_dict["new_asset_declarations"] = surviving
+        shot_manifest_dict["new_asset_declarations"] = surviving
 
     # Also remap any audio dialogue speaker_tags (if audio_manifest references CHAR tags)
     # This is done separately in the caller if needed
@@ -126,7 +126,7 @@ def _remap_unrecognized_tags(
         remapped_count, remap,
     )
 
-    return scene_manifest_dict
+    return shot_manifest_dict
 
 
 # System prompt template for Gemini storyboard generation.
@@ -142,28 +142,28 @@ ASPECT RATIO: {aspect_ratio}
 Compose all keyframe image prompts for this aspect ratio. For 16:9, favor wide establishing shots and horizontal compositions. For 9:16, favor close-ups, vertical framing, and portrait-oriented compositions.
 
 REQUIREMENTS:
-- Break the script into 3-5 distinct visual scenes
-- Each scene should have clear narrative progression
+- Break the script into 3-5 distinct visual shots
+- Each shot should have clear narrative progression
 - Describe all characters that appear in the video with consistent physical details (see characters field)
 - Provide detailed image prompts for start and end keyframes
 - Include motion descriptions for video interpolation between keyframes
-- Add transition notes to ensure visual continuity between scenes
+- Add transition notes to ensure visual continuity between shots
 - Create a comprehensive style guide aligned with {style}
 
 DETAIL PRESERVATION:
-Before composing scenes, identify ALL specific details from the script:
+Before composing shots, identify ALL specific details from the script:
 - Proper names (people, organizations, products, frameworks, standards)
 - Technical terms, acronyms, and domain jargon
 - Numbers, dates, statistics, and quantitative claims
 - Specific processes, methodologies, or workflows described
 
-Every identified detail MUST appear in at least one scene via visual vehicles:
+Every identified detail MUST appear in at least one shot via visual vehicles:
 - On-screen text overlays, titles, or captions
-- Documents, reports, or slides visible in the scene
+- Documents, reports, or slides visible in the shot
 - Whiteboards, screens, monitors showing text
 - Signage, nameplates, logos, or banners
 
-The key_details field for each scene must list 3-6 specific terms the scene conveys.
+The key_details field for each shot must list 3-6 specific terms the shot conveys.
 
 KEYFRAME PROMPT FORMAT (start_frame_prompt and end_frame_prompt):
 Each prompt MUST follow this exact structure:
@@ -183,7 +183,7 @@ Focus on: camera movement (pan, dolly, track, crane), subject animation, environ
 Good example: "Slow dolly forward as the subject turns to face the camera, hair gently blowing in the breeze"
 Bad example: "A blonde woman in anime style turns around in a congressional hearing room" (re-describes visuals)
 
-GOAL: Ensure all scenes maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
+GOAL: Ensure all shots maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 
 
 # Enhanced system prompt for manifest-aware storyboarding
@@ -200,8 +200,8 @@ Compose all keyframe image prompts for this aspect ratio. For 16:9, favor wide e
 AVAILABLE ASSETS (from Asset Registry):
 {asset_registry_block}
 
-SCENE MANIFEST INSTRUCTIONS:
-When creating scenes, generate a scene_manifest for each scene:
+SHOT MANIFEST INSTRUCTIONS:
+When creating shots, generate a shot_manifest for each shot:
 - You MUST use registered asset tags from the Available Assets list for ALL characters
   and environments that match existing assets. Do NOT create new CHARACTER tags when
   a matching character already exists in the registry.
@@ -210,47 +210,47 @@ When creating scenes, generate a scene_manifest for each scene:
 - Assign roles: subject, background, prop, interaction_target, environment
 - Specify spatial positions and actions for each placed asset
 - Include composition metadata: shot_type, camera_movement, focal_point
-- Add continuity_notes describing visual continuity with previous scenes
+- Add continuity_notes describing visual continuity with previous shots
 - new_asset_declarations: ONLY for genuinely new assets that have NO match in the
   registry (e.g., background extras, props, environments not yet registered).
   NEVER declare a new CHARACTER when the registry already has CHARACTER assets
   that could represent that person.
 
 AUDIO MANIFEST INSTRUCTIONS:
-For each scene, generate an audio_manifest with:
-- dialogue_lines: Map speech to character tags (speaker_tag must be a registered [TAG] like CHAR_01). Include delivery notes (muttered, shouted, whispered) and timing (start, mid-scene, end)
+For each shot, generate an audio_manifest with:
+- dialogue_lines: Map speech to character tags (speaker_tag must be a registered [TAG] like CHAR_01). Include delivery notes (muttered, shouted, whispered) and timing (start, mid-shot, end)
 - sfx: Sound effects with trigger descriptions and relative timing. Use "SFX:" mental model
 - ambient: Base layer soundscape + environmental context. Describe what you HEAR, not see
 - music: Style, mood, tempo, instruments, and transition cues (fade in, cut, swell)
-- audio_continuity: What carries from previous scene, what's new, what cuts
+- audio_continuity: What carries from previous shot, what's new, what cuts
 
 REQUIREMENTS:
-- Break the script into 3-5 distinct visual scenes
-- Each scene should have clear narrative progression
+- Break the script into 3-5 distinct visual shots
+- Each shot should have clear narrative progression
 - Describe all characters that appear in the video with consistent physical details (see characters field)
 - Provide detailed image prompts for start and end keyframes
 - Include motion descriptions for video interpolation between keyframes
-- Add transition notes to ensure visual continuity between scenes
+- Add transition notes to ensure visual continuity between shots
 - Create a comprehensive style guide aligned with {style}
-- Each scene MUST include scene_manifest with at least one asset placement
-- Each scene MUST include audio_manifest (even if minimal — at least ambient)
+- Each shot MUST include shot_manifest with at least one asset placement
+- Each shot MUST include audio_manifest (even if minimal — at least ambient)
 - Asset tag references MUST match tags from the Available Assets list above
 - Character wardrobe notes in placements MUST be consistent with character descriptions
 
 DETAIL PRESERVATION:
-Before composing scenes, identify ALL specific details from the script:
+Before composing shots, identify ALL specific details from the script:
 - Proper names (people, organizations, products, frameworks, standards)
 - Technical terms, acronyms, and domain jargon
 - Numbers, dates, statistics, and quantitative claims
 - Specific processes, methodologies, or workflows described
 
-Every identified detail MUST appear in at least one scene via visual vehicles:
+Every identified detail MUST appear in at least one shot via visual vehicles:
 - On-screen text overlays, titles, or captions
-- Documents, reports, or slides visible in the scene
+- Documents, reports, or slides visible in the shot
 - Whiteboards, screens, monitors showing text
 - Signage, nameplates, logos, or banners
 
-The key_details field for each scene must list 3-6 specific terms the scene conveys.
+The key_details field for each shot must list 3-6 specific terms the shot conveys.
 
 KEYFRAME PROMPT FORMAT (start_frame_prompt and end_frame_prompt):
 Each prompt MUST follow this exact structure:
@@ -270,7 +270,7 @@ Focus on: camera movement (pan, dolly, track, crane), subject animation, environ
 Good example: "Slow dolly forward as the subject turns to face the camera, hair gently blowing in the breeze"
 Bad example: "A blonde woman in anime style turns around in a congressional hearing room" (re-describes visuals)
 
-GOAL: Ensure all scenes maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
+GOAL: Ensure all shots maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 
 
 async def generate_storyboard(
@@ -282,12 +282,12 @@ async def generate_storyboard(
 
     Transforms project.prompt into structured storyboard with:
     - StyleGuide stored in project.style_guide
-    - Scene records created in database
+    - Shot records created in database
     - Project status updated to "keyframing"
 
-    Supports gap-filling mode (VGED-06): if scenes already exist (draft projects),
-    only generates text for scenes with empty scene_description. User-provided
-    scene text is preserved and passed as context to the LLM for narrative continuity.
+    Supports gap-filling mode (VGED-06): if shots already exist (draft projects),
+    only generates text for shots with empty shot_description. User-provided
+    shot text is preserved and passed as context to the LLM for narrative continuity.
 
     Implements retry logic per STOR-05: up to 3 attempts with temperature
     reduction on JSON parse failures.
@@ -309,28 +309,28 @@ async def generate_storyboard(
     style_label = project.style.replace("_", " ")
 
     # ----------------------------------------------------------------
-    # Gap-filling: Check for existing scenes (draft projects, VGED-06)
+    # Gap-filling: Check for existing shots (draft projects, VGED-06)
     # ----------------------------------------------------------------
-    existing_scenes_result = await session.execute(
-        sa_select(Scene)
-        .where(Scene.project_id == project.id)
-        .order_by(Scene.scene_index)
+    existing_shots_result = await session.execute(
+        sa_select(Shot)
+        .where(Shot.project_id == project.id)
+        .order_by(Shot.shot_index)
     )
-    existing_scenes = list(existing_scenes_result.scalars().all())
+    existing_shots = list(existing_shots_result.scalars().all())
 
     # Partition into complete (all key fields filled) and incomplete (need generation)
-    def _scene_is_complete(s):
-        return (bool(s.scene_description and s.scene_description.strip())
+    def _shot_is_complete(s):
+        return (bool(s.shot_description and s.shot_description.strip())
                 and bool(s.start_frame_prompt and s.start_frame_prompt.strip()))
 
-    filled_scenes = [s for s in existing_scenes if _scene_is_complete(s)]
-    empty_scenes = [s for s in existing_scenes if not _scene_is_complete(s)]
+    filled_shots = [s for s in existing_shots if _shot_is_complete(s)]
+    empty_shots = [s for s in existing_shots if not _shot_is_complete(s)]
 
-    if existing_scenes and not empty_scenes:
-        # All scenes already have text — skip storyboard generation entirely
+    if existing_shots and not empty_shots:
+        # All shots already have text — skip storyboard generation entirely
         logger.info(
-            "Project %s: all %d scenes have text, skipping storyboard generation",
-            project.id, len(existing_scenes),
+            "Project %s: all %d shots have text, skipping storyboard generation",
+            project.id, len(existing_shots),
         )
         project.status = "keyframing"
         await session.commit()
@@ -352,60 +352,60 @@ async def generate_storyboard(
         asset_registry_block = ""
         asset_tags_set = set()
 
-    # Build context block for filled scenes (gap-filling narrative continuity)
+    # Build context block for filled shots (gap-filling narrative continuity)
     filled_context = ""
-    if filled_scenes:
+    if filled_shots:
         context_lines = []
-        for s in filled_scenes:
+        for s in filled_shots:
             context_lines.append(
-                f"Scene {s.scene_index} (provided by user): {s.scene_description}"
+                f"Shot {s.shot_index} (provided by user): {s.shot_description}"
             )
-        # Include partial scenes (have description but missing prompts) as context
-        partial_with_desc = [s for s in empty_scenes
-                             if s.scene_description and s.scene_description.strip()]
+        # Include partial shots (have description but missing prompts) as context
+        partial_with_desc = [s for s in empty_shots
+                             if s.shot_description and s.shot_description.strip()]
         for s in partial_with_desc:
             context_lines.append(
-                f"Scene {s.scene_index} (user-provided description — keep this description, "
+                f"Shot {s.shot_index} (user-provided description — keep this description, "
                 f"generate start_frame_prompt/end_frame_prompt/video_motion_prompt/transition_notes): "
-                f"{s.scene_description}"
+                f"{s.shot_description}"
             )
-        empty_indices = [s.scene_index for s in empty_scenes]
+        empty_indices = [s.shot_index for s in empty_shots]
         filled_context = (
-            "\n\nEXISTING SCENES (provided by user — do NOT regenerate these):\n"
+            "\n\nEXISTING SHOTS (provided by user — do NOT regenerate these):\n"
             + "\n".join(context_lines)
-            + f"\n\nGenerate content ONLY for the following scene indices: {empty_indices}. "
-            "Maintain narrative continuity with the provided scenes."
+            + f"\n\nGenerate content ONLY for the following shot indices: {empty_indices}. "
+            "Maintain narrative continuity with the provided shots."
         )
 
-    # Build system prompt with style, aspect ratio, and scene count
+    # Build system prompt with style, aspect ratio, and shot count
     if use_manifests:
         system_prompt = ENHANCED_STORYBOARD_PROMPT.format(
             style=style_label,
             aspect_ratio=project.aspect_ratio,
             asset_registry_block=asset_registry_block,
         ).replace(
-            "- Break the script into 3-5 distinct visual scenes",
-            f"- Break the script into exactly {project.target_scene_count} distinct visual scenes",
+            "- Break the script into 3-5 distinct visual shots",
+            f"- Break the script into exactly {project.target_shot_count} distinct visual shots",
         )
     else:
         system_prompt = STORYBOARD_SYSTEM_PROMPT.format(
             style=style_label,
             aspect_ratio=project.aspect_ratio,
         ).replace(
-            "- Break the script into 3-5 distinct visual scenes",
-            f"- Break the script into exactly {project.target_scene_count} distinct visual scenes",
+            "- Break the script into 3-5 distinct visual shots",
+            f"- Break the script into exactly {project.target_shot_count} distinct visual shots",
         )
 
     full_prompt = f"{system_prompt}{filled_context}\n\nScript: {project.prompt}"
 
-    # Set generation_status on empty scenes before generating
-    for s in empty_scenes:
+    # Set generation_status on empty shots before generating
+    for s in empty_shots:
         s.generation_status = "generating_text"
-    if empty_scenes:
+    if empty_shots:
         await session.commit()
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(project.id, "phase_started", phase="storyboard", total_scenes=project.target_scene_count)
+    event_bus.emit(project.id, "phase_started", phase="storyboard", total_shots=project.target_shot_count)
 
     # Retry strategy: up to 3 attempts, reduce temperature on each retry
     attempt = 0
@@ -443,81 +443,81 @@ async def generate_storyboard(
     project.storyboard_raw = storyboard.model_dump()
 
     # ----------------------------------------------------------------
-    # Persist scenes: update existing rows (draft) or create new ones
+    # Persist shots: update existing rows (draft) or create new ones
     # ----------------------------------------------------------------
-    if existing_scenes:
-        # Draft project: Scene rows already exist — update only empty scenes
-        existing_by_index = {s.scene_index: s for s in existing_scenes}
-        for scene_data in storyboard.scenes:
-            existing = existing_by_index.get(scene_data.scene_index)
+    if existing_shots:
+        # Draft project: Shot rows already exist — update only empty shots
+        existing_by_index = {s.shot_index: s for s in existing_shots}
+        for shot_data in storyboard.shots:
+            existing = existing_by_index.get(shot_data.shot_index)
             if existing:
                 # Per-field update: only fill in empty fields, preserve user-provided text
-                for attr in ("scene_description", "start_frame_prompt", "end_frame_prompt",
+                for attr in ("shot_description", "start_frame_prompt", "end_frame_prompt",
                              "video_motion_prompt", "transition_notes"):
                     current = getattr(existing, attr)
                     if not current or not current.strip():
-                        setattr(existing, attr, getattr(scene_data, attr))
+                        setattr(existing, attr, getattr(shot_data, attr))
                 existing.status = "pending"
                 existing.generation_status = None  # Clear generation_status
             else:
-                # Scene index from LLM not in existing rows — create new
-                scene = Scene(
+                # Shot index from LLM not in existing rows — create new
+                shot = Shot(
                     project_id=project.id,
-                    scene_index=scene_data.scene_index,
-                    scene_description=scene_data.scene_description,
-                    start_frame_prompt=scene_data.start_frame_prompt,
-                    end_frame_prompt=scene_data.end_frame_prompt,
-                    video_motion_prompt=scene_data.video_motion_prompt,
-                    transition_notes=scene_data.transition_notes,
+                    shot_index=shot_data.shot_index,
+                    shot_description=shot_data.shot_description,
+                    start_frame_prompt=shot_data.start_frame_prompt,
+                    end_frame_prompt=shot_data.end_frame_prompt,
+                    video_motion_prompt=shot_data.video_motion_prompt,
+                    transition_notes=shot_data.transition_notes,
                     status="pending",
                 )
-                session.add(scene)
-        # Clear generation_status on filled scenes too
-        for s in filled_scenes:
+                session.add(shot)
+        # Clear generation_status on filled shots too
+        for s in filled_shots:
             s.generation_status = None
-        # Safety net: clear generation_status on any empty scene the LLM
+        # Safety net: clear generation_status on any empty shot the LLM
         # didn't include in its output (prevents stuck "Generating..." UI)
-        processed_indices = {sd.scene_index for sd in storyboard.scenes}
-        for s in empty_scenes:
-            if s.scene_index not in processed_indices and s.generation_status == "generating_text":
+        processed_indices = {sd.shot_index for sd in storyboard.shots}
+        for s in empty_shots:
+            if s.shot_index not in processed_indices and s.generation_status == "generating_text":
                 s.generation_status = None
     else:
-        # Non-draft project: no existing scenes — create all from scratch
-        for scene_data in storyboard.scenes:
-            scene = Scene(
+        # Non-draft project: no existing shots — create all from scratch
+        for shot_data in storyboard.shots:
+            shot = Shot(
                 project_id=project.id,
-                scene_index=scene_data.scene_index,
-                scene_description=scene_data.scene_description,
-                start_frame_prompt=scene_data.start_frame_prompt,
-                end_frame_prompt=scene_data.end_frame_prompt,
-                video_motion_prompt=scene_data.video_motion_prompt,
-                transition_notes=scene_data.transition_notes,
+                shot_index=shot_data.shot_index,
+                shot_description=shot_data.shot_description,
+                start_frame_prompt=shot_data.start_frame_prompt,
+                end_frame_prompt=shot_data.end_frame_prompt,
+                video_motion_prompt=shot_data.video_motion_prompt,
+                transition_notes=shot_data.transition_notes,
                 status="pending",
             )
-            session.add(scene)
+            session.add(shot)
 
-    # Persist scene and audio manifests if manifest-aware mode
+    # Persist shot and audio manifests if manifest-aware mode
     if use_manifests:
         # Pre-compute ordered list of manifest CHARACTER tags for remapping
         manifest_characters = sorted(
             [tag for tag in asset_tags_set if tag.startswith("CHAR_")]
         )
 
-        for scene_data in storyboard.scenes:
-            # Convert scene manifest to mutable dict for potential remapping
-            manifest_dict = scene_data.scene_manifest.model_dump()
+        for shot_data in storyboard.shots:
+            # Convert shot manifest to mutable dict for potential remapping
+            manifest_dict = shot_data.shot_manifest.model_dump()
 
             # Fix 2: Deterministic remap of unrecognized CHARACTER tags
             # before persisting — catches LLM mistakes without another LLM call
             _remap_unrecognized_tags(manifest_dict, asset_tags_set, manifest_characters)
 
             # Also remap audio dialogue speaker_tags that reference bad CHAR tags
-            audio = scene_data.audio_manifest
+            audio = shot_data.audio_manifest
             audio_dialogue = [d.model_dump() for d in audio.dialogue_lines]
             for dialogue_entry in audio_dialogue:
                 speaker = dialogue_entry.get("speaker_tag", "")
                 if speaker.startswith("CHAR_") and speaker not in asset_tags_set:
-                    # Find what this tag was remapped to in the scene manifest
+                    # Find what this tag was remapped to in the shot manifest
                     for placement in manifest_dict.get("placements", []):
                         if placement.get("asset_tag", "").startswith("CHAR_"):
                             # Use the first valid CHARACTER tag as fallback
@@ -534,27 +534,27 @@ async def generate_storyboard(
                 tag = placement_d.get("asset_tag", "")
                 if tag not in asset_tags_set:
                     logger.warning(
-                        "Project %s scene %d: unrecognized asset tag '%s' "
+                        "Project %s shot %d: unrecognized asset tag '%s' "
                         "(not in registry, may be declared as new asset)",
-                        project.id, scene_data.scene_index, tag
+                        project.id, shot_data.shot_index, tag
                     )
 
-            # Persist scene manifest (using remapped dict)
-            scene_manifest = SceneManifestModel(
+            # Persist shot manifest (using remapped dict)
+            shot_manifest = ShotManifestModel(
                 project_id=project.id,
-                scene_index=scene_data.scene_index,
+                shot_index=shot_data.shot_index,
                 manifest_json=manifest_dict,
-                composition_shot_type=scene_data.scene_manifest.composition.shot_type,
-                composition_camera_movement=scene_data.scene_manifest.composition.camera_movement,
+                composition_shot_type=shot_data.shot_manifest.composition.shot_type,
+                composition_camera_movement=shot_data.shot_manifest.composition.camera_movement,
                 asset_tags=[p.get("asset_tag", "") for p in manifest_dict.get("placements", [])],
                 new_asset_count=len(manifest_dict.get("new_asset_declarations") or []),
             )
-            session.add(scene_manifest)
+            session.add(shot_manifest)
 
             # Persist audio manifest (with remapped speaker_tags)
-            audio_manifest = SceneAudioManifestModel(
+            audio_manifest = ShotAudioManifestModel(
                 project_id=project.id,
-                scene_index=scene_data.scene_index,
+                shot_index=shot_data.shot_index,
                 dialogue_json=audio_dialogue,
                 sfx_json=[s.model_dump() for s in audio.sfx],
                 ambient_json=audio.ambient.model_dump() if audio.ambient else None,
@@ -567,8 +567,8 @@ async def generate_storyboard(
             session.add(audio_manifest)
 
         logger.info(
-            "Project %s: persisted %d scene manifests and audio manifests",
-            project.id, len(storyboard.scenes)
+            "Project %s: persisted %d shot manifests and audio manifests",
+            project.id, len(storyboard.shots)
         )
 
     # Update project status to indicate storyboard completion
@@ -579,7 +579,7 @@ async def generate_storyboard(
     await session.commit()
 
     # Now emit events — any frontend refresh will see the committed state
-    for scene_data in storyboard.scenes:
-        event_bus.emit(project.id, "scene_text_ready", scene_index=scene_data.scene_index)
+    for shot_data in storyboard.shots:
+        event_bus.emit(project.id, "shot_text_ready", shot_index=shot_data.shot_index)
     event_bus.emit(project.id, "phase_completed", phase="storyboard")
     event_bus.emit(project.id, "refresh")

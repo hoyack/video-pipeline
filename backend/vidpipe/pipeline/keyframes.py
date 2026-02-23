@@ -1,7 +1,7 @@
 """Sequential keyframe generation with visual continuity.
 
 This module implements KEYF-01 through KEYF-06 requirements:
-- Scene 0 start frame generated from text prompt (KEYF-01)
+- Shot 0 start frame generated from text prompt (KEYF-01)
 - End frames use image-conditioned generation (KEYF-02)
 - Visual continuity via end-to-start frame inheritance (KEYF-03)
 - Sequential processing, no parallelization (KEYF-04)
@@ -28,7 +28,7 @@ from tenacity import (
 )
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Scene, Keyframe
+from vidpipe.db.models import Project, Shot, Keyframe
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.llm import LLMAdapter
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
@@ -379,32 +379,32 @@ async def generate_keyframes(
     project: Project,
     text_adapter: Optional[LLMAdapter] = None,
 ) -> None:
-    """Generate keyframes sequentially with visual continuity across scenes.
+    """Generate keyframes sequentially with visual continuity across shots.
 
     Implements sequential keyframe generation where:
-    - Scene 0 start frame is generated from text prompt alone
-    - Scene N start frame inherits scene N-1 end frame
+    - Shot 0 start frame is generated from text prompt alone
+    - Shot N start frame inherits shot N-1 end frame
     - All end frames use image-conditioned generation for continuity
 
     Args:
         session: Database session for persisting keyframes
-        project: Project containing scenes to generate keyframes for
+        project: Project containing shots to generate keyframes for
         text_adapter: Optional LLMAdapter for prompt rewriting. If None,
             PromptRewriterService falls back to get_adapter("gemini-2.5-flash").
 
     Process:
-        1. Query scenes ordered by scene_index
-        2. For each scene sequentially:
+        1. Query shots ordered by shot_index
+        2. For each shot sequentially:
            a. Generate or inherit start frame
            b. Save start keyframe to filesystem and database
            c. Generate end frame using image-conditioned generation
            d. Save end keyframe to filesystem and database
-           e. Update scene status and commit
-           f. Rate limit delay before next scene
+           e. Update shot status and commit
+           f. Rate limit delay before next shot
         3. Update project status to "generating_video"
 
     Note:
-        - Commits after each scene for crash recovery
+        - Commits after each shot for crash recovery
         - Uses rate limiting to prevent 429 errors
         - Sequential processing ensures visual continuity (KEYF-04)
     """
@@ -454,52 +454,52 @@ async def generate_keyframes(
         image_client = get_vertex_client(location=location_for_model(image_model))
     file_mgr = FileManager()
 
-    # Query scenes ordered by scene_index for sequential processing
+    # Query shots ordered by shot_index for sequential processing
     result = await session.execute(
-        select(Scene)
-        .where(Scene.project_id == project.id)
-        .order_by(Scene.scene_index)
+        select(Shot)
+        .where(Shot.project_id == project.id)
+        .order_by(Shot.shot_index)
     )
-    scenes = result.scalars().all()
+    shots = result.scalars().all()
 
-    # Track previous scene's end frame for inheritance
+    # Track previous shot's end frame for inheritance
     previous_end_frame_bytes = None
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(project.id, "phase_started", phase="keyframes", total_scenes=len(scenes))
+    event_bus.emit(project.id, "phase_started", phase="keyframes", total_shots=len(shots))
 
-    # Process each scene sequentially (no parallelization)
-    for scene in scenes:
-        # Per-scene stop flag check (VGED-11)
+    # Process each shot sequentially (no parallelization)
+    for shot in shots:
+        # Per-shot stop flag check (VGED-11)
         await session.refresh(project)
         if project.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
-            logger.info(f"Pipeline stopped by user at scene {scene.scene_index}")
+            logger.info(f"Pipeline stopped by user at shot {shot.shot_index}")
             raise PipelineStopped("Stopped by user")
 
         # Gap-filling: check for existing keyframes per position (VGED-06)
         existing_kfs_result = await session.execute(
-            select(Keyframe).where(Keyframe.scene_id == scene.id)
+            select(Keyframe).where(Keyframe.shot_id == shot.id)
         )
         existing_kfs = existing_kfs_result.scalars().all()
         existing_start_kf = next((k for k in existing_kfs if k.position == "start"), None)
         existing_end_kf = next((k for k in existing_kfs if k.position == "end"), None)
 
-        # If both keyframes exist, skip entire scene (fork or user upload)
+        # If both keyframes exist, skip entire shot (fork or user upload)
         if existing_start_kf and existing_end_kf:
             from pathlib import Path as _Path
             previous_end_frame_bytes = _Path(existing_end_kf.file_path).read_bytes()
-            # Don't downgrade scenes that already have completed clips
-            if scene.status != "video_done":
-                scene.status = "keyframes_done"
-            scene.generation_status = None
+            # Don't downgrade shots that already have completed clips
+            if shot.status != "video_done":
+                shot.status = "keyframes_done"
+            shot.generation_status = None
             await session.commit()
             logger.info(
-                f"Scene {scene.scene_index}: both keyframes exist, skipping"
+                f"Shot {shot.shot_index}: both keyframes exist, skipping"
             )
             continue
 
-        # KEYF-03 continuity: if scene has an uploaded start keyframe,
+        # KEYF-03 continuity: if shot has an uploaded start keyframe,
         # use it as previous_end for daisy-chain conditioning
         if existing_start_kf:
             from pathlib import Path as _Path
@@ -507,45 +507,45 @@ async def generate_keyframes(
             _existing_start_bytes = _Path(existing_start_kf.file_path).read_bytes()
 
         try:
-            # Set generation_status for the scene (VGED-05)
+            # Set generation_status for the shot (VGED-05)
             if not existing_start_kf:
-                scene.generation_status = "generating_start_kf"
+                shot.generation_status = "generating_start_kf"
                 await session.commit()
-                event_bus.emit(project.id, "scene_status", scene_index=scene.scene_index, status="generating_start_kf", phase="keyframes")
+                event_bus.emit(project.id, "shot_status", shot_index=shot.shot_index, status="generating_start_kf", phase="keyframes")
 
             # Phase 10: Adaptive Prompt Rewriting for manifest projects
             # Also resolves asset reference images for multimodal keyframe generation
             rewritten_start_prompt = None
             selected_ref_assets: list = []
             ref_image_bytes_list: list[bytes] = []
-            placed_char_assets: list = []  # CHARACTER assets placed in scene (for face verification)
+            placed_char_assets: list = []  # CHARACTER assets placed in shot (for face verification)
             if project.manifest_id:
                 try:
                     from vidpipe.services.prompt_rewriter import PromptRewriterService
                     from vidpipe.services.reference_selection import resolve_asset_image_bytes
-                    from vidpipe.db.models import SceneManifest as SceneManifestModel
+                    from vidpipe.db.models import ShotManifest as ShotManifestModel
 
-                    # Load scene manifest
+                    # Load shot manifest
                     sm_result = await session.execute(
-                        select(SceneManifestModel).where(
-                            SceneManifestModel.project_id == project.id,
-                            SceneManifestModel.scene_index == scene.scene_index
+                        select(ShotManifestModel).where(
+                            ShotManifestModel.project_id == project.id,
+                            ShotManifestModel.shot_index == shot.shot_index
                         )
                     )
-                    scene_manifest_row = sm_result.scalar_one_or_none()
+                    shot_manifest_row = sm_result.scalar_one_or_none()
 
-                    if scene_manifest_row and scene_manifest_row.manifest_json:
+                    if shot_manifest_row and shot_manifest_row.manifest_json:
                         # Load assets
                         from vidpipe.services import manifest_service
                         all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
 
-                        # Load previous scene CV analysis for continuity
+                        # Load previous shot CV analysis for continuity
                         previous_cv = None
-                        if scene.scene_index > 0:
+                        if shot.shot_index > 0:
                             prev_sm_result = await session.execute(
-                                select(SceneManifestModel).where(
-                                    SceneManifestModel.project_id == project.id,
-                                    SceneManifestModel.scene_index == scene.scene_index - 1
+                                select(ShotManifestModel).where(
+                                    ShotManifestModel.project_id == project.id,
+                                    ShotManifestModel.shot_index == shot.shot_index - 1
                                 )
                             )
                             prev_sm = prev_sm_result.scalar_one_or_none()
@@ -554,8 +554,8 @@ async def generate_keyframes(
 
                         rewriter = PromptRewriterService(text_adapter=text_adapter)
                         result = await rewriter.rewrite_keyframe_prompt(
-                            scene=scene,
-                            scene_manifest_json=scene_manifest_row.manifest_json,
+                            shot=shot,
+                            shot_manifest_json=shot_manifest_row.manifest_json,
                             placed_assets=all_assets,  # rewriter filters to placed internally
                             previous_cv_analysis=previous_cv,
                             all_assets=all_assets,
@@ -564,12 +564,12 @@ async def generate_keyframes(
                         rewritten_start_prompt = result.rewritten_prompt
 
                         # Persist rewritten prompt and selected reference tags
-                        scene_manifest_row.rewritten_keyframe_prompt = result.rewritten_prompt
-                        scene_manifest_row.selected_reference_tags = result.selected_reference_tags
+                        shot_manifest_row.rewritten_keyframe_prompt = result.rewritten_prompt
+                        shot_manifest_row.selected_reference_tags = result.selected_reference_tags
                         await session.commit()
 
                         logger.info(
-                            f"Scene {scene.scene_index}: keyframe prompt rewritten "
+                            f"Shot {shot.shot_index}: keyframe prompt rewritten "
                             f"(refs: {result.selected_reference_tags})"
                         )
 
@@ -578,14 +578,14 @@ async def generate_keyframes(
                         asset_map_by_id = {str(a.id): a for a in all_assets}
                         placed_char_tags = {
                             p["asset_tag"]
-                            for p in scene_manifest_row.manifest_json.get("placements", [])
+                            for p in shot_manifest_row.manifest_json.get("placements", [])
                             if "asset_tag" in p
                             and asset_map.get(p["asset_tag"])
                             and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
                             and asset_map[p["asset_tag"]].reference_image_url
                         }
 
-                        # Fix 4: Fallback — if scene has placements but none resolved
+                        # Fix 4: Fallback — if shot has placements but none resolved
                         # to manifest characters, use ALL manifest CHARACTER assets
                         # with reference images. This guarantees reference images reach
                         # the image adapter even when storyboard tags were wrong.
@@ -597,8 +597,8 @@ async def generate_keyframes(
                             }
                             if placed_char_tags:
                                 logger.warning(
-                                    f"Scene {scene.scene_index}: no placed chars resolved "
-                                    f"from scene manifest, falling back to all manifest "
+                                    f"Shot {shot.shot_index}: no placed chars resolved "
+                                    f"from shot manifest, falling back to all manifest "
                                     f"CHARACTER assets: {placed_char_tags}"
                                 )
                         current_tags = list(result.selected_reference_tags or [])
@@ -607,12 +607,12 @@ async def generate_keyframes(
                             enforced = list(missing_chars) + current_tags
                             result.selected_reference_tags = enforced[:3]
                             logger.info(
-                                f"Scene {scene.scene_index}: enforced placed CHARACTER refs "
+                                f"Shot {shot.shot_index}: enforced placed CHARACTER refs "
                                 f"{missing_chars} → {result.selected_reference_tags}"
                             )
 
                         # Update with enforced tags
-                        scene_manifest_row.selected_reference_tags = result.selected_reference_tags
+                        shot_manifest_row.selected_reference_tags = result.selected_reference_tags
                         await session.commit()
 
                         # Collect placed CHARACTER assets for face verification
@@ -630,7 +630,7 @@ async def generate_keyframes(
                                 if parent and parent.face_embedding:
                                     asset.face_embedding = parent.face_embedding
                                     logger.info(
-                                        f"Scene {scene.scene_index}: borrowed face embedding "
+                                        f"Shot {shot.shot_index}: borrowed face embedding "
                                         f"from parent {parent.manifest_tag} for {asset.manifest_tag}"
                                     )
 
@@ -645,13 +645,13 @@ async def generate_keyframes(
                                         selected_ref_assets.append(asset)
                             if ref_image_bytes_list:
                                 logger.info(
-                                    f"Scene {scene.scene_index}: resolved "
+                                    f"Shot {shot.shot_index}: resolved "
                                     f"{len(ref_image_bytes_list)} reference image(s) "
                                     f"for keyframe generation"
                                 )
                 except Exception as e:
                     logger.warning(
-                        f"Scene {scene.scene_index}: keyframe rewriter failed (non-fatal): {e}"
+                        f"Shot {shot.shot_index}: keyframe rewriter failed (non-fatal): {e}"
                     )
                     rewritten_start_prompt = None  # Fall back to original
                     ref_image_bytes_list = []  # Reset on failure
@@ -666,16 +666,16 @@ async def generate_keyframes(
                 start_frame_bytes = _Path2(existing_start_kf.file_path).read_bytes()
                 start_source = existing_start_kf.source
                 logger.info(
-                    f"Scene {scene.scene_index}: start keyframe exists, skipping generation"
+                    f"Shot {shot.shot_index}: start keyframe exists, skipping generation"
                 )
-            elif scene.scene_index == 0:
-                # Scene 0: Generate from text prompt (KEYF-01)
+            elif shot.shot_index == 0:
+                # Shot 0: Generate from text prompt (KEYF-01)
                 # Prepend style guide + character bible for maximum fidelity
                 # Phase 10: Use rewritten prompt when available (already includes asset details)
                 if rewritten_start_prompt:
                     enriched_prompt = f"{style_prefix}{rewritten_start_prompt}"
                 else:
-                    enriched_prompt = f"{style_prefix}{character_prefix}{scene.start_frame_prompt}"
+                    enriched_prompt = f"{style_prefix}{character_prefix}{shot.start_frame_prompt}"
 
                 # Face verification retry loop
                 start_frame_bytes = None
@@ -701,13 +701,13 @@ async def generate_keyframes(
                         )
                         if passed:
                             logger.info(
-                                f"Scene {scene.scene_index} start: face verification passed "
+                                f"Shot {shot.shot_index} start: face verification passed "
                                 f"(level={identity_level}, {detail})"
                             )
                             break
                         else:
                             logger.warning(
-                                f"Scene {scene.scene_index} start: face verification failed "
+                                f"Shot {shot.shot_index} start: face verification failed "
                                 f"(level={identity_level}, {detail}), retrying"
                             )
                             continue
@@ -717,37 +717,37 @@ async def generate_keyframes(
 
                 # Save start keyframe to filesystem
                 start_file_path = file_mgr.save_keyframe(
-                    project.id, scene.scene_index, "start", start_frame_bytes
+                    project.id, shot.shot_index, "start", start_frame_bytes
                 )
 
                 # Create start keyframe database record
                 start_keyframe = Keyframe(
-                    scene_id=scene.id,
+                    shot_id=shot.id,
                     position="start",
                     file_path=str(start_file_path),
                     mime_type="image/png",
                     source=start_source,
-                    prompt_used=scene.start_frame_prompt,
+                    prompt_used=shot.start_frame_prompt,
                 )
                 session.add(start_keyframe)
             else:
-                # Scene N: Inherit from previous scene's end frame (KEYF-03)
+                # Shot N: Inherit from previous shot's end frame (KEYF-03)
                 start_frame_bytes = previous_end_frame_bytes
                 start_source = "inherited"
 
                 # Save start keyframe to filesystem
                 start_file_path = file_mgr.save_keyframe(
-                    project.id, scene.scene_index, "start", start_frame_bytes
+                    project.id, shot.shot_index, "start", start_frame_bytes
                 )
 
                 # Create start keyframe database record
                 start_keyframe = Keyframe(
-                    scene_id=scene.id,
+                    shot_id=shot.id,
                     position="start",
                     file_path=str(start_file_path),
                     mime_type="image/png",
                     source=start_source,
-                    prompt_used=scene.start_frame_prompt,
+                    prompt_used=shot.start_frame_prompt,
                 )
                 session.add(start_keyframe)
 
@@ -757,20 +757,20 @@ async def generate_keyframes(
                 from pathlib import Path as _Path3
                 end_frame_bytes = _Path3(existing_end_kf.file_path).read_bytes()
                 logger.info(
-                    f"Scene {scene.scene_index}: end keyframe exists, skipping generation"
+                    f"Shot {shot.shot_index}: end keyframe exists, skipping generation"
                 )
             else:
                 # Update generation_status for end frame (VGED-05)
-                scene.generation_status = "generating_end_kf"
+                shot.generation_status = "generating_end_kf"
                 await session.commit()
-                event_bus.emit(project.id, "scene_status", scene_index=scene.scene_index, status="generating_end_kf", phase="keyframes")
+                event_bus.emit(project.id, "shot_status", shot_index=shot.shot_index, status="generating_end_kf", phase="keyframes")
 
                 style_label = project.style.replace("_", " ")
                 conditioning_prompt = (
-                    f"Generate the NEXT keyframe for this {style_label} scene, "
+                    f"Generate the NEXT keyframe for this {style_label} shot, "
                     f"showing clear visual progression {project.target_clip_duration} seconds later.\n\n"
                     f"TARGET END STATE (this is what the new image must depict):\n"
-                    f"{scene.end_frame_prompt}\n\n"
+                    f"{shot.end_frame_prompt}\n\n"
                     f"The new image MUST show VISIBLE CHANGES from the reference image — "
                     f"different pose, expression, body position, or camera framing. "
                     f"If the reference is a close-up, the new image should show "
@@ -792,7 +792,7 @@ async def generate_keyframes(
                         # ComfyUI text-only: no image conditioning, use offset seed
                         end_frame_bytes = await _generate_image_comfyui(
                             comfy_client, prompt_with_emphasis,
-                            seed=project.seed + scene.scene_index + 1000,
+                            seed=project.seed + shot.shot_index + 1000,
                         )
                     else:
                         end_frame_bytes = await _generate_image_conditioned(
@@ -806,13 +806,13 @@ async def generate_keyframes(
                         )
                         if passed:
                             logger.info(
-                                f"Scene {scene.scene_index} end: face verification passed "
+                                f"Shot {shot.shot_index} end: face verification passed "
                                 f"(level={identity_level}, {detail})"
                             )
                             break
                         else:
                             logger.warning(
-                                f"Scene {scene.scene_index} end: face verification failed "
+                                f"Shot {shot.shot_index} end: face verification failed "
                                 f"(level={identity_level}, {detail}), retrying"
                             )
                             continue
@@ -821,28 +821,28 @@ async def generate_keyframes(
 
                 # Save end keyframe to filesystem
                 end_file_path = file_mgr.save_keyframe(
-                    project.id, scene.scene_index, "end", end_frame_bytes
+                    project.id, shot.shot_index, "end", end_frame_bytes
                 )
 
                 # Create end keyframe database record
                 end_keyframe = Keyframe(
-                    scene_id=scene.id,
+                    shot_id=shot.id,
                     position="end",
                     file_path=str(end_file_path),
                     mime_type="image/png",
                     source="generated",
-                    prompt_used=scene.end_frame_prompt,
+                    prompt_used=shot.end_frame_prompt,
                 )
                 session.add(end_keyframe)
 
-            # Update scene status and prepare for next iteration
-            scene.status = "keyframes_done"
-            scene.generation_status = None  # Clear generation_status (VGED-05)
+            # Update shot status and prepare for next iteration
+            shot.status = "keyframes_done"
+            shot.generation_status = None  # Clear generation_status (VGED-05)
             previous_end_frame_bytes = end_frame_bytes
 
-            # Commit after each scene for crash recovery
+            # Commit after each shot for crash recovery
             await session.commit()
-            event_bus.emit(project.id, "scene_keyframe_ready", scene_index=scene.scene_index, position="end")
+            event_bus.emit(project.id, "shot_keyframe_ready", shot_index=shot.shot_index, position="end")
             event_bus.emit(project.id, "refresh")
 
             # Rate limiting delay (KEYF-05)
@@ -850,7 +850,7 @@ async def generate_keyframes(
 
         except Exception as e:
             # On exception: set generation_status to "failed" (VGED-05)
-            scene.generation_status = "failed"
+            shot.generation_status = "failed"
             await session.commit()
             raise
 

@@ -38,7 +38,7 @@ from tenacity import (
 )
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, GenerationCandidate
+from vidpipe.db.models import Project, Shot, Keyframe, VideoClip, GenerationCandidate
 from vidpipe.services.candidate_scoring import CandidateScoringService
 from vidpipe.services.cv_analysis_service import CVAnalysisService
 from vidpipe.services.entity_extraction import identify_new_entities, extract_and_register_new_entities
@@ -223,7 +223,7 @@ async def _submit_video_job(
     if video_model != "veo-2.0-generate-001":
         video_config.generate_audio = bool(project.audio_enabled)
 
-    # Consistent seed for visual coherence across scenes
+    # Consistent seed for visual coherence across shots
     if project.seed is not None:
         video_config.seed = project.seed
 
@@ -233,7 +233,7 @@ async def _submit_video_job(
 
     # Veo API constraint: `image` + `last_frame` (frame interpolation) and
     # `reference_images` are mutually exclusive.  Keyframe-based frame
-    # interpolation is essential for scene composition control, so we always
+    # interpolation is essential for shot composition control, so we always
     # prefer it.  Reference images (identity preservation) are logged as
     # skipped — the rewritten prompt already describes the characters/assets.
     if reference_images:
@@ -258,7 +258,7 @@ async def _submit_video_job(
 # ---------------------------------------------------------------------------
 async def _regenerate_end_keyframe_safe(
     session: AsyncSession,
-    scene: Scene,
+    shot: Shot,
     project: Project,
     start_frame_bytes: bytes,
     end_kf: Keyframe,
@@ -283,7 +283,7 @@ async def _regenerate_end_keyframe_safe(
         f"IMPORTANT: The new image must look CLEARLY DIFFERENT from the reference — "
         f"use a DIFFERENT camera angle, wider framing, or noticeably different pose. "
         f"If the reference is a close-up, pull back to a medium or wide shot.\n\n"
-        f"TARGET END STATE:\n{scene.end_frame_prompt}\n\n"
+        f"TARGET END STATE:\n{shot.end_frame_prompt}\n\n"
         f"Maintain {style_label} style and character appearance consistency."
     )
 
@@ -293,7 +293,7 @@ async def _regenerate_end_keyframe_safe(
             comfy_client = await get_comfyui_client()
             end_frame_bytes = await _generate_image_comfyui(
                 comfy_client, conditioning_prompt,
-                seed=project.seed + scene.scene_index + 2000,
+                seed=project.seed + shot.shot_index + 2000,
             )
         else:
             conditioned_client = get_vertex_client(
@@ -309,7 +309,7 @@ async def _regenerate_end_keyframe_safe(
 
         # Save to disk (overwrites existing file)
         end_file_path = file_mgr.save_keyframe(
-            project.id, scene.scene_index, "end", end_frame_bytes,
+            project.id, shot.shot_index, "end", end_frame_bytes,
         )
         end_kf.file_path = str(end_file_path)
         end_kf.prompt_used = conditioning_prompt
@@ -317,13 +317,13 @@ async def _regenerate_end_keyframe_safe(
         await session.commit()
 
         logger.info(
-            f"Scene {scene.scene_index}: regenerated end keyframe with safety prompt"
+            f"Shot {shot.shot_index}: regenerated end keyframe with safety prompt"
         )
         return end_frame_bytes
 
     except Exception as e:
         logger.error(
-            f"Scene {scene.scene_index}: failed to regenerate end keyframe: {e}"
+            f"Shot {shot.shot_index}: failed to regenerate end keyframe: {e}"
         )
         return None
 
@@ -336,7 +336,7 @@ async def _poll_video_operation(
     clip: VideoClip,
     client,
     project: Project,
-    scene: Scene,
+    shot: Shot,
     file_mgr: FileManager,
     selected_refs: Optional[list] = None,
 ) -> str:
@@ -371,7 +371,7 @@ async def _poll_video_operation(
             if _is_transient_operation(operation):
                 error_msg = str(getattr(operation, "error", "Transient server error"))
                 logger.warning(
-                    f"Scene {scene.scene_index}: transient operation error "
+                    f"Shot {shot.shot_index}: transient operation error "
                     f"(code {operation.error.code}): {error_msg}"
                 )
                 clip.status = "failed"
@@ -389,19 +389,19 @@ async def _poll_video_operation(
                 else:
                     clip.status = "failed"
                     clip.error_message = "No video data in response"
-                    scene.status = "failed"
+                    shot.status = "failed"
                     await session.commit()
                     return "failed"
 
                 # Save video clip (VGEN-06)
                 file_path = file_mgr.save_clip(
-                    project.id, scene.scene_index, video_bytes,
+                    project.id, shot.shot_index, video_bytes,
                 )
                 clip.local_path = str(file_path)
                 clip.status = "complete"
                 clip.duration_seconds = project.target_clip_duration
                 clip.source = "generated"
-                scene.status = "video_done"
+                shot.status = "video_done"
                 await session.commit()
                 return "complete"
 
@@ -413,7 +413,7 @@ async def _poll_video_operation(
                     if hasattr(operation, "error")
                     else "Unknown error"
                 )
-                scene.status = "failed"
+                shot.status = "failed"
                 await session.commit()
                 return "failed"
 
@@ -432,7 +432,7 @@ async def _poll_video_operation(
     clip.error_message = (
         f"Operation did not complete after {max_polls * poll_interval} seconds"
     )
-    scene.status = "timed_out"
+    shot.status = "timed_out"
     await session.commit()
     return "timed_out"
 
@@ -445,7 +445,7 @@ async def _poll_and_collect_candidates(
     clip: VideoClip,
     client,
     project: Project,
-    scene: Scene,
+    shot: Shot,
     file_mgr: FileManager,
     selected_refs: Optional[list] = None,
 ) -> tuple[str, list[bytes]]:
@@ -494,7 +494,7 @@ async def _poll_and_collect_candidates(
                 if _is_transient_operation(operation):
                     error_msg = str(getattr(operation, "error", "Transient server error"))
                     logger.warning(
-                        f"Scene {scene.scene_index}: transient operation error "
+                        f"Shot {shot.shot_index}: transient operation error "
                         f"(code {operation.error.code}): {error_msg}"
                     )
                     clip.status = "failed"
@@ -509,14 +509,14 @@ async def _poll_and_collect_candidates(
                     if hasattr(operation, "error")
                     else "Unknown error — no generated videos"
                 )
-                scene.status = "failed"
+                shot.status = "failed"
                 await session.commit()
                 return "failed", []
 
             # At least one candidate survived — partial RAI filter is OK
             if rai_filtered > 0:
                 logger.warning(
-                    f"Scene {scene.scene_index}: {rai_filtered} candidate(s) filtered by RAI, "
+                    f"Shot {shot.shot_index}: {rai_filtered} candidate(s) filtered by RAI, "
                     f"{len(generated_videos)} candidate(s) survived — treating as success"
                 )
 
@@ -531,13 +531,13 @@ async def _poll_and_collect_candidates(
                     )
                 else:
                     logger.warning(
-                        f"Scene {scene.scene_index}: candidate missing video data, skipping"
+                        f"Shot {shot.shot_index}: candidate missing video data, skipping"
                     )
 
             if not video_bytes_list:
                 clip.status = "failed"
                 clip.error_message = "No video data in any candidate response"
-                scene.status = "failed"
+                shot.status = "failed"
                 await session.commit()
                 return "failed", []
 
@@ -561,7 +561,7 @@ async def _poll_and_collect_candidates(
     clip.error_message = (
         f"Operation did not complete after {max_polls * poll_interval} seconds"
     )
-    scene.status = "timed_out"
+    shot.status = "timed_out"
     await session.commit()
     return "timed_out", []
 
@@ -571,12 +571,12 @@ async def _poll_and_collect_candidates(
 # ---------------------------------------------------------------------------
 async def _handle_quality_mode_candidates(
     session: AsyncSession,
-    scene: Scene,
+    shot: Shot,
     project: Project,
     clip: VideoClip,
     file_mgr: FileManager,
     video_bytes_list: list[bytes],
-    scene_manifest_row,
+    shot_manifest_row,
     video_prompt: str,
     all_assets: list,
     has_refs: bool = False,
@@ -600,12 +600,12 @@ async def _handle_quality_mode_candidates(
 
     # Step 1 & 2: Save each candidate and create DB records
     for i, video_bytes in enumerate(video_bytes_list):
-        candidate_path = clips_dir / f"scene_{scene.scene_index}_candidate_{i}.mp4"
+        candidate_path = clips_dir / f"shot_{shot.shot_index}_candidate_{i}.mp4"
         candidate_path.write_bytes(video_bytes)
 
         candidate = GenerationCandidate(
             project_id=project.id,
-            scene_index=scene.scene_index,
+            shot_index=shot.shot_index,
             candidate_number=i,
             local_path=str(candidate_path),
         )
@@ -614,19 +614,19 @@ async def _handle_quality_mode_candidates(
 
     await session.flush()  # Assign IDs without full commit
 
-    # Step 3: Find previous scene's selected clip for continuity scoring
+    # Step 3: Find previous shot's selected clip for continuity scoring
     previous_clip_path = None
-    if scene.scene_index > 0:
-        prev_scene_result = await session.execute(
-            select(Scene).where(
-                Scene.project_id == project.id,
-                Scene.scene_index == scene.scene_index - 1,
+    if shot.shot_index > 0:
+        prev_shot_result = await session.execute(
+            select(Shot).where(
+                Shot.project_id == project.id,
+                Shot.shot_index == shot.shot_index - 1,
             )
         )
-        prev_scene = prev_scene_result.scalar_one_or_none()
-        if prev_scene:
+        prev_shot = prev_shot_result.scalar_one_or_none()
+        if prev_shot:
             prev_clip_result = await session.execute(
-                select(VideoClip).where(VideoClip.scene_id == prev_scene.id)
+                select(VideoClip).where(VideoClip.shot_id == prev_shot.id)
             )
             prev_clip = prev_clip_result.scalar_one_or_none()
             if prev_clip:
@@ -639,11 +639,11 @@ async def _handle_quality_mode_candidates(
 
     score_results = await effective_scoring_service.score_all_candidates(
         candidates_info=candidates_info,
-        scene_index=scene.scene_index,
-        scene_manifest_json=scene_manifest_row.manifest_json if scene_manifest_row else None,
+        shot_index=shot.shot_index,
+        shot_manifest_json=shot_manifest_row.manifest_json if shot_manifest_row else None,
         rewritten_video_prompt=video_prompt,
         existing_assets=all_assets,
-        previous_scene_clip_path=previous_clip_path,
+        previous_shot_clip_path=previous_clip_path,
     )
 
     # Step 5: Update GenerationCandidate records with scores
@@ -665,7 +665,7 @@ async def _handle_quality_mode_candidates(
     candidate_records[winner_idx].selected_by = "auto"
 
     logger.info(
-        f"Scene {scene.scene_index}: selected candidate {winner_idx} "
+        f"Shot {shot.shot_index}: selected candidate {winner_idx} "
         f"(composite={score_results[winner_idx].get('composite_score', 0):.2f}) "
         f"from {len(candidate_records)} candidates"
     )
@@ -674,12 +674,12 @@ async def _handle_quality_mode_candidates(
     clip.local_path = candidate_records[winner_idx].local_path
     clip.duration_seconds = project.target_clip_duration
     clip.source = "generated"
-    scene.status = "video_done"
+    shot.status = "video_done"
 
     await session.commit()
 
     # Step 8: Run CV analysis on selected candidate only
-    await _run_post_generation_analysis(session, scene, clip, project, scene_manifest_row, cv_service=cv_service)
+    await _run_post_generation_analysis(session, shot, clip, project, shot_manifest_row, cv_service=cv_service)
 
 
 # ---------------------------------------------------------------------------
@@ -687,17 +687,17 @@ async def _handle_quality_mode_candidates(
 # ---------------------------------------------------------------------------
 async def _run_post_generation_analysis(
     session: AsyncSession,
-    scene: Scene,
+    shot: Shot,
     clip: VideoClip,
     project: Project,
-    scene_manifest_row,  # SceneManifest | None (imported inline to avoid circular)
+    shot_manifest_row,  # ShotManifest | None (imported inline to avoid circular)
     cv_service: Optional[CVAnalysisService] = None,
 ) -> None:
     """Run CV analysis on completed video clip for progressive enrichment.
 
-    This runs AFTER each scene's video clip completes, BEFORE the next scene
-    starts. Enables progressive enrichment: assets from scene N feed into
-    scene N+1's reference selection.
+    This runs AFTER each shot's video clip completes, BEFORE the next shot
+    starts. Enables progressive enrichment: assets from shot N feed into
+    shot N+1's reference selection.
 
     Gracefully degrades — if analysis fails, logs warning and pipeline continues.
     Non-manifest projects skip CV analysis entirely (backward compatible).
@@ -719,10 +719,10 @@ async def _run_post_generation_analysis(
             session, project.manifest_id
         )
 
-        # Collect keyframe paths (start and end frames for this scene)
+        # Collect keyframe paths (start and end frames for this shot)
         kf_result = await session.execute(
             select(Keyframe)
-            .where(Keyframe.scene_id == scene.id)
+            .where(Keyframe.shot_id == shot.id)
             .order_by(Keyframe.position)
         )
         keyframes = kf_result.scalars().all()
@@ -736,22 +736,22 @@ async def _run_post_generation_analysis(
         # (after adding appearances/entities to the session), only the
         # savepoint is rolled back — not the outer transaction.  A full
         # session.rollback() would expire every ORM object in the session
-        # (regardless of expire_on_commit) and break the caller's scene loop.
+        # (regardless of expire_on_commit) and break the caller's shot loop.
         async with session.begin_nested():
             # Step 5: Run full CV analysis (frame sampling, YOLO, face match, CLIP, vision LLM)
             analysis_result = await effective_cv_service.analyze_generated_content(
-                scene_index=scene.scene_index,
+                shot_index=shot.shot_index,
                 keyframe_paths=keyframe_paths,
                 clip_path=clip.local_path,
-                scene_manifest_json=(
-                    scene_manifest_row.manifest_json if scene_manifest_row else None
+                shot_manifest_json=(
+                    shot_manifest_row.manifest_json if shot_manifest_row else None
                 ),
                 existing_assets=all_assets,
             )
 
             # Step 6: Track appearances — persist AssetAppearance records
             await effective_cv_service.track_appearances(
-                session, project.id, scene.scene_index, analysis_result
+                session, project.id, shot.shot_index, analysis_result
             )
 
             # Step 7: Extract and register new entities into Asset Registry
@@ -761,23 +761,23 @@ async def _run_post_generation_analysis(
                     session,
                     project.id,
                     project.manifest_id,
-                    scene.scene_index,
+                    shot.shot_index,
                     new_entities,
                     source="CLIP_EXTRACT",
                 )
 
-            # Step 8: Persist analysis results to SceneManifest (exclude raw embeddings)
-            if scene_manifest_row is not None:
-                scene_manifest_row.cv_analysis_json = analysis_result.model_dump(
+            # Step 8: Persist analysis results to ShotManifest (exclude raw embeddings)
+            if shot_manifest_row is not None:
+                shot_manifest_row.cv_analysis_json = analysis_result.model_dump(
                     exclude={"clip_embeddings"}
                 )
-                scene_manifest_row.continuity_score = analysis_result.continuity_score
+                shot_manifest_row.continuity_score = analysis_result.continuity_score
 
         # Savepoint released — now commit to persist the analysis results
         await session.commit()
 
         logger.info(
-            f"Scene {scene.scene_index}: CV analysis complete — "
+            f"Shot {shot.shot_index}: CV analysis complete — "
             f"{len(analysis_result.face_matches)} face matches, "
             f"{analysis_result.new_entity_count} new entities, "
             f"continuity: {analysis_result.continuity_score:.1f}"
@@ -785,13 +785,13 @@ async def _run_post_generation_analysis(
 
     except Exception as e:
         logger.warning(
-            f"Scene {scene.scene_index}: CV analysis failed (non-fatal): {e}"
+            f"Shot {shot.shot_index}: CV analysis failed (non-fatal): {e}"
         )
         # Pipeline continues — CV analysis failure is NOT a pipeline failure
 
 
 # ---------------------------------------------------------------------------
-# Main per-scene video generation with escalating remediation
+# Main per-shot video generation with escalating remediation
 # ---------------------------------------------------------------------------
 async def generate_videos(
     session: AsyncSession,
@@ -799,14 +799,14 @@ async def generate_videos(
     text_adapter: Optional[LLMAdapter] = None,
     vision_adapter: Optional[LLMAdapter] = None,
 ) -> None:
-    """Generate video clips for all scenes using Veo or ComfyUI.
+    """Generate video clips for all shots using Veo or ComfyUI.
 
     Implements VGEN-01 through VGEN-07.
     Routes to ComfyUI when video_model is in COMFYUI_VIDEO_MODELS.
 
     Args:
         session: Database session for persisting clips and candidates
-        project: Project containing scenes to generate videos for
+        project: Project containing shots to generate videos for
         text_adapter: Optional LLMAdapter for prompt rewriting. If None,
             PromptRewriterService falls back to get_adapter("gemini-2.5-flash").
         vision_adapter: Optional LLMAdapter for CV analysis and candidate scoring.
@@ -821,69 +821,69 @@ async def generate_videos(
     cv_service = CVAnalysisService(vision_adapter=vision_adapter)
     scoring_service = CandidateScoringService(vision_adapter=vision_adapter)
 
-    # Query scenes ready for video generation
+    # Query shots ready for video generation
     result = await session.execute(
-        select(Scene)
-        .where(Scene.project_id == project.id)
-        .where(Scene.status == "keyframes_done")
-        .order_by(Scene.scene_index)
+        select(Shot)
+        .where(Shot.project_id == project.id)
+        .where(Shot.status == "keyframes_done")
+        .order_by(Shot.shot_index)
     )
-    scenes = result.scalars().all()
+    shots = result.scalars().all()
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(project.id, "phase_started", phase="clips", total_scenes=len(scenes))
+    event_bus.emit(project.id, "phase_started", phase="clips", total_shots=len(shots))
 
-    for scene in scenes:
-        # Per-scene stop flag check (VGED-11)
+    for shot in shots:
+        # Per-shot stop flag check (VGED-11)
         await session.refresh(project)
         if project.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
-            logger.info(f"Pipeline stopped by user at scene {scene.scene_index}")
+            logger.info(f"Pipeline stopped by user at shot {shot.shot_index}")
             raise PipelineStopped("Stopped by user")
 
-        # Gap-filling: skip scenes that already have a completed clip (VGED-06)
+        # Gap-filling: skip shots that already have a completed clip (VGED-06)
         existing_clip_result = await session.execute(
-            select(VideoClip).where(VideoClip.scene_id == scene.id)
+            select(VideoClip).where(VideoClip.shot_id == shot.id)
         )
         existing_clip = existing_clip_result.scalar_one_or_none()
         if existing_clip and existing_clip.local_path:
             logger.info(
-                f"Scene {scene.scene_index}: clip already exists, skipping video generation"
+                f"Shot {shot.shot_index}: clip already exists, skipping video generation"
             )
-            scene.generation_status = None
-            if scene.status != "video_done":
-                scene.status = "video_done"
+            shot.generation_status = None
+            if shot.status != "video_done":
+                shot.status = "video_done"
             await session.commit()
             continue
 
         # Set generation_status before video generation (VGED-05)
-        scene.generation_status = "generating_clip"
+        shot.generation_status = "generating_clip"
         await session.commit()
-        event_bus.emit(project.id, "scene_status", scene_index=scene.scene_index, status="generating_clip", phase="clips")
+        event_bus.emit(project.id, "shot_status", shot_index=shot.shot_index, status="generating_clip", phase="clips")
 
         try:
             if is_comfyui:
                 await _generate_video_comfyui(
-                    session, scene, file_mgr, project, video_model,
+                    session, shot, file_mgr, project, video_model,
                 )
             else:
-                await _generate_video_for_scene(
-                    session, scene, file_mgr, client, project, video_model,
+                await _generate_video_for_shot(
+                    session, shot, file_mgr, client, project, video_model,
                     cv_service=cv_service,
                     scoring_service=scoring_service,
                     text_adapter=text_adapter,
                 )
 
             # Clear generation_status after successful generation (VGED-05)
-            scene.generation_status = None
+            shot.generation_status = None
             await session.commit()
-            event_bus.emit(project.id, "scene_clip_ready", scene_index=scene.scene_index)
+            event_bus.emit(project.id, "shot_clip_ready", shot_index=shot.shot_index)
             event_bus.emit(project.id, "refresh")
         except Exception as e:
             # On exception: set generation_status to "failed" (VGED-05)
-            scene.generation_status = "failed"
+            shot.generation_status = "failed"
             await session.commit()
-            event_bus.emit(project.id, "error", phase="clips", scene_index=scene.scene_index, message=str(e))
+            event_bus.emit(project.id, "error", phase="clips", shot_index=shot.shot_index, message=str(e))
             raise
 
     # Update project status
@@ -897,12 +897,12 @@ async def generate_videos(
 # ---------------------------------------------------------------------------
 async def _generate_video_comfyui(
     session: AsyncSession,
-    scene: Scene,
+    shot: Shot,
     file_mgr: FileManager,
     project: Project,
     video_model: str,
 ) -> None:
-    """Generate video clip for a single scene via ComfyUI Cloud.
+    """Generate video clip for a single shot via ComfyUI Cloud.
 
     Uses ComfyUIVideoAdapter which handles image upload, workflow building,
     status normalization, and result download.
@@ -913,7 +913,7 @@ async def _generate_video_comfyui(
     - Single output per run
     - Idempotent resume via operation_name prefix "comfyui:"
     """
-    from vidpipe.db.models import SceneManifest as SceneManifestModel
+    from vidpipe.db.models import ShotManifest as ShotManifestModel
     from vidpipe.services.comfyui_client import get_comfyui_client
     from vidpipe.services.comfyui_adapter import ComfyUIVideoAdapter
 
@@ -922,7 +922,7 @@ async def _generate_video_comfyui(
     # Load keyframes
     kf_result = await session.execute(
         select(Keyframe)
-        .where(Keyframe.scene_id == scene.id)
+        .where(Keyframe.shot_id == shot.id)
         .order_by(Keyframe.position)
     )
     keyframes = kf_result.scalars().all()
@@ -931,38 +931,38 @@ async def _generate_video_comfyui(
     if is_i2v:
         if start_kf is None:
             raise ValueError(
-                f"Scene {scene.scene_index} missing start keyframe — cannot generate video"
+                f"Shot {shot.shot_index} missing start keyframe — cannot generate video"
             )
     else:
         if start_kf is None or end_kf is None:
             missing = [p for p, kf in [("start", start_kf), ("end", end_kf)] if kf is None]
             raise ValueError(
-                f"Scene {scene.scene_index} missing {' and '.join(missing)} "
+                f"Shot {shot.shot_index} missing {' and '.join(missing)} "
                 f"keyframe(s) — cannot generate video"
             )
 
     start_frame_bytes = Path(start_kf.file_path).read_bytes()
     end_frame_bytes = Path(end_kf.file_path).read_bytes() if end_kf else None
 
-    # Load scene manifest for prompt rewriting and char refs
-    scene_manifest_row = None
+    # Load shot manifest for prompt rewriting and char refs
+    shot_manifest_row = None
     if project.manifest_id:
         sm_result = await session.execute(
-            select(SceneManifestModel).where(
-                SceneManifestModel.project_id == project.id,
-                SceneManifestModel.scene_index == scene.scene_index,
+            select(ShotManifestModel).where(
+                ShotManifestModel.project_id == project.id,
+                ShotManifestModel.shot_index == shot.shot_index,
             )
         )
-        scene_manifest_row = sm_result.scalar_one_or_none()
+        shot_manifest_row = sm_result.scalar_one_or_none()
 
     # Build video prompt
-    video_prompt = scene.video_motion_prompt
-    if scene_manifest_row and scene_manifest_row.rewritten_video_prompt:
-        video_prompt = scene_manifest_row.rewritten_video_prompt
+    video_prompt = shot.video_motion_prompt
+    if shot_manifest_row and shot_manifest_row.rewritten_video_prompt:
+        video_prompt = shot_manifest_row.rewritten_video_prompt
 
     # Check for existing VideoClip (idempotent resume)
     clip_result = await session.execute(
-        select(VideoClip).where(VideoClip.scene_id == scene.id)
+        select(VideoClip).where(VideoClip.shot_id == shot.id)
     )
     clip = clip_result.scalar_one_or_none()
 
@@ -980,12 +980,12 @@ async def _generate_video_comfyui(
     # If clip exists with comfyui: prefix and is polling, resume poll
     if clip and clip.status == "polling" and clip.operation_name and clip.operation_name.startswith("comfyui:"):
         logger.info(
-            "Scene %d: resuming ComfyUI poll for %s",
-            scene.scene_index, clip.operation_name,
+            "Shot %d: resuming ComfyUI poll for %s",
+            shot.shot_index, clip.operation_name,
         )
     else:
         # Fresh submission via adapter
-        logger.info("Scene %d: submitting to ComfyUI", scene.scene_index)
+        logger.info("Shot %d: submitting to ComfyUI", shot.shot_index)
 
         # Load character reference images (if manifest project)
         char_ref_bytes: list[bytes] = []
@@ -999,14 +999,14 @@ async def _generate_video_comfyui(
             char_ref_bytes=char_ref_bytes,
             aspect_ratio=project.aspect_ratio,
             seed=project.seed or 0,
-            scene_index=scene.scene_index,
+            shot_index=shot.shot_index,
             video_model=video_model,
         )
 
         # Create/update clip record (persist before polling for crash recovery)
         if clip is None:
             clip = VideoClip(
-                scene_id=scene.id,
+                shot_id=shot.id,
                 operation_name=operation_id,
                 status="polling",
                 poll_count=0,
@@ -1037,36 +1037,36 @@ async def _generate_video_comfyui(
             except Exception as e:
                 clip.status = "failed"
                 clip.error_message = f"Video download failed: {e}"
-                scene.status = "failed"
+                shot.status = "failed"
                 await session.commit()
-                logger.error("Scene %d: ComfyUI download failed: %s", scene.scene_index, e)
+                logger.error("Shot %d: ComfyUI download failed: %s", shot.shot_index, e)
                 return
 
             # Save clip to disk
             file_path = file_mgr.save_clip(
-                project.id, scene.scene_index, video_bytes,
+                project.id, shot.shot_index, video_bytes,
             )
             clip.local_path = str(file_path)
             clip.status = "complete"
             clip.duration_seconds = duration
             clip.source = "generated"
-            scene.status = "video_done"
+            shot.status = "video_done"
             await session.commit()
 
             # Post-generation CV analysis (reuse existing)
             await _run_post_generation_analysis(
-                session, scene, clip, project, scene_manifest_row,
+                session, shot, clip, project, shot_manifest_row,
             )
 
-            logger.info("Scene %d: ComfyUI video complete", scene.scene_index)
+            logger.info("Shot %d: ComfyUI video complete", shot.shot_index)
             return
 
         elif status == "failed":
             clip.status = "failed"
             clip.error_message = error_msg or "ComfyUI job failed"
-            scene.status = "failed"
+            shot.status = "failed"
             await session.commit()
-            logger.error("Scene %d: ComfyUI job failed: %s", scene.scene_index, error_msg)
+            logger.error("Shot %d: ComfyUI job failed: %s", shot.shot_index, error_msg)
             return
 
         # Still running — sleep and continue
@@ -1084,9 +1084,9 @@ async def _generate_video_comfyui(
     clip.error_message = (
         f"ComfyUI operation did not complete after {max_polls * poll_interval} seconds"
     )
-    scene.status = "timed_out"
+    shot.status = "timed_out"
     await session.commit()
-    logger.error("Scene %d: ComfyUI poll timed out", scene.scene_index)
+    logger.error("Shot %d: ComfyUI poll timed out", shot.shot_index)
 
 
 async def _load_char_ref_images(
@@ -1140,9 +1140,9 @@ def _resolve_asset_image_path(asset) -> Optional[Path]:
     return None
 
 
-async def _generate_video_for_scene(
+async def _generate_video_for_shot(
     session: AsyncSession,
-    scene: Scene,
+    shot: Shot,
     file_mgr: FileManager,
     client,
     project: Project,
@@ -1151,7 +1151,7 @@ async def _generate_video_for_scene(
     scoring_service: Optional[CandidateScoringService] = None,
     text_adapter: Optional[LLMAdapter] = None,
 ) -> None:
-    """Generate video clip for a single scene with escalating content-policy
+    """Generate video clip for a single shot with escalating content-policy
     remediation and transient-error retry.
 
     Escalation levels:
@@ -1165,7 +1165,7 @@ async def _generate_video_for_scene(
     # Load keyframes from database
     result = await session.execute(
         select(Keyframe)
-        .where(Keyframe.scene_id == scene.id)
+        .where(Keyframe.shot_id == shot.id)
         .order_by(Keyframe.position)
     )
     keyframes = result.scalars().all()
@@ -1174,64 +1174,64 @@ async def _generate_video_for_scene(
     if start_kf is None or end_kf is None:
         missing = [p for p, kf in [("start", start_kf), ("end", end_kf)] if kf is None]
         raise ValueError(
-            f"Scene {scene.scene_index} missing {' and '.join(missing)} "
+            f"Shot {shot.shot_index} missing {' and '.join(missing)} "
             f"keyframe(s) — cannot generate video"
         )
 
     start_frame_bytes = Path(start_kf.file_path).read_bytes()
     end_frame_bytes = Path(end_kf.file_path).read_bytes()
 
-    # Load scene manifest and select references (Phase 8)
-    from vidpipe.db.models import SceneManifest as SceneManifestModel
-    from vidpipe.services.reference_selection import select_references_for_scene
+    # Load shot manifest and select references (Phase 8)
+    from vidpipe.db.models import ShotManifest as ShotManifestModel
+    from vidpipe.services.reference_selection import select_references_for_shot
 
-    # Initialize scene_manifest_row to None so it's accessible from both
+    # Initialize shot_manifest_row to None so it's accessible from both
     # completion paths (crash recovery resume and escalation loop).
     # Phase 11: Initialize all_assets to [] so quality mode without manifest
     # does not raise NameError when referencing it in _handle_quality_mode_candidates.
-    scene_manifest_row = None
+    shot_manifest_row = None
     selected_refs = []
     all_assets: list = []
     if project.manifest_id:
-        # Query scene manifest
+        # Query shot manifest
         sm_result = await session.execute(
-            select(SceneManifestModel).where(
-                SceneManifestModel.project_id == project.id,
-                SceneManifestModel.scene_index == scene.scene_index
+            select(ShotManifestModel).where(
+                ShotManifestModel.project_id == project.id,
+                ShotManifestModel.shot_index == shot.shot_index
             )
         )
-        scene_manifest_row = sm_result.scalar_one_or_none()
+        shot_manifest_row = sm_result.scalar_one_or_none()
 
-        if scene_manifest_row and scene_manifest_row.manifest_json:
+        if shot_manifest_row and shot_manifest_row.manifest_json:
             # Load all manifest assets
             all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
-            selected_refs = select_references_for_scene(
-                scene_manifest_row.manifest_json,
+            selected_refs = select_references_for_shot(
+                shot_manifest_row.manifest_json,
                 all_assets
             )
 
             # Persist selected tags for debugging and UI display
             if selected_refs:
-                scene_manifest_row.selected_reference_tags = [r.manifest_tag for r in selected_refs]
+                shot_manifest_row.selected_reference_tags = [r.manifest_tag for r in selected_refs]
                 await session.commit()
 
         logger.info(
-            f"Scene {scene.scene_index}: selected {len(selected_refs)} reference(s): "
+            f"Shot {shot.shot_index}: selected {len(selected_refs)} reference(s): "
             f"{[r.manifest_tag for r in selected_refs]}"
         )
 
     # Phase 10: Adaptive Prompt Rewriting for manifest projects
     base_video_prompt = None  # Will hold rewritten or original prompt
-    if project.manifest_id and scene_manifest_row and scene_manifest_row.manifest_json:
+    if project.manifest_id and shot_manifest_row and shot_manifest_row.manifest_json:
         try:
             from vidpipe.services.prompt_rewriter import PromptRewriterService
-            from vidpipe.db.models import SceneAudioManifest as SceneAudioManifestModel
+            from vidpipe.db.models import ShotAudioManifest as ShotAudioManifestModel
 
             # Load audio manifest
             audio_result = await session.execute(
-                select(SceneAudioManifestModel).where(
-                    SceneAudioManifestModel.project_id == project.id,
-                    SceneAudioManifestModel.scene_index == scene.scene_index
+                select(ShotAudioManifestModel).where(
+                    ShotAudioManifestModel.project_id == project.id,
+                    ShotAudioManifestModel.shot_index == shot.shot_index
                 )
             )
             audio_manifest_row = audio_result.scalar_one_or_none()
@@ -1244,13 +1244,13 @@ async def _generate_video_for_scene(
                     "music": audio_manifest_row.music_json,
                 }
 
-            # Load previous scene CV analysis for continuity
+            # Load previous shot CV analysis for continuity
             previous_cv = None
-            if scene.scene_index > 0:
+            if shot.shot_index > 0:
                 prev_sm_result = await session.execute(
-                    select(SceneManifestModel).where(
-                        SceneManifestModel.project_id == project.id,
-                        SceneManifestModel.scene_index == scene.scene_index - 1
+                    select(ShotManifestModel).where(
+                        ShotManifestModel.project_id == project.id,
+                        ShotManifestModel.shot_index == shot.shot_index - 1
                     )
                 )
                 prev_sm = prev_sm_result.scalar_one_or_none()
@@ -1260,8 +1260,8 @@ async def _generate_video_for_scene(
             # all_assets already loaded above in Phase 8 block
             rewriter = PromptRewriterService(text_adapter=text_adapter)
             result = await rewriter.rewrite_video_prompt(
-                scene=scene,
-                scene_manifest_json=scene_manifest_row.manifest_json,
+                shot=shot,
+                shot_manifest_json=shot_manifest_row.manifest_json,
                 audio_manifest_json=audio_manifest_json,
                 placed_assets=all_assets,
                 previous_cv_analysis=previous_cv,
@@ -1271,7 +1271,7 @@ async def _generate_video_for_scene(
             base_video_prompt = result.rewritten_prompt
 
             # Persist rewritten video prompt
-            scene_manifest_row.rewritten_video_prompt = result.rewritten_prompt
+            shot_manifest_row.rewritten_video_prompt = result.rewritten_prompt
 
             # LLM reference selection overrides Phase 8's deterministic selection
             if result.selected_reference_tags:
@@ -1280,7 +1280,7 @@ async def _generate_video_for_scene(
                 # Post-LLM enforcement: ensure placed CHARACTER assets are in refs
                 placed_char_tags = {
                     p["asset_tag"]
-                    for p in scene_manifest_row.manifest_json.get("placements", [])
+                    for p in shot_manifest_row.manifest_json.get("placements", [])
                     if "asset_tag" in p
                     and asset_map.get(p["asset_tag"])
                     and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
@@ -1292,7 +1292,7 @@ async def _generate_video_for_scene(
                     enforced = list(missing_chars) + current_tags
                     result.selected_reference_tags = enforced[:3]
                     logger.info(
-                        f"Scene {scene.scene_index}: enforced placed CHARACTER refs "
+                        f"Shot {shot.shot_index}: enforced placed CHARACTER refs "
                         f"{missing_chars} → {result.selected_reference_tags}"
                     )
 
@@ -1303,9 +1303,9 @@ async def _generate_video_for_scene(
                 ]
                 if llm_selected:
                     selected_refs = llm_selected
-                    scene_manifest_row.selected_reference_tags = result.selected_reference_tags
+                    shot_manifest_row.selected_reference_tags = result.selected_reference_tags
                     logger.info(
-                        f"Scene {scene.scene_index}: LLM override refs: "
+                        f"Shot {shot.shot_index}: LLM override refs: "
                         f"{result.selected_reference_tags} "
                         f"(reason: {result.reference_reasoning})"
                     )
@@ -1313,7 +1313,7 @@ async def _generate_video_for_scene(
             await session.commit()
 
             logger.info(
-                f"Scene {scene.scene_index}: video prompt rewritten "
+                f"Shot {shot.shot_index}: video prompt rewritten "
                 f"({len(result.rewritten_prompt)} chars)"
             )
         except Exception as e:
@@ -1322,13 +1322,13 @@ async def _generate_video_for_scene(
             if isinstance(e, PipelineStopped):
                 raise
             logger.warning(
-                f"Scene {scene.scene_index}: video rewriter failed (non-fatal): {e}"
+                f"Shot {shot.shot_index}: video rewriter failed (non-fatal): {e}"
             )
             base_video_prompt = None  # Fall back to original
 
     # Check if VideoClip already exists (idempotent resume per VGEN-03)
     result = await session.execute(
-        select(VideoClip).where(VideoClip.scene_id == scene.id)
+        select(VideoClip).where(VideoClip.shot_id == shot.id)
     )
     clip = result.scalar_one_or_none()
 
@@ -1337,14 +1337,14 @@ async def _generate_video_for_scene(
         if project.quality_mode and project.candidate_count > 1:
             # Phase 11: Quality mode crash recovery — use multi-candidate poll
             poll_result, video_bytes_list = await _poll_and_collect_candidates(
-                session, clip, client, project, scene, file_mgr, selected_refs,
+                session, clip, client, project, shot, file_mgr, selected_refs,
             )
             if poll_result == "complete":
                 await _handle_quality_mode_candidates(
-                    session, scene, project, clip, file_mgr,
+                    session, shot, project, clip, file_mgr,
                     video_bytes_list,
-                    scene_manifest_row,
-                    base_video_prompt or scene.video_motion_prompt,
+                    shot_manifest_row,
+                    base_video_prompt or shot.video_motion_prompt,
                     all_assets,
                     has_refs=bool(selected_refs),
                     scoring_service=scoring_service,
@@ -1355,24 +1355,24 @@ async def _generate_video_for_scene(
                 return  # failed or timed_out
             # Content policy with zero survivors → fall through to escalation
             logger.warning(
-                f"Scene {scene.scene_index}: quality-mode resumed poll hit content policy, "
+                f"Shot {shot.shot_index}: quality-mode resumed poll hit content policy, "
                 "starting remediation"
             )
         else:
             # Standard mode crash recovery: existing behavior
             poll_result = await _poll_video_operation(
-                session, clip, client, project, scene, file_mgr, selected_refs,
+                session, clip, client, project, shot, file_mgr, selected_refs,
             )
             if poll_result != "content_policy":
                 if poll_result == "complete":
                     # Phase 9: Post-generation CV analysis for progressive enrichment
                     await _run_post_generation_analysis(
-                        session, scene, clip, project, scene_manifest_row, cv_service=cv_service,
+                        session, shot, clip, project, shot_manifest_row, cv_service=cv_service,
                     )
                 return  # complete, failed, or timed_out
             # Content policy → fall through to escalation loop
             logger.warning(
-                f"Scene {scene.scene_index}: resumed poll hit content policy, "
+                f"Shot {shot.shot_index}: resumed poll hit content policy, "
                 "starting remediation"
             )
 
@@ -1405,14 +1405,14 @@ async def _generate_video_for_scene(
     for safety_level in range(max_levels):
         if safety_level > 0:
             logger.warning(
-                f"Scene {scene.scene_index}: content policy remediation "
+                f"Shot {shot.shot_index}: content policy remediation "
                 f"level {safety_level}/{max_levels - 1}"
             )
 
         # Level 2+: regenerate end keyframe with safety-focused prompt
         if safety_level >= 2:
             new_bytes = await _regenerate_end_keyframe_safe(
-                session, scene, project, start_frame_bytes, end_kf, file_mgr,
+                session, shot, project, start_frame_bytes, end_kf, file_mgr,
             )
             if new_bytes:
                 end_frame_bytes = new_bytes
@@ -1431,7 +1431,7 @@ async def _generate_video_for_scene(
         else:
             video_prompt = (
                 f"{_VIDEO_SAFETY_PREFIXES[safety_level]}"
-                f"{scene.video_motion_prompt}. "
+                f"{shot.video_motion_prompt}. "
                 f"Maintain the visual style shown in the source frames."
             )
 
@@ -1444,7 +1444,7 @@ async def _generate_video_for_scene(
                 # Exponential backoff between transient resubmissions: 15s, 30s, 60s, ...
                 backoff_seconds = 15 * (2 ** (transient_attempt - 1))
                 logger.info(
-                    f"Scene {scene.scene_index}: transient retry "
+                    f"Shot {shot.shot_index}: transient retry "
                     f"{transient_attempt}/{max_transient_retries - 1}, "
                     f"backing off {backoff_seconds}s"
                 )
@@ -1470,17 +1470,17 @@ async def _generate_video_for_scene(
                     and safety_level < max_levels - 1
                 ):
                     logger.warning(
-                        f"Scene {scene.scene_index}: submission rejected "
+                        f"Shot {shot.shot_index}: submission rejected "
                         f"(content policy) at level {safety_level}, escalating"
                     )
                     break  # break inner, continue outer (escalate)
                 # Fatal: transient retries exhausted or last safety level
                 logger.error(
-                    f"Scene {scene.scene_index}: video submission failed: {e}"
+                    f"Shot {shot.shot_index}: video submission failed: {e}"
                 )
                 if clip is None:
                     clip = VideoClip(
-                        scene_id=scene.id,
+                        shot_id=shot.id,
                         status="failed",
                         source="generated",
                         error_message=str(e),
@@ -1489,14 +1489,14 @@ async def _generate_video_for_scene(
                 else:
                     clip.status = "failed"
                     clip.error_message = str(e)
-                scene.status = "failed"
+                shot.status = "failed"
                 await session.commit()
                 return
 
             # Create / update clip record (VGEN-03: persist before polling)
             if clip is None:
                 clip = VideoClip(
-                    scene_id=scene.id,
+                    shot_id=shot.id,
                     operation_name=operation.name,
                     status="polling",
                     poll_count=0,
@@ -1517,27 +1517,27 @@ async def _generate_video_for_scene(
             # Phase 11: Choose poll function based on mode
             if project.quality_mode and project.candidate_count > 1:
                 poll_result, video_bytes_list = await _poll_and_collect_candidates(
-                    session, clip, client, project, scene, file_mgr, selected_refs,
+                    session, clip, client, project, shot, file_mgr, selected_refs,
                 )
             else:
                 poll_result = await _poll_video_operation(
-                    session, clip, client, project, scene, file_mgr, selected_refs,
+                    session, clip, client, project, shot, file_mgr, selected_refs,
                 )
                 video_bytes_list = []  # Not used in standard mode
 
             if poll_result == "complete":
                 if safety_level > 0 or transient_attempt > 0:
                     logger.info(
-                        f"Scene {scene.scene_index}: succeeded at safety level "
+                        f"Shot {shot.shot_index}: succeeded at safety level "
                         f"{safety_level}, transient attempt {transient_attempt}"
                     )
                 # Phase 11: Quality mode — save/score/select all candidates
                 if project.quality_mode and project.candidate_count > 1:
                     await _handle_quality_mode_candidates(
-                        session, scene, project, clip, file_mgr,
+                        session, shot, project, clip, file_mgr,
                         video_bytes_list,
-                        scene_manifest_row,
-                        base_video_prompt or scene.video_motion_prompt,
+                        shot_manifest_row,
+                        base_video_prompt or shot.video_motion_prompt,
                         all_assets,
                         has_refs=bool(veo_ref_images),
                         scoring_service=scoring_service,
@@ -1546,17 +1546,17 @@ async def _generate_video_for_scene(
                 else:
                     # Standard mode: Phase 9 post-generation CV analysis
                     await _run_post_generation_analysis(
-                        session, scene, clip, project, scene_manifest_row, cv_service=cv_service,
+                        session, shot, clip, project, shot_manifest_row, cv_service=cv_service,
                     )
                 return
             elif poll_result == "content_policy":
-                # Reset scene status for next attempt — break to escalate
-                scene.status = "keyframes_done"
+                # Reset shot status for next attempt — break to escalate
+                shot.status = "keyframes_done"
                 await session.commit()
                 break  # break inner, continue outer (escalate safety level)
             elif poll_result == "transient":
                 # Resubmit at same safety level (inner loop continues)
-                scene.status = "keyframes_done"
+                shot.status = "keyframes_done"
                 await session.commit()
                 continue
             else:
@@ -1566,16 +1566,16 @@ async def _generate_video_for_scene(
             # Transient retries exhausted at this safety level — escalate
             # to next level (prompt modification may help avoid the issue)
             logger.warning(
-                f"Scene {scene.scene_index}: transient retries exhausted "
+                f"Shot {shot.shot_index}: transient retries exhausted "
                 f"({max_transient_retries}) at safety level {safety_level}, escalating"
             )
-            scene.status = "keyframes_done"
+            shot.status = "keyframes_done"
             await session.commit()
             continue  # next safety level
 
     # All safety levels exhausted
     logger.error(
-        f"Scene {scene.scene_index}: remediation exhausted "
+        f"Shot {shot.shot_index}: remediation exhausted "
         f"after {max_levels} safety levels"
     )
     if clip:
@@ -1583,7 +1583,7 @@ async def _generate_video_for_scene(
         clip.error_message = (
             "Remediation exhausted after all safety levels and transient retries"
         )
-    scene.status = "failed"
+    shot.status = "failed"
     await session.commit()
 
 

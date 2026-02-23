@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import clsx from "clsx";
-import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewScene, getDownloadUrl, deleteProject, stopProject } from "../api/client.ts";
+import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewShot, getDownloadUrl, deleteProject, stopProject } from "../api/client.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
-import type { ProjectDetail, SceneDetail, SceneEditPayload, EditProjectRequest, EnabledModelsResponse, SceneReference } from "../api/types.ts";
+import type { ProjectDetail, ShotDetail, ShotEditPayload, EditProjectRequest, EnabledModelsResponse, ShotReference } from "../api/types.ts";
 import { usePolling } from "../hooks/usePolling.ts";
 import {
   STYLE_OPTIONS,
@@ -12,7 +12,7 @@ import {
   VIDEO_MODELS,
   estimatePartialCost,
 } from "../lib/constants.ts";
-import { SortableSceneCard } from "./SortableSceneCard.tsx";
+import { SortableShotCard } from "./SortableShotCard.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -33,7 +33,7 @@ interface ProjectSchema {
     style: string;
     aspect_ratio: string;
     clip_duration: number;
-    scene_count: number;
+    shot_count: number;
     text_model?: string | null;
     image_model?: string | null;
     video_model?: string | null;
@@ -43,8 +43,8 @@ interface ProjectSchema {
     quality_mode?: boolean;
     candidate_count?: number;
   };
-  scenes: Array<{
-    scene_index: number;
+  shots: Array<{
+    shot_index: number;
     description: string;
     start_frame_prompt?: string | null;
     end_frame_prompt?: string | null;
@@ -55,7 +55,7 @@ interface ProjectSchema {
     clip_url?: string | null;
     rewritten_keyframe_prompt?: string | null;
     rewritten_video_prompt?: string | null;
-    selected_references?: SceneReference[];
+    selected_references?: ShotReference[];
   }>;
 }
 
@@ -75,25 +75,25 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [style, setStyle] = useState(detail.style ?? "");
   const [aspectRatio, setAspectRatio] = useState(detail.aspect_ratio ?? "");
   const [clipDuration, setClipDuration] = useState(detail.clip_duration ?? 0);
-  const [sceneCount, setSceneCount] = useState(detail.scene_count);
+  const [shotCount, setShotCount] = useState(detail.shot_count);
   const [textModel, setTextModel] = useState(detail.text_model ?? "");
   const [imageModel, setImageModel] = useState(detail.image_model ?? "");
   const [videoModel, setVideoModel] = useState(detail.video_model ?? "");
   const [visionModel, setVisionModel] = useState(detail.vision_model ?? "");
   const [enableAudio, setEnableAudio] = useState(detail.audio_enabled ?? false);
   const runThrough: string | null = null;
-  const [totalDuration, setTotalDuration] = useState(detail.scene_count * (detail.clip_duration ?? 6));
+  const [totalDuration, setTotalDuration] = useState(detail.shot_count * (detail.clip_duration ?? 6));
   const [manifestId, setManifestId] = useState<string | null>(detail.manifest_id ?? null);
 
-  // Scene edits
-  const [sceneEdits, setSceneEdits] = useState<Record<number, Record<string, string>>>({});
-  const [removedScenes, setRemovedScenes] = useState<Set<number>>(new Set());
+  // Shot edits
+  const [shotEdits, setShotEdits] = useState<Record<number, Record<string, string>>>({});
+  const [removedShots, setRemovedShots] = useState<Set<number>>(new Set());
 
   // Accordion state — all collapsed by default
-  const [expandedScenes, setExpandedScenes] = useState<Set<number>>(new Set());
+  const [expandedShots, setExpandedShots] = useState<Set<number>>(new Set());
 
-  // Drag-and-drop scene order
-  const [sceneOrder, setSceneOrder] = useState<number[]>([]);
+  // Drag-and-drop shot order
+  const [shotOrder, setShotOrder] = useState<number[]>([]);
 
   const [commitMessage, setCommitMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -104,7 +104,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [stitchMessage, setStitchMessage] = useState<string | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(!detail.prompt);
   const [manifestExpanded, setManifestExpanded] = useState(!detail.manifest_id);
-  const [scenesExpanded, setScenesExpanded] = useState(true);
+  const [shotsExpanded, setShotsExpanded] = useState(true);
   const [videoExpanded, setVideoExpanded] = useState(true);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -121,49 +121,49 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [bgOpPending, setBgOpPending] = useState<string | null>(null);
   const bgOpBaselineSha = useRef<string | null>(null);
 
-  // Track scenes currently generating assets in background
-  const [generatingSceneIndices, setGeneratingSceneIndices] = useState<Set<number>>(new Set());
+  // Track shots currently generating assets in background
+  const [generatingShotIndices, setGeneratingShotIndices] = useState<Set<number>>(new Set());
 
   // WebSocket progress state
   const [wsProgress, setWsProgress] = useState<{
     phase: string | null;
-    totalScenes: number;
-    completedScenes: number;
-    currentSceneIndex: number | null;
+    totalShots: number;
+    completedShots: number;
+    currentShotIndex: number | null;
     currentStatus: string | null;
     completedPhases: string[];
-  }>({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
+  }>({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
 
   const handleWsEvent = useCallback((event: WsEvent) => {
     switch (event.type) {
       case "phase_started":
-        setWsProgress(prev => ({ ...prev, phase: event.phase, totalScenes: event.total_scenes, completedScenes: 0, currentSceneIndex: null, currentStatus: null }));
+        setWsProgress(prev => ({ ...prev, phase: event.phase, totalShots: event.total_shots, completedShots: 0, currentShotIndex: null, currentStatus: null }));
         onRefresh?.();  // Fetch updated generation_status (e.g. "generating_text")
         break;
       case "phase_completed":
         setWsProgress(prev => ({
           ...prev,
           phase: null,
-          currentSceneIndex: null,
+          currentShotIndex: null,
           currentStatus: null,
           completedPhases: prev.completedPhases.includes(event.phase)
             ? prev.completedPhases
             : [...prev.completedPhases, event.phase],
         }));
         break;
-      case "scene_status":
-        setWsProgress(prev => ({ ...prev, currentSceneIndex: event.scene_index, currentStatus: event.status }));
+      case "shot_status":
+        setWsProgress(prev => ({ ...prev, currentShotIndex: event.shot_index, currentStatus: event.status }));
         onRefresh?.();
         break;
-      case "scene_keyframe_ready":
-      case "scene_clip_ready":
-        setWsProgress(prev => ({ ...prev, completedScenes: prev.completedScenes + 1 }));
+      case "shot_keyframe_ready":
+      case "shot_clip_ready":
+        setWsProgress(prev => ({ ...prev, completedShots: prev.completedShots + 1 }));
         onRefresh?.();
         break;
-      case "scene_text_ready":
+      case "shot_text_ready":
         setWsProgress(prev =>
           prev.phase === "storyboard"
-            ? { ...prev, completedScenes: prev.completedScenes + 1 }
+            ? { ...prev, completedShots: prev.completedShots + 1 }
             : prev,
         );
         onRefresh?.();
@@ -181,7 +181,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         const op = bgOpPending;
         setBgOpPending(null);
         bgOpBaselineSha.current = null;
-        setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
+        setWsProgress({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
         if (op === "stitch") {
           setStitchMessage("Re-stitch complete — video updated.");
         } else if (op) {
@@ -198,12 +198,12 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         if (bgOpPending) {
           setBgOpPending(null);
           bgOpBaselineSha.current = null;
-          setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
+          setWsProgress({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
         }
         break;
-      case "scene_regen_started":
-      case "scene_regen_done":
-        if (event.type === "scene_regen_done") {
+      case "shot_regen_started":
+      case "shot_regen_done":
+        if (event.type === "shot_regen_done") {
           onRefresh?.();
         }
         break;
@@ -222,7 +222,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   usePolling(
     () => { onRefresh?.(); },
     5000,
-    (generatingSceneIndices.size > 0 || bgOpPending !== null) && !wsConnected,
+    (generatingShotIndices.size > 0 || bgOpPending !== null) && !wsConnected,
   );
 
   // Detect background operation completion: head_sha changes after checkpoint
@@ -243,42 +243,42 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
   // Completion detection: remove from generating set when assets arrive
   useEffect(() => {
-    if (generatingSceneIndices.size === 0) return;
-    setGeneratingSceneIndices((prev) => {
+    if (generatingShotIndices.size === 0) return;
+    setGeneratingShotIndices((prev) => {
       const next = new Set(prev);
       let changed = false;
       for (const idx of prev) {
-        const scene = detail.scenes.find((s) => s.scene_index === idx);
-        if (scene && scene.has_end_keyframe && scene.has_clip) {
+        const shot = detail.shots.find((s) => s.shot_index === idx);
+        if (shot && shot.has_end_keyframe && shot.has_clip) {
           next.delete(idx);
           changed = true;
         }
       }
       return changed ? next : prev;
     });
-  }, [detail.scenes, generatingSceneIndices]);
+  }, [detail.shots, generatingShotIndices]);
 
-  // Auto-mark trailing scenes as removed when scene count is reduced
+  // Auto-mark trailing shots as removed when shot count is reduced
   useEffect(() => {
-    const realScenes = detail.scenes.filter(s => !s.is_empty_slot);
-    const newRemoved = new Set(removedScenes);
+    const realShots = detail.shots.filter(s => !s.is_empty_slot);
+    const newRemoved = new Set(removedShots);
     let changed = false;
-    for (const s of realScenes) {
-      if (s.scene_index >= sceneCount && !newRemoved.has(s.scene_index)) {
-        newRemoved.add(s.scene_index);
+    for (const s of realShots) {
+      if (s.shot_index >= shotCount && !newRemoved.has(s.shot_index)) {
+        newRemoved.add(s.shot_index);
         changed = true;
-      } else if (s.scene_index < sceneCount && newRemoved.has(s.scene_index)) {
-        newRemoved.delete(s.scene_index);
+      } else if (s.shot_index < shotCount && newRemoved.has(s.shot_index)) {
+        newRemoved.delete(s.shot_index);
         changed = true;
       }
     }
-    if (changed) setRemovedScenes(newRemoved);
-  }, [sceneCount]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (changed) setRemovedShots(newRemoved);
+  }, [shotCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function buildSchema(): ProjectSchema {
-    // Merge current edits with scene data to get effective values
-    function effective(scene: SceneDetail, field: string, original: string | null | undefined): string {
-      return sceneEdits[scene.scene_index]?.[field] ?? original ?? "";
+    // Merge current edits with shot data to get effective values
+    function effective(shot: ShotDetail, field: string, original: string | null | undefined): string {
+      return shotEdits[shot.shot_index]?.[field] ?? original ?? "";
     }
 
     return {
@@ -290,7 +290,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         style,
         aspect_ratio: aspectRatio,
         clip_duration: clipDuration,
-        scene_count: sceneCount,
+        shot_count: shotCount,
         text_model: textModel,
         image_model: imageModel,
         video_model: videoModel,
@@ -300,13 +300,13 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         quality_mode: detail.quality_mode,
         candidate_count: detail.candidate_count,
       },
-      scenes: sceneOrder
-        .filter(idx => !removedScenes.has(idx))
-        .map(idx => scenesByIndex.get(idx))
-        .filter((s): s is SceneDetail => s != null && !s.is_empty_slot)
+      shots: shotOrder
+        .filter(idx => !removedShots.has(idx))
+        .map(idx => shotsByIndex.get(idx))
+        .filter((s): s is ShotDetail => s != null && !s.is_empty_slot)
         .map((s) => ({
-          scene_index: s.scene_index,
-          description: effective(s, "scene_description", s.description),
+          shot_index: s.shot_index,
+          description: effective(s, "shot_description", s.description),
           start_frame_prompt: effective(s, "start_frame_prompt", s.start_frame_prompt) || null,
           end_frame_prompt: effective(s, "end_frame_prompt", s.end_frame_prompt) || null,
           video_motion_prompt: effective(s, "video_motion_prompt", s.video_motion_prompt) || null,
@@ -350,7 +350,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         if (p.style != null) setStyle(p.style);
         if (p.aspect_ratio != null) setAspectRatio(p.aspect_ratio);
         if (p.clip_duration != null) setClipDuration(p.clip_duration);
-        if (p.scene_count != null) setSceneCount(p.scene_count);
+        if (p.shot_count != null) setShotCount(p.shot_count);
         if (p.text_model != null) setTextModel(p.text_model);
         if (p.image_model != null) setImageModel(p.image_model);
         if (p.video_model != null) {
@@ -361,17 +361,17 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         if (p.vision_model !== undefined) setVisionModel(p.vision_model ?? "");
         if (p.audio_enabled != null && !p.video_model) setEnableAudio(p.audio_enabled);
 
-        // Apply scene text edits
-        if (schema.scenes?.length) {
+        // Apply shot text edits
+        if (schema.shots?.length) {
           const textFields = [
-            "scene_description",
+            "shot_description",
             "start_frame_prompt",
             "end_frame_prompt",
             "video_motion_prompt",
             "transition_notes",
           ] as const;
-          const fieldToSchemaKey: Record<string, keyof (typeof schema.scenes)[0]> = {
-            scene_description: "description",
+          const fieldToSchemaKey: Record<string, keyof (typeof schema.shots)[0]> = {
+            shot_description: "description",
             start_frame_prompt: "start_frame_prompt",
             end_frame_prompt: "end_frame_prompt",
             video_motion_prompt: "video_motion_prompt",
@@ -381,31 +381,31 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           const newEdits: Record<number, Record<string, string>> = {};
           let appliedCount = 0;
 
-          for (const importedScene of schema.scenes) {
-            const existingScene = detail.scenes.find((s) => s.scene_index === importedScene.scene_index);
-            if (!existingScene) continue;
+          for (const importedShot of schema.shots) {
+            const existingShot = detail.shots.find((s) => s.shot_index === importedShot.shot_index);
+            if (!existingShot) continue;
 
             for (const field of textFields) {
-              const importedValue = (importedScene[fieldToSchemaKey[field]] as string | null | undefined) ?? "";
+              const importedValue = (importedShot[fieldToSchemaKey[field]] as string | null | undefined) ?? "";
               const origMap: Record<string, string | null | undefined> = {
-                scene_description: existingScene.description,
-                start_frame_prompt: existingScene.start_frame_prompt,
-                end_frame_prompt: existingScene.end_frame_prompt,
-                video_motion_prompt: existingScene.video_motion_prompt,
-                transition_notes: existingScene.transition_notes,
+                shot_description: existingShot.description,
+                start_frame_prompt: existingShot.start_frame_prompt,
+                end_frame_prompt: existingShot.end_frame_prompt,
+                video_motion_prompt: existingShot.video_motion_prompt,
+                transition_notes: existingShot.transition_notes,
               };
               const original = origMap[field] ?? "";
 
               if (importedValue !== original) {
-                if (!newEdits[importedScene.scene_index]) newEdits[importedScene.scene_index] = {};
-                newEdits[importedScene.scene_index][field] = importedValue;
+                if (!newEdits[importedShot.shot_index]) newEdits[importedShot.shot_index] = {};
+                newEdits[importedShot.shot_index][field] = importedValue;
                 appliedCount++;
               }
             }
           }
 
           if (Object.keys(newEdits).length > 0) {
-            setSceneEdits((prev) => {
+            setShotEdits((prev) => {
               const merged = { ...prev };
               for (const [idx, fields] of Object.entries(newEdits)) {
                 merged[Number(idx)] = { ...(merged[Number(idx)] || {}), ...fields };
@@ -414,9 +414,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             });
           }
 
-          setImportMessage(`Imported: project settings + ${appliedCount} scene field edit${appliedCount !== 1 ? "s" : ""} across ${schema.scenes.length} scene${schema.scenes.length !== 1 ? "s" : ""}`);
+          setImportMessage(`Imported: project settings + ${appliedCount} shot field edit${appliedCount !== 1 ? "s" : ""} across ${schema.shots.length} shot${schema.shots.length !== 1 ? "s" : ""}`);
         } else {
-          setImportMessage("Imported: project settings (no scene data in schema)");
+          setImportMessage("Imported: project settings (no shot data in schema)");
         }
 
         setError(null);
@@ -440,10 +440,10 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     regenDone.current = true;
   }, []);
 
-  const handleGenerateScene = useCallback(async (sceneIndex: number) => {
-    const resp = await generateNewScene(detail.project_id, {
-      scene_index: sceneIndex,
-      all_scene_edits: Object.keys(sceneEdits).length > 0 ? sceneEdits : undefined,
+  const handleGenerateShot = useCallback(async (shotIndex: number) => {
+    const resp = await generateNewShot(detail.project_id, {
+      shot_index: shotIndex,
+      all_shot_edits: Object.keys(shotEdits).length > 0 ? shotEdits : undefined,
       text_model: textModel,
       image_model: imageModel,
       video_model: videoModel,
@@ -451,17 +451,17 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     });
     // Record baseline SHA for revert-on-cancel
     handleRegenStarted(resp.head_sha ?? null);
-    // Clear any edits the user had typed for this scene index (now real scene has them)
-    setSceneEdits((prev) => {
+    // Clear any edits the user had typed for this shot index (now real shot has them)
+    setShotEdits((prev) => {
       const next = { ...prev };
-      delete next[sceneIndex];
+      delete next[shotIndex];
       return next;
     });
     // Track as generating
-    setGeneratingSceneIndices((prev) => new Set(prev).add(sceneIndex));
-    // Refresh to pick up the new DB scene
+    setGeneratingShotIndices((prev) => new Set(prev).add(shotIndex));
+    // Refresh to pick up the new DB shot
     onRefresh?.();
-  }, [detail.project_id, sceneEdits, textModel, imageModel, videoModel, prompt, handleRegenStarted, onRefresh]);
+  }, [detail.project_id, shotEdits, textModel, imageModel, videoModel, prompt, handleRegenStarted, onRefresh]);
 
   async function handleCancel() {
     if (regenDone.current && baselineSha.current && detail.project_id) {
@@ -536,13 +536,13 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     setEnableAudio(model.supportsAudio);
   }
 
-  function handleSceneChange(sceneIndex: number, field: string, value: string) {
-    setSceneEdits((prev) => {
-      const scene = detail.scenes.find((s) => s.scene_index === sceneIndex);
+  function handleShotChange(shotIndex: number, field: string, value: string) {
+    setShotEdits((prev) => {
+      const shot = detail.shots.find((s) => s.shot_index === shotIndex);
 
-      // For synthetic (empty slot) scenes, all edits are new — no original to compare
-      if (!scene) {
-        const editsForIdx = { ...(prev[sceneIndex] || {}) };
+      // For synthetic (empty slot) shots, all edits are new — no original to compare
+      if (!shot) {
+        const editsForIdx = { ...(prev[shotIndex] || {}) };
         if (value === "") {
           delete editsForIdx[field];
         } else {
@@ -550,23 +550,23 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         }
         const next = { ...prev };
         if (Object.keys(editsForIdx).length === 0) {
-          delete next[sceneIndex];
+          delete next[shotIndex];
         } else {
-          next[sceneIndex] = editsForIdx;
+          next[shotIndex] = editsForIdx;
         }
         return next;
       }
 
       const origMap: Record<string, string | null | undefined> = {
-        scene_description: scene.description,
-        start_frame_prompt: scene.start_frame_prompt,
-        end_frame_prompt: scene.end_frame_prompt,
-        video_motion_prompt: scene.video_motion_prompt,
-        transition_notes: scene.transition_notes,
+        shot_description: shot.description,
+        start_frame_prompt: shot.start_frame_prompt,
+        end_frame_prompt: shot.end_frame_prompt,
+        video_motion_prompt: shot.video_motion_prompt,
+        transition_notes: shot.transition_notes,
       };
       const original = origMap[field] ?? "";
 
-      const editsForIdx = { ...(prev[sceneIndex] || {}) };
+      const editsForIdx = { ...(prev[shotIndex] || {}) };
       if (value === original) {
         delete editsForIdx[field];
       } else {
@@ -575,28 +575,28 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
       const next = { ...prev };
       if (Object.keys(editsForIdx).length === 0) {
-        delete next[sceneIndex];
+        delete next[shotIndex];
       } else {
-        next[sceneIndex] = editsForIdx;
+        next[shotIndex] = editsForIdx;
       }
       return next;
     });
   }
 
-  function handleRemoveScene(idx: number) {
-    setRemovedScenes((prev) => new Set(prev).add(idx));
+  function handleRemoveShot(idx: number) {
+    setRemovedShots((prev) => new Set(prev).add(idx));
   }
 
-  function handleRestoreScene(idx: number) {
-    setRemovedScenes((prev) => {
+  function handleRestoreShot(idx: number) {
+    setRemovedShots((prev) => {
       const next = new Set(prev);
       next.delete(idx);
       return next;
     });
   }
 
-  function toggleScene(idx: number) {
-    setExpandedScenes((prev) => {
+  function toggleShot(idx: number) {
+    setExpandedShots((prev) => {
       const next = new Set(prev);
       if (next.has(idx)) next.delete(idx);
       else next.add(idx);
@@ -604,12 +604,12 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     });
   }
 
-  function expandAllScenes() {
-    setExpandedScenes(new Set(allScenes.map((s) => s.scene_index)));
+  function expandAllShots() {
+    setExpandedShots(new Set(allShots.map((s) => s.shot_index)));
   }
 
-  function collapseAllScenes() {
-    setExpandedScenes(new Set());
+  function collapseAllShots() {
+    setExpandedShots(new Set());
   }
 
   function buildEditRequest(): EditProjectRequest {
@@ -620,7 +620,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     if (style !== (detail.style ?? "")) req.style = style;
     if (aspectRatio !== (detail.aspect_ratio ?? "")) req.aspect_ratio = aspectRatio;
     if (clipDuration !== (detail.clip_duration ?? 0)) req.clip_duration = clipDuration || undefined;
-    if (sceneCount !== detail.scene_count) req.target_scene_count = sceneCount;
+    if (shotCount !== detail.shot_count) req.target_shot_count = shotCount;
     if (textModel !== (detail.text_model ?? "")) req.text_model = textModel || undefined;
     if (imageModel !== (detail.image_model ?? "")) req.image_model = imageModel || undefined;
     if (videoModel !== (detail.video_model ?? "")) req.video_model = videoModel || undefined;
@@ -628,26 +628,26 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     if (enableAudio !== (detail.audio_enabled ?? false)) req.audio_enabled = enableAudio;
     if (manifestId !== (detail.manifest_id ?? null)) req.manifest_id = manifestId;
 
-    if (Object.keys(sceneEdits).length > 0) {
-      const converted: Record<number, SceneEditPayload> = {};
-      for (const [idx, edits] of Object.entries(sceneEdits)) {
-        converted[Number(idx)] = edits as SceneEditPayload;
+    if (Object.keys(shotEdits).length > 0) {
+      const converted: Record<number, ShotEditPayload> = {};
+      for (const [idx, edits] of Object.entries(shotEdits)) {
+        converted[Number(idx)] = edits as ShotEditPayload;
       }
-      req.scene_edits = converted;
+      req.shot_edits = converted;
     }
 
-    if (removedScenes.size > 0) {
-      req.removed_scenes = [...removedScenes];
+    if (removedShots.size > 0) {
+      req.removed_shots = [...removedShots];
     }
 
-    // Check if scene order changed from original
-    const originalOrder = allScenes.map(s => s.scene_index);
-    const activeOrder = sceneOrder.filter(idx => !removedScenes.has(idx));
-    const originalActive = originalOrder.filter(idx => !removedScenes.has(idx));
+    // Check if shot order changed from original
+    const originalOrder = allShots.map(s => s.shot_index);
+    const activeOrder = shotOrder.filter(idx => !removedShots.has(idx));
+    const originalActive = originalOrder.filter(idx => !removedShots.has(idx));
     const orderChanged = activeOrder.length !== originalActive.length
       || activeOrder.some((v, i) => v !== originalActive[i]);
     if (orderChanged) {
-      req.scene_order = activeOrder;
+      req.shot_order = activeOrder;
     }
 
     if (commitMessage.trim()) {
@@ -671,7 +671,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   }
 
   // Count stale assets
-  const staleCount = detail.scenes.reduce((count, s) => {
+  const staleCount = detail.shots.reduce((count, s) => {
     let n = count;
     if (s.start_keyframe_staleness === "stale") n++;
     if (s.end_keyframe_staleness === "stale") n++;
@@ -734,7 +734,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       if (Object.keys(fieldChanges).length > 0) {
         const editResp = await editProject(detail.project_id, req);
         currentSha = editResp.head_sha;
-        setSceneEdits({});  // Clear — edits now persisted in DB
+        setShotEdits({});  // Clear — edits now persisted in DB
         onRefresh?.();
       }
 
@@ -781,7 +781,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       await stopProject(detail.project_id);
       setBgOpPending(null);
       bgOpBaselineSha.current = null;
-      setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
+      setWsProgress({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
       setRegenMessage("Generation cancelled.");
       onRefresh?.();
     } catch (err) {
@@ -800,19 +800,19 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     return { "--fill": `${pct}%` } as React.CSSProperties;
   }
 
-  const activeScenes = detail.scenes.filter((s) => !s.is_empty_slot && !removedScenes.has(s.scene_index));
+  const activeShots = detail.shots.filter((s) => !s.is_empty_slot && !removedShots.has(s.shot_index));
 
-  // Synthetic empty slots when sceneCount exceeds active real scenes
-  const maxExistingIdx = detail.scenes.length > 0
-    ? Math.max(...detail.scenes.map(s => s.scene_index))
+  // Synthetic empty slots when shotCount exceeds active real shots
+  const maxExistingIdx = detail.shots.length > 0
+    ? Math.max(...detail.shots.map(s => s.shot_index))
     : -1;
-  const activeRealCount = detail.scenes.filter(
-    s => !s.is_empty_slot && !removedScenes.has(s.scene_index)
+  const activeRealCount = detail.shots.filter(
+    s => !s.is_empty_slot && !removedShots.has(s.shot_index)
   ).length;
-  const syntheticCount = Math.max(0, sceneCount - activeRealCount);
+  const syntheticCount = Math.max(0, shotCount - activeRealCount);
 
-  const syntheticScenes: SceneDetail[] = Array.from({ length: syntheticCount }, (_, i) => ({
-    scene_index: maxExistingIdx + 1 + i,
+  const syntheticShots: ShotDetail[] = Array.from({ length: syntheticCount }, (_, i) => ({
+    shot_index: maxExistingIdx + 1 + i,
     description: "",
     status: "pending",
     has_start_keyframe: false,
@@ -822,28 +822,28 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     is_empty_slot: true,
   }));
 
-  const allScenes = [...detail.scenes, ...syntheticScenes];
+  const allShots = [...detail.shots, ...syntheticShots];
 
-  // Keep sceneOrder in sync when allScenes changes (refresh, add/remove scenes)
+  // Keep shotOrder in sync when allShots changes (refresh, add/remove shots)
   useEffect(() => {
-    setSceneOrder(prev => {
-      const allIndices = new Set(allScenes.map(s => s.scene_index));
+    setShotOrder(prev => {
+      const allIndices = new Set(allShots.map(s => s.shot_index));
       const kept = prev.filter(idx => allIndices.has(idx));
       const keptSet = new Set(kept);
-      const added = allScenes
-        .map(s => s.scene_index)
+      const added = allShots
+        .map(s => s.shot_index)
         .filter(idx => !keptSet.has(idx));
       const merged = [...kept, ...added];
       if (merged.length === prev.length && merged.every((v, i) => v === prev[i])) return prev;
       return merged;
     });
-  }, [allScenes]);
+  }, [allShots]);
 
-  const scenesByIndex = useMemo(() => {
-    const map = new Map<number, SceneDetail>();
-    for (const s of allScenes) map.set(s.scene_index, s);
+  const shotsByIndex = useMemo(() => {
+    const map = new Map<number, ShotDetail>();
+    for (const s of allShots) map.set(s.shot_index, s);
     return map;
-  }, [allScenes]);
+  }, [allShots]);
 
   // DnD sensors & handler
   const sensors = useSensors(
@@ -854,7 +854,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setSceneOrder(prev => {
+      setShotOrder(prev => {
         const oldIndex = prev.indexOf(Number(active.id));
         const newIndex = prev.indexOf(Number(over.id));
         return arrayMove(prev, oldIndex, newIndex);
@@ -994,7 +994,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
               />
             ) : (
               <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-950 text-xs text-gray-600">
-                No final video yet — stitch when all scenes have clips
+                No final video yet — stitch when all shots have clips
               </div>
             )}
           </div>
@@ -1102,26 +1102,26 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         )}
       </div>
 
-      {/* Scenes — collapsible */}
+      {/* Shots — collapsible */}
       <div className="rounded-lg border border-gray-800 bg-gray-900/50">
         <button
           type="button"
-          onClick={() => setScenesExpanded(!scenesExpanded)}
+          onClick={() => setShotsExpanded(!shotsExpanded)}
           className="flex w-full items-center justify-between px-4 py-3 text-left"
         >
           <div className="flex items-center gap-2 min-w-0">
-            <h3 className="text-sm font-medium text-gray-300 shrink-0">Scenes</h3>
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Shots</h3>
             <span className="text-xs text-gray-500 truncate">
-              {sceneCount} scene{sceneCount !== 1 ? "s" : ""}
-              {clipDuration ? ` · ${sceneCount * clipDuration}s total` : ""}
+              {shotCount} shot{shotCount !== 1 ? "s" : ""}
+              {clipDuration ? ` · ${shotCount * clipDuration}s total` : ""}
               {syntheticCount > 0 ? ` · ${syntheticCount} new` : ""}
-              {removedScenes.size > 0 ? ` · ${removedScenes.size} removed` : ""}
+              {removedShots.size > 0 ? ` · ${removedShots.size} removed` : ""}
             </span>
           </div>
           <svg
             className={clsx(
               "h-4 w-4 text-gray-500 transition-transform shrink-0",
-              scenesExpanded && "rotate-180",
+              shotsExpanded && "rotate-180",
             )}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
           >
@@ -1129,24 +1129,24 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           </svg>
         </button>
 
-        {scenesExpanded && (
+        {shotsExpanded && (
           <div className="px-4 pb-4 space-y-4">
-            {/* Scene Count Slider */}
+            {/* Shot Count Slider */}
             <div>
               <input
-                id="edit-sceneCount"
+                id="edit-shotCount"
                 type="range"
                 min={1}
                 max={50}
                 step={1}
-                value={sceneCount}
+                value={shotCount}
                 onChange={(e) => {
                   const count = Number(e.target.value);
-                  setSceneCount(count);
+                  setShotCount(count);
                   setTotalDuration(count * clipDuration);
                 }}
                 className="dark-slider w-full"
-                style={sliderFill(sceneCount, 1, 50)}
+                style={sliderFill(shotCount, 1, 50)}
               />
               <div className="mt-1 flex justify-between text-xs text-gray-600">
                 <span>1</span>
@@ -1154,49 +1154,49 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
               </div>
             </div>
 
-            {/* Scene List */}
-            {allScenes.length > 0 && (
+            {/* Shot List */}
+            {allShots.length > 0 && (
               <div>
                 <div className="mb-3 flex items-center justify-end">
                   <button
                     type="button"
-                    onClick={expandedScenes.size > 0 ? collapseAllScenes : expandAllScenes}
+                    onClick={expandedShots.size > 0 ? collapseAllShots : expandAllShots}
                     className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
                   >
-                    {expandedScenes.size > 0 ? "Collapse All" : "Expand All"}
+                    {expandedShots.size > 0 ? "Collapse All" : "Expand All"}
                   </button>
                 </div>
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={sceneOrder} strategy={verticalListSortingStrategy}>
+                  <SortableContext items={shotOrder} strategy={verticalListSortingStrategy}>
                     <div className="grid gap-3">
-                      {sceneOrder.map((sceneIdx, position) => {
-                        const scene = scenesByIndex.get(sceneIdx);
-                        if (!scene) return null;
+                      {shotOrder.map((shotIdx, position) => {
+                        const shot = shotsByIndex.get(shotIdx);
+                        if (!shot) return null;
                         return (
-                          <SortableSceneCard
-                            id={sceneIdx}
-                            key={sceneIdx}
-                            scene={scene}
+                          <SortableShotCard
+                            id={shotIdx}
+                            key={shotIdx}
+                            shot={shot}
                             displayIndex={position + 1}
-                            edits={sceneEdits[scene.scene_index] || {}}
-                            onChange={handleSceneChange}
-                            removed={removedScenes.has(scene.scene_index)}
-                            onRemove={handleRemoveScene}
-                            onRestore={handleRestoreScene}
-                            canRemove={activeScenes.length + syntheticCount > 1}
+                            edits={shotEdits[shot.shot_index] || {}}
+                            onChange={handleShotChange}
+                            removed={removedShots.has(shot.shot_index)}
+                            onRemove={handleRemoveShot}
+                            onRestore={handleRestoreShot}
+                            canRemove={activeShots.length + syntheticCount > 1}
                             projectId={detail.project_id}
                             onAssetChanged={handleAssetChanged}
                             onRegenStarted={handleRegenStarted}
                             textModel={textModel}
                             videoModel={videoModel}
                             imageModel={imageModel}
-                            allSceneEdits={sceneEdits}
+                            allShotEdits={shotEdits}
                             prompt={prompt}
-                            onGenerateScene={handleGenerateScene}
-                            isGeneratingAssets={generatingSceneIndices.has(scene.scene_index)}
+                            onGenerateShot={handleGenerateShot}
+                            isGeneratingAssets={generatingShotIndices.has(shot.shot_index)}
                             wsConnected={wsConnected}
-                            expanded={expandedScenes.has(scene.scene_index)}
-                            onToggleExpand={() => toggleScene(scene.scene_index)}
+                            expanded={expandedShots.has(shot.shot_index)}
+                            onToggleExpand={() => toggleShot(shot.shot_index)}
                           />
                         );
                       })}
@@ -1339,7 +1339,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
               </div>
             </div>
 
-            {/* Video Model + Scene Length + Audio */}
+            {/* Video Model + Shot Length + Audio */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-300">Video Model</label>
@@ -1363,7 +1363,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-300">Scene Length</label>
+                <label className="mb-2 block text-sm font-medium text-gray-300">Shot Length</label>
                 <div className="flex gap-2">
                   {allowedDurations.map((d) => (
                     <button
@@ -1529,9 +1529,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         <RegenProgressBar
           scope={bgOpPending}
           phase={wsProgress.phase}
-          totalScenes={wsProgress.totalScenes}
-          completedScenes={wsProgress.completedScenes}
-          currentSceneIndex={wsProgress.currentSceneIndex}
+          totalShots={wsProgress.totalShots}
+          completedShots={wsProgress.completedShots}
+          currentShotIndex={wsProgress.currentShotIndex}
           currentStatus={wsProgress.currentStatus}
           wsConnected={wsConnected}
           completedPhases={wsProgress.completedPhases}
@@ -1544,7 +1544,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           Estimated cost: ~${costEstimate.toFixed(2)}
         </div>
         <div className="mt-1 text-xs text-gray-500">
-          {sceneCount} scene{sceneCount !== 1 ? "s" : ""}
+          {shotCount} shot{shotCount !== 1 ? "s" : ""}
           &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img
           &middot; ${videoCostPerSecond.toFixed(2)}/s video{enableAudio ? " (with audio)" : ""}
         </div>

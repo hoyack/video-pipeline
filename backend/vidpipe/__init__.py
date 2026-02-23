@@ -1,4 +1,4 @@
-"""Video Pipeline - AI-powered multi-scene video generation.
+"""Video Pipeline - AI-powered multi-shot video generation.
 
 This module provides startup validation functions to ensure required
 dependencies are available before pipeline execution begins.

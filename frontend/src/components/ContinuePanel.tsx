@@ -253,7 +253,7 @@ export function ContinuePanel({ detail, nextRunThrough, onContinued, onCancel }:
 
           <div>
             <label className="mb-2 block text-sm font-medium text-gray-300">
-              Scene Length
+              Shot Length
             </label>
             <div className="flex gap-2">
               {allowedDurations.map((d) => (

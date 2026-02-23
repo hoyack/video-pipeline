@@ -8,7 +8,7 @@ export interface WsEventBase {
 export interface PhaseStartedEvent extends WsEventBase {
   type: "phase_started";
   phase: string;
-  total_scenes: number;
+  total_shots: number;
 }
 
 export interface PhaseCompletedEvent extends WsEventBase {
@@ -16,27 +16,27 @@ export interface PhaseCompletedEvent extends WsEventBase {
   phase: string;
 }
 
-export interface SceneStatusEvent extends WsEventBase {
-  type: "scene_status";
-  scene_index: number;
+export interface ShotStatusEvent extends WsEventBase {
+  type: "shot_status";
+  shot_index: number;
   status: string;
   phase: string;
 }
 
-export interface SceneTextReadyEvent extends WsEventBase {
-  type: "scene_text_ready";
-  scene_index: number;
+export interface ShotTextReadyEvent extends WsEventBase {
+  type: "shot_text_ready";
+  shot_index: number;
 }
 
-export interface SceneKeyframeReadyEvent extends WsEventBase {
-  type: "scene_keyframe_ready";
-  scene_index: number;
+export interface ShotKeyframeReadyEvent extends WsEventBase {
+  type: "shot_keyframe_ready";
+  shot_index: number;
   position: string;
 }
 
-export interface SceneClipReadyEvent extends WsEventBase {
-  type: "scene_clip_ready";
-  scene_index: number;
+export interface ShotClipReadyEvent extends WsEventBase {
+  type: "shot_clip_ready";
+  shot_index: number;
 }
 
 export interface StitchReadyEvent extends WsEventBase {
@@ -52,19 +52,19 @@ export interface CheckpointCreatedEvent extends WsEventBase {
 export interface ErrorEvent extends WsEventBase {
   type: "error";
   phase?: string;
-  scene_index?: number;
+  shot_index?: number;
   message: string;
 }
 
-export interface SceneRegenStartedEvent extends WsEventBase {
-  type: "scene_regen_started";
-  scene_index: number;
+export interface ShotRegenStartedEvent extends WsEventBase {
+  type: "shot_regen_started";
+  shot_index: number;
   targets: string[];
 }
 
-export interface SceneRegenDoneEvent extends WsEventBase {
-  type: "scene_regen_done";
-  scene_index: number;
+export interface ShotRegenDoneEvent extends WsEventBase {
+  type: "shot_regen_done";
+  shot_index: number;
 }
 
 export interface RefreshEvent extends WsEventBase {
@@ -83,15 +83,15 @@ export interface HeartbeatEvent extends WsEventBase {
 export type WsEvent =
   | PhaseStartedEvent
   | PhaseCompletedEvent
-  | SceneStatusEvent
-  | SceneTextReadyEvent
-  | SceneKeyframeReadyEvent
-  | SceneClipReadyEvent
+  | ShotStatusEvent
+  | ShotTextReadyEvent
+  | ShotKeyframeReadyEvent
+  | ShotClipReadyEvent
   | StitchReadyEvent
   | CheckpointCreatedEvent
   | ErrorEvent
-  | SceneRegenStartedEvent
-  | SceneRegenDoneEvent
+  | ShotRegenStartedEvent
+  | ShotRegenDoneEvent
   | RefreshEvent
   | RegenCompleteEvent
   | HeartbeatEvent;

@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown
-from vidpipe.db.models import Base, SceneManifest, SceneAudioManifest, AssetCleanReference, AssetAppearance, ProjectCheckpoint, DEFAULT_USER_ID
+from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, ProjectCheckpoint, DEFAULT_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +63,11 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE assets ADD COLUMN source_asset_id TEXT REFERENCES assets(id)",
         # Phase 9: CV Analysis Pipeline fields
         "ALTER TABLE assets ADD COLUMN clip_embedding BLOB",
-        "ALTER TABLE scene_manifests ADD COLUMN cv_analysis_json TEXT",
-        "ALTER TABLE scene_manifests ADD COLUMN continuity_score REAL",
+        "ALTER TABLE shot_manifests ADD COLUMN cv_analysis_json TEXT",
+        "ALTER TABLE shot_manifests ADD COLUMN continuity_score REAL",
         # Phase 10: Adaptive Prompt Rewriting
-        "ALTER TABLE scene_manifests ADD COLUMN rewritten_keyframe_prompt TEXT",
-        "ALTER TABLE scene_manifests ADD COLUMN rewritten_video_prompt TEXT",
+        "ALTER TABLE shot_manifests ADD COLUMN rewritten_keyframe_prompt TEXT",
+        "ALTER TABLE shot_manifests ADD COLUMN rewritten_video_prompt TEXT",
         # Phase 11: Multi-Candidate Quality Mode
         "ALTER TABLE projects ADD COLUMN quality_mode INTEGER DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN candidate_count INTEGER DEFAULT 1",
@@ -89,7 +89,7 @@ async def _run_migrations(conn) -> None:
         # PipeSVN: version control
         "ALTER TABLE projects ADD COLUMN head_sha VARCHAR(40)",
         "ALTER TABLE video_clips ADD COLUMN prompt_used TEXT",
-        "ALTER TABLE scenes ADD COLUMN generation_status VARCHAR(32)",
+        "ALTER TABLE shots ADD COLUMN generation_status VARCHAR(32)",
         # Display preferences
         "ALTER TABLE user_settings ADD COLUMN show_cost INTEGER DEFAULT 1",
     ]

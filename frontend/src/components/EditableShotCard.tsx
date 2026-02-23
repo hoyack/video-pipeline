@@ -1,16 +1,16 @@
 import clsx from "clsx";
-import type { SceneDetail } from "../api/types.ts";
+import type { ShotDetail } from "../api/types.ts";
 
-interface EditableSceneCardProps {
-  scene: SceneDetail;
+interface EditableShotCardProps {
+  shot: ShotDetail;
   edits: Record<string, string>;
-  onChange: (sceneIndex: number, field: string, value: string) => void;
+  onChange: (shotIndex: number, field: string, value: string) => void;
   deleted: boolean;
   keyframesCleared: boolean;
-  onDelete: (sceneIndex: number) => void;
-  onRestoreScene: (sceneIndex: number) => void;
-  onClearKeyframes: (sceneIndex: number) => void;
-  onRestoreKeyframes: (sceneIndex: number) => void;
+  onDelete: (shotIndex: number) => void;
+  onRestoreShot: (shotIndex: number) => void;
+  onClearKeyframes: (shotIndex: number) => void;
+  onRestoreKeyframes: (shotIndex: number) => void;
   canDelete: boolean;
 }
 
@@ -71,19 +71,19 @@ function EditableField({
   );
 }
 
-export function EditableSceneCard({
-  scene,
+export function EditableShotCard({
+  shot,
   edits,
   onChange,
   deleted,
   keyframesCleared,
   onDelete,
-  onRestoreScene,
+  onRestoreShot,
   onClearKeyframes,
   onRestoreKeyframes,
   canDelete,
-}: EditableSceneCardProps) {
-  const idx = scene.scene_index;
+}: EditableShotCardProps) {
+  const idx = shot.shot_index;
 
   const getValue = (field: string, original: string | null | undefined) =>
     edits[field] ?? original ?? "";
@@ -97,12 +97,12 @@ export function EditableSceneCard({
       <div className="rounded-lg border border-red-900/50 bg-gray-900/50 p-3">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-gray-500 line-through">
-            Scene {idx + 1} &mdash; {scene.description?.slice(0, 60)}
-            {(scene.description?.length ?? 0) > 60 ? "..." : ""}
+            Shot {idx + 1} &mdash; {shot.description?.slice(0, 60)}
+            {(shot.description?.length ?? 0) > 60 ? "..." : ""}
           </span>
           <button
             type="button"
-            onClick={() => onRestoreScene(idx)}
+            onClick={() => onRestoreShot(idx)}
             className="rounded px-2 py-0.5 text-[11px] font-medium text-blue-400 hover:bg-blue-500/10 transition-colors"
           >
             Restore
@@ -112,7 +112,7 @@ export function EditableSceneCard({
     );
   }
 
-  const hasKeyframes = scene.start_keyframe_url || scene.end_keyframe_url;
+  const hasKeyframes = shot.start_keyframe_url || shot.end_keyframe_url;
 
   return (
     <div
@@ -123,7 +123,7 @@ export function EditableSceneCard({
     >
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-medium text-gray-400">
-          Scene {idx + 1}
+          Shot {idx + 1}
         </span>
         <div className="flex items-center gap-2">
           {Object.keys(edits).length > 0 && (
@@ -136,7 +136,7 @@ export function EditableSceneCard({
               type="button"
               onClick={() => onDelete(idx)}
               className="text-gray-600 hover:text-red-400 transition-colors"
-              title="Delete scene"
+              title="Delete shot"
             >
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -149,14 +149,14 @@ export function EditableSceneCard({
       {/* Keyframe previews with clear overlay */}
       {hasKeyframes && !keyframesCleared && (
         <div className="mb-2 flex gap-2">
-          {scene.start_keyframe_url && (
+          {shot.start_keyframe_url && (
             <div className="relative flex-1 group">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                 Start KF
               </span>
               <img
-                src={scene.start_keyframe_url}
-                alt={`Scene ${idx + 1} start`}
+                src={shot.start_keyframe_url}
+                alt={`Shot ${idx + 1} start`}
                 className="mt-0.5 w-full rounded border border-gray-700"
                 loading="lazy"
               />
@@ -172,14 +172,14 @@ export function EditableSceneCard({
               </button>
             </div>
           )}
-          {scene.end_keyframe_url && (
+          {shot.end_keyframe_url && (
             <div className="relative flex-1 group">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                 End KF
               </span>
               <img
-                src={scene.end_keyframe_url}
-                alt={`Scene ${idx + 1} end`}
+                src={shot.end_keyframe_url}
+                alt={`Shot ${idx + 1} end`}
                 className="mt-0.5 w-full rounded border border-gray-700"
                 loading="lazy"
               />
@@ -216,36 +216,36 @@ export function EditableSceneCard({
 
       <EditableField
         label="Description"
-        value={getValue("scene_description", scene.description)}
-        originalValue={getOriginal("scene_description", scene.description)}
-        onChange={(v) => onChange(idx, "scene_description", v)}
-        onClear={() => onChange(idx, "scene_description", "")}
+        value={getValue("shot_description", shot.description)}
+        originalValue={getOriginal("shot_description", shot.description)}
+        onChange={(v) => onChange(idx, "shot_description", v)}
+        onClear={() => onChange(idx, "shot_description", "")}
       />
       <EditableField
         label="Start Frame Prompt"
-        value={getValue("start_frame_prompt", scene.start_frame_prompt)}
-        originalValue={getOriginal("start_frame_prompt", scene.start_frame_prompt)}
+        value={getValue("start_frame_prompt", shot.start_frame_prompt)}
+        originalValue={getOriginal("start_frame_prompt", shot.start_frame_prompt)}
         onChange={(v) => onChange(idx, "start_frame_prompt", v)}
         onClear={() => onChange(idx, "start_frame_prompt", "")}
       />
       <EditableField
         label="End Frame Prompt"
-        value={getValue("end_frame_prompt", scene.end_frame_prompt)}
-        originalValue={getOriginal("end_frame_prompt", scene.end_frame_prompt)}
+        value={getValue("end_frame_prompt", shot.end_frame_prompt)}
+        originalValue={getOriginal("end_frame_prompt", shot.end_frame_prompt)}
         onChange={(v) => onChange(idx, "end_frame_prompt", v)}
         onClear={() => onChange(idx, "end_frame_prompt", "")}
       />
       <EditableField
         label="Motion Prompt"
-        value={getValue("video_motion_prompt", scene.video_motion_prompt)}
-        originalValue={getOriginal("video_motion_prompt", scene.video_motion_prompt)}
+        value={getValue("video_motion_prompt", shot.video_motion_prompt)}
+        originalValue={getOriginal("video_motion_prompt", shot.video_motion_prompt)}
         onChange={(v) => onChange(idx, "video_motion_prompt", v)}
         onClear={() => onChange(idx, "video_motion_prompt", "")}
       />
       <EditableField
         label="Transition Notes"
-        value={getValue("transition_notes", scene.transition_notes)}
-        originalValue={getOriginal("transition_notes", scene.transition_notes)}
+        value={getValue("transition_notes", shot.transition_notes)}
+        originalValue={getOriginal("transition_notes", shot.transition_notes)}
         onChange={(v) => onChange(idx, "transition_notes", v)}
         onClear={() => onChange(idx, "transition_notes", "")}
       />

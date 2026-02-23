@@ -12,14 +12,14 @@ import type {
   EditProjectResponse,
   CheckpointListItem,
   CheckpointDiff,
-  RegenerateSceneRequest,
+  RegenerateShotRequest,
   RegenerateProjectRequest,
   RegenerateTextRequest,
   RegenerateTextResponse,
-  GenerateSceneFieldsRequest,
-  GenerateSceneFieldsResponse,
-  GenerateNewSceneRequest,
-  GenerateNewSceneResponse,
+  GenerateShotFieldsRequest,
+  GenerateShotFieldsResponse,
+  GenerateNewShotRequest,
+  GenerateNewShotResponse,
   MetricsResponse,
   ManifestListItem,
   ManifestDetail,
@@ -91,7 +91,7 @@ export function getProjectStatus(projectId: string): Promise<StatusResponse> {
   return request<StatusResponse>(`/api/projects/${projectId}/status`);
 }
 
-/** GET /api/projects/{id} — full project detail with scenes */
+/** GET /api/projects/{id} — full project detail with shots */
 export function getProjectDetail(projectId: string): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/api/projects/${projectId}`);
 }
@@ -329,24 +329,24 @@ export function reprocessAsset(assetId: string): Promise<AssetResponse> {
   });
 }
 
-/** GET /api/projects/{id}/scenes/{idx}/candidates */
+/** GET /api/projects/{id}/shots/{idx}/candidates */
 export function listCandidates(
   projectId: string,
-  sceneIdx: number,
+  shotIdx: number,
 ): Promise<CandidateScore[]> {
   return request<CandidateScore[]>(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/candidates`,
+    `/api/projects/${projectId}/shots/${shotIdx}/candidates`,
   );
 }
 
-/** PUT /api/projects/{id}/scenes/{idx}/candidates/{cid}/select */
+/** PUT /api/projects/{id}/shots/{idx}/candidates/{cid}/select */
 export function selectCandidate(
   projectId: string,
-  sceneIdx: number,
+  shotIdx: number,
   candidateId: string,
 ): Promise<{ selected: string; selected_by: string }> {
   return request<{ selected: string; selected_by: string }>(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/candidates/${candidateId}/select`,
+    `/api/projects/${projectId}/shots/${shotIdx}/candidates/${candidateId}/select`,
     { method: "PUT" },
   );
 }
@@ -425,14 +425,14 @@ export function revertToCheckpoint(
 // PipeSVN: Regeneration API
 // ============================================================================
 
-/** POST /api/projects/{id}/scenes/{idx}/regenerate — regenerate scene assets */
-export function regenerateScene(
+/** POST /api/projects/{id}/shots/{idx}/regenerate — regenerate shot assets */
+export function regenerateShot(
   projectId: string,
-  sceneIdx: number,
-  body: RegenerateSceneRequest,
+  shotIdx: number,
+  body: RegenerateShotRequest,
 ): Promise<{ status: string; head_sha?: string | null }> {
   return request<{ status: string; head_sha?: string | null }>(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/regenerate`,
+    `/api/projects/${projectId}/shots/${shotIdx}/regenerate`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -441,36 +441,36 @@ export function regenerateScene(
   );
 }
 
-/** POST /api/projects/{id}/scenes/{idx}/regenerate-text — regenerate a text field via LLM */
-export function regenerateSceneText(
+/** POST /api/projects/{id}/shots/{idx}/regenerate-text — regenerate a text field via LLM */
+export function regenerateShotText(
   projectId: string,
-  sceneIdx: number,
+  shotIdx: number,
   body: RegenerateTextRequest,
 ): Promise<RegenerateTextResponse> {
   return request<RegenerateTextResponse>(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/regenerate-text`,
+    `/api/projects/${projectId}/shots/${shotIdx}/regenerate-text`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
   );
 }
 
-/** POST /api/projects/{id}/generate-scene-fields — generate all 5 text fields for a new scene */
-export function generateSceneFields(
+/** POST /api/projects/{id}/generate-shot-fields — generate all 5 text fields for a new shot */
+export function generateShotFields(
   projectId: string,
-  body: GenerateSceneFieldsRequest,
-): Promise<GenerateSceneFieldsResponse> {
-  return request<GenerateSceneFieldsResponse>(
-    `/api/projects/${projectId}/generate-scene-fields`,
+  body: GenerateShotFieldsRequest,
+): Promise<GenerateShotFieldsResponse> {
+  return request<GenerateShotFieldsResponse>(
+    `/api/projects/${projectId}/generate-shot-fields`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
   );
 }
 
-/** POST /api/projects/{id}/generate-new-scene — generate complete scene (text sync + assets background) */
-export function generateNewScene(
+/** POST /api/projects/{id}/generate-new-shot — generate complete shot (text sync + assets background) */
+export function generateNewShot(
   projectId: string,
-  body: GenerateNewSceneRequest,
-): Promise<GenerateNewSceneResponse> {
-  return request<GenerateNewSceneResponse>(
-    `/api/projects/${projectId}/generate-new-scene`,
+  body: GenerateNewShotRequest,
+): Promise<GenerateNewShotResponse> {
+  return request<GenerateNewShotResponse>(
+    `/api/projects/${projectId}/generate-new-shot`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
   );
 }
@@ -487,17 +487,17 @@ export function regenerateProject(
   });
 }
 
-/** PUT /api/projects/{id}/scenes/{idx}/keyframes/{pos} — upload keyframe */
+/** PUT /api/projects/{id}/shots/{idx}/keyframes/{pos} — upload keyframe */
 export async function uploadKeyframe(
   projectId: string,
-  sceneIdx: number,
+  shotIdx: number,
   position: string,
   file: File,
 ): Promise<{ status: string; file_path: string; keyframe_id: string }> {
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/keyframes/${position}`,
+    `/api/projects/${projectId}/shots/${shotIdx}/keyframes/${position}`,
     { method: "PUT", body: formData },
   );
   if (!res.ok) {
@@ -507,16 +507,16 @@ export async function uploadKeyframe(
   return res.json();
 }
 
-/** PUT /api/projects/{id}/scenes/{idx}/clip — upload clip */
+/** PUT /api/projects/{id}/shots/{idx}/clip — upload clip */
 export async function uploadClip(
   projectId: string,
-  sceneIdx: number,
+  shotIdx: number,
   file: File,
 ): Promise<{ status: string; file_path: string; clip_id: string }> {
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/clip`,
+    `/api/projects/${projectId}/shots/${shotIdx}/clip`,
     { method: "PUT", body: formData },
   );
   if (!res.ok) {
@@ -526,25 +526,25 @@ export async function uploadClip(
   return res.json();
 }
 
-/** DELETE /api/projects/{id}/scenes/{idx}/clip — delete clip */
-export function deleteSceneClip(
+/** DELETE /api/projects/{id}/shots/{idx}/clip — delete clip */
+export function deleteShotClip(
   projectId: string,
-  sceneIdx: number,
+  shotIdx: number,
 ): Promise<{ status: string }> {
   return request<{ status: string }>(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/clip`,
+    `/api/projects/${projectId}/shots/${shotIdx}/clip`,
     { method: "DELETE" },
   );
 }
 
-/** DELETE /api/projects/{id}/scenes/{idx}/keyframes/{pos} — delete keyframe */
-export function deleteSceneKeyframe(
+/** DELETE /api/projects/{id}/shots/{idx}/keyframes/{pos} — delete keyframe */
+export function deleteShotKeyframe(
   projectId: string,
-  sceneIdx: number,
+  shotIdx: number,
   position: string,
 ): Promise<{ status: string }> {
   return request<{ status: string }>(
-    `/api/projects/${projectId}/scenes/${sceneIdx}/keyframes/${position}`,
+    `/api/projects/${projectId}/shots/${shotIdx}/keyframes/${position}`,
     { method: "DELETE" },
   );
 }

@@ -25,3 +25,40 @@ See https://react.dev/link/invalid-hook-call for tips about how to debug and fix
 %s
  An error occurred in the <App> component. Consider adding an error boundary to your tree to customize error handling behavior.
 Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:6965
+[49435054ms] [ERROR] [vite] SyntaxError: The requested module '/src/api/client.ts?t=1771857005395' does not provide an export named 'deleteSceneClip' @ http://127.0.0.1:5174/@vite/client:808
+[49435056ms] [ERROR] [vite] Failed to reload /src/components/SceneEditorCard.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49435060ms] [ERROR] [vite] SyntaxError: The requested module '/src/api/client.ts?t=1771857005395' does not provide an export named 'deleteSceneClip' @ http://127.0.0.1:5174/@vite/client:808
+[49435060ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49435060ms] [ERROR] [vite] SyntaxError: The requested module '/src/api/client.ts?t=1771857005395' does not provide an export named 'deleteSceneClip' @ http://127.0.0.1:5174/@vite/client:808
+[49435060ms] [ERROR] [vite] Failed to reload /src/components/EditModeOverlay.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49435079ms] [ERROR] [vite] SyntaxError: The requested module '/src/api/client.ts?t=1771857005395' does not provide an export named 'deleteSceneClip' @ http://127.0.0.1:5174/@vite/client:808
+[49435079ms] [ERROR] [vite] Failed to reload /src/App.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49435088ms] [ERROR] [vite] SyntaxError: The requested module '/src/api/client.ts?t=1771857005395' does not provide an export named 'deleteSceneClip' @ http://127.0.0.1:5174/@vite/client:808
+[49435088ms] [ERROR] [vite] Failed to reload /src/components/EditModeOverlay.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49435088ms] [ERROR] [vite] SyntaxError: The requested module '/src/api/client.ts?t=1771857005395' does not provide an export named 'deleteSceneClip' @ http://127.0.0.1:5174/@vite/client:808
+[49435088ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49435088ms] [ERROR] [vite] SyntaxError: The requested module '/src/api/client.ts?t=1771857005395' does not provide an export named 'deleteSceneClip' @ http://127.0.0.1:5174/@vite/client:808
+[49435088ms] [ERROR] [vite] Failed to reload /src/App.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49513956ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5174/src/components/SceneCard.tsx?t=1771857084348:0
+[49513957ms] [ERROR] [vite] Failed to reload /src/components/SceneCard.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49513980ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5174/src/components/SceneEditorCard.tsx?t=1771857084349:0
+[49513981ms] [ERROR] [vite] Failed to reload /src/components/SceneEditorCard.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49513987ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5174/src/components/SortableSceneCard.tsx?t=1771857084350:0
+[49513987ms] [ERROR] [vite] Failed to reload /src/components/SortableSceneCard.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[49513993ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5174/src/components/EditableSceneCard.tsx?t=1771857084351:0
+[49513995ms] [ERROR] [vite] Failed to reload /src/components/EditableSceneCard.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50202170ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50205523ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50220446ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50224589ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50233205ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50312938ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5174/src/components/EditModeOverlay.tsx?t=1771857883274:0
+[50312942ms] [ERROR] [vite] Failed to reload /src/components/EditModeOverlay.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50318244ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5174/src/components/EditModeOverlay.tsx?t=1771857888585:0
+[50318247ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50318272ms] [ERROR] [vite] Failed to reload /src/components/ProjectDetail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5174/@vite/client:808
+[50761160ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5174/api/projects?page=1&per_page=12:0
+[50761208ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5174/api/projects?page=1&per_page=12:0
+[50778572ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5174/api/projects?page=1&per_page=12:0
+[62082382ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5174/api/projects?page=1&per_page=12:0
+[62082388ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5174/api/projects?page=1&per_page=12:0

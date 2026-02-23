@@ -1,16 +1,16 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { SceneEditorCard } from "./SceneEditorCard.tsx";
+import { ShotEditorCard } from "./ShotEditorCard.tsx";
 import type { ComponentProps } from "react";
 
-type SceneEditorCardProps = ComponentProps<typeof SceneEditorCard>;
+type ShotEditorCardProps = ComponentProps<typeof ShotEditorCard>;
 
-interface SortableSceneCardProps extends SceneEditorCardProps {
-  /** Used as the sortable item id — typically scene.scene_index */
+interface SortableShotCardProps extends ShotEditorCardProps {
+  /** Used as the sortable item id — typically shot.shot_index */
   id: number;
 }
 
-export function SortableSceneCard({ id, ...rest }: SortableSceneCardProps) {
+export function SortableShotCard({ id, ...rest }: SortableShotCardProps) {
   const {
     attributes,
     listeners,
@@ -30,7 +30,7 @@ export function SortableSceneCard({ id, ...rest }: SortableSceneCardProps) {
 
   return (
     <div ref={setNodeRef} style={style}>
-      <SceneEditorCard
+      <ShotEditorCard
         {...rest}
         dragHandleListeners={listeners}
         dragHandleAttributes={attributes}

@@ -32,13 +32,13 @@ class ReversePromptOutput(BaseModel):
 
 
 class SemanticAnalysisOutput(BaseModel):
-    """Structured output for per-scene semantic analysis against a manifest.
+    """Structured output for per-shot semantic analysis against a manifest.
 
     Used by cv_analysis_service.py to evaluate how well a generated clip
-    matches the intended scene manifest and continuity expectations.
+    matches the intended shot manifest and continuity expectations.
     """
     manifest_adherence: float = Field(
-        description="Score 0.0-10.0 for how well the scene content matches the manifest assets"
+        description="Score 0.0-10.0 for how well the shot content matches the manifest assets"
     )
     visual_quality: float = Field(
         description="Score 0.0-10.0 for overall visual quality and composition"
@@ -51,9 +51,9 @@ class SemanticAnalysisOutput(BaseModel):
         default=[],
         description="List of new entities detected not present in the manifest (dicts with name, description)",
     )
-    overall_scene_description: str = Field(
+    overall_shot_description: str = Field(
         default="",
-        description="Brief overall description of what is happening in the scene",
+        description="Brief overall description of what is happening in the shot",
     )
 
 

@@ -1,6 +1,6 @@
 """Pydantic schemas for manifest-aware storyboard output with asset placement and audio direction.
 
-These schemas extend the base storyboard schemas with SceneManifest and SceneAudioManifest,
+These schemas extend the base storyboard schemas with ShotManifest and ShotAudioManifest,
 enabling Gemini to produce structured output that references manifest assets and includes
 detailed audio direction. Used when project.manifest_id is set.
 
@@ -10,11 +10,11 @@ Spec reference: Phase 7 - Manifest-Aware Storyboarding and Audio Manifest
 from typing import Optional
 from pydantic import BaseModel, Field
 
-from vidpipe.schemas.storyboard import StyleGuide, CharacterDescription, SceneSchema
+from vidpipe.schemas.storyboard import StyleGuide, CharacterDescription, ShotSchema
 
 
 class AssetPlacement(BaseModel):
-    """Asset placement within a scene with spatial, action, and continuity metadata."""
+    """Asset placement within a shot with spatial, action, and continuity metadata."""
 
     asset_tag: str = Field(
         description="Manifest tag e.g. CHAR_01, ENV_02"
@@ -27,7 +27,7 @@ class AssetPlacement(BaseModel):
     )
     action: Optional[str] = Field(
         default=None,
-        description="What asset does in scene"
+        description="What asset does in shot"
     )
     expression: Optional[str] = Field(
         default=None,
@@ -39,8 +39,8 @@ class AssetPlacement(BaseModel):
     )
 
 
-class SceneComposition(BaseModel):
-    """Camera and framing composition for a scene."""
+class ShotComposition(BaseModel):
+    """Camera and framing composition for a shot."""
 
     shot_type: str = Field(
         description="wide_shot | medium_shot | close_up | two_shot | establishing"
@@ -70,7 +70,7 @@ class DialogueLine(BaseModel):
         description="How said: muttered, shouted, whispered"
     )
     timing: str = Field(
-        description="When in scene: start | mid-scene | end"
+        description="When in shot: start | mid-shot | end"
     )
     emphasis: Optional[list[str]] = Field(
         default=None,
@@ -88,7 +88,7 @@ class SFXEntry(BaseModel):
         description="What causes the sound"
     )
     timing: str = Field(
-        description="Relative timing e.g. mid-scene, throughout, 0:02-0:04"
+        description="Relative timing e.g. mid-shot, throughout, 0:02-0:04"
     )
     volume: str = Field(
         description="subtle | prominent | background"
@@ -137,37 +137,37 @@ class MusicDirection(BaseModel):
 
 
 class AudioContinuity(BaseModel):
-    """Audio continuity tracking across scene boundaries."""
+    """Audio continuity tracking across shot boundaries."""
 
     carries_from_previous: list[str] = Field(
         default_factory=list,
-        description="Audio elements that carry over from previous scene"
+        description="Audio elements that carry over from previous shot"
     )
-    new_in_this_scene: list[str] = Field(
+    new_in_this_shot: list[str] = Field(
         default_factory=list,
-        description="New audio elements introduced in this scene"
+        description="New audio elements introduced in this shot"
     )
     cuts_from_previous: list[str] = Field(
         default_factory=list,
-        description="Audio elements that cut from previous scene"
+        description="Audio elements that cut from previous shot"
     )
 
 
-class SceneManifestSchema(BaseModel):
-    """Per-scene asset placement manifest with composition and continuity metadata."""
+class ShotManifestSchema(BaseModel):
+    """Per-shot asset placement manifest with composition and continuity metadata."""
 
-    scene_index: int = Field(
-        description="Scene number this manifest applies to"
+    shot_index: int = Field(
+        description="Shot number this manifest applies to"
     )
-    composition: SceneComposition = Field(
+    composition: ShotComposition = Field(
         description="Camera and framing composition"
     )
     placements: list[AssetPlacement] = Field(
-        description="All assets in this scene"
+        description="All assets in this shot"
     )
     continuity_notes: Optional[str] = Field(
         default=None,
-        description="Continuity notes for this scene"
+        description="Continuity notes for this shot"
     )
     new_asset_declarations: Optional[list[dict]] = Field(
         default=None,
@@ -175,19 +175,19 @@ class SceneManifestSchema(BaseModel):
     )
 
 
-class SceneAudioManifestSchema(BaseModel):
-    """Per-scene audio direction manifest with dialogue, SFX, ambient, and music."""
+class ShotAudioManifestSchema(BaseModel):
+    """Per-shot audio direction manifest with dialogue, SFX, ambient, and music."""
 
-    scene_index: int = Field(
-        description="Scene number this audio manifest applies to"
+    shot_index: int = Field(
+        description="Shot number this audio manifest applies to"
     )
     dialogue_lines: list[DialogueLine] = Field(
         default_factory=list,
-        description="Dialogue lines in this scene"
+        description="Dialogue lines in this shot"
     )
     sfx: list[SFXEntry] = Field(
         default_factory=list,
-        description="Sound effects in this scene"
+        description="Sound effects in this shot"
     )
     ambient: Optional[AmbientAudio] = Field(
         default=None,
@@ -203,35 +203,35 @@ class SceneAudioManifestSchema(BaseModel):
     )
 
 
-class EnhancedSceneSchema(SceneSchema):
-    """Scene schema enhanced with manifest and audio manifest metadata.
+class EnhancedShotSchema(ShotSchema):
+    """Shot schema enhanced with manifest and audio manifest metadata.
 
-    Inherits all fields from SceneSchema and adds scene_manifest and audio_manifest.
+    Inherits all fields from ShotSchema and adds shot_manifest and audio_manifest.
     """
 
-    scene_manifest: SceneManifestSchema = Field(
-        description="Asset placement manifest for this scene"
+    shot_manifest: ShotManifestSchema = Field(
+        description="Asset placement manifest for this shot"
     )
-    audio_manifest: SceneAudioManifestSchema = Field(
-        description="Audio direction manifest for this scene"
+    audio_manifest: ShotAudioManifestSchema = Field(
+        description="Audio direction manifest for this shot"
     )
 
 
 class EnhancedStoryboardOutput(BaseModel):
-    """Complete storyboard output with manifest-aware scenes.
+    """Complete storyboard output with manifest-aware shots.
 
     This is a separate model (not a subclass of StoryboardOutput) because
-    the scenes field type differs (EnhancedSceneSchema vs SceneSchema).
+    the shots field type differs (EnhancedShotSchema vs ShotSchema).
     """
 
     style_guide: StyleGuide = Field(
-        description="Visual consistency guide applied across all scenes"
+        description="Visual consistency guide applied across all shots"
     )
     characters: list[CharacterDescription] = Field(
         description="All characters appearing in the video with consistent physical and "
         "clothing descriptions. These descriptions must be referenced identically in every "
         "keyframe prompt where the character appears."
     )
-    scenes: list[EnhancedSceneSchema] = Field(
-        description="List of scenes with detailed prompts, manifest placements, and audio direction"
+    shots: list[EnhancedShotSchema] = Field(
+        description="List of shots with detailed prompts, manifest placements, and audio direction"
     )

@@ -1,4 +1,4 @@
-/** Candidate score data from GET /api/projects/{id}/scenes/{idx}/candidates */
+/** Candidate score data from GET /api/projects/{id}/shots/{idx}/candidates */
 export interface CandidateScore {
   candidate_id: string;
   candidate_number: number;
@@ -57,8 +57,8 @@ export interface StatusResponse {
   error_message: string | null;
 }
 
-/** Reference image selected for a scene's video generation */
-export interface SceneReference {
+/** Reference image selected for a shot's video generation */
+export interface ShotReference {
   asset_id: string;
   manifest_tag: string;
   name: string;
@@ -69,9 +69,9 @@ export interface SceneReference {
   is_face_crop: boolean;
 }
 
-/** Scene detail within ProjectDetail */
-export interface SceneDetail {
-  scene_index: number;
+/** Shot detail within ProjectDetail */
+export interface ShotDetail {
+  shot_index: number;
   description: string;
   status: string;
   has_start_keyframe: boolean;
@@ -85,7 +85,7 @@ export interface SceneDetail {
   start_keyframe_url?: string | null;
   end_keyframe_url?: string | null;
   clip_url?: string | null;
-  selected_references?: SceneReference[];
+  selected_references?: ShotReference[];
   // PipeSVN staleness
   start_keyframe_staleness?: string | null;
   end_keyframe_staleness?: string | null;
@@ -109,8 +109,8 @@ export interface ProjectDetail {
   status: string;
   created_at: string;
   updated_at: string;
-  scene_count: number;
-  scenes: SceneDetail[];
+  shot_count: number;
+  shots: ShotDetail[];
   error_message: string | null;
   total_duration?: number | null;
   clip_duration?: number | null;
@@ -128,9 +128,9 @@ export interface ProjectDetail {
   head_sha?: string | null;
 }
 
-/** Per-scene edit payload for in-place editing */
-export interface SceneEditPayload {
-  scene_description?: string;
+/** Per-shot edit payload for in-place editing */
+export interface ShotEditPayload {
+  shot_description?: string;
   start_frame_prompt?: string;
   end_frame_prompt?: string;
   video_motion_prompt?: string;
@@ -144,16 +144,16 @@ export interface EditProjectRequest {
   style?: string;
   aspect_ratio?: string;
   clip_duration?: number;
-  target_scene_count?: number;
+  target_shot_count?: number;
   text_model?: string;
   image_model?: string;
   video_model?: string;
   vision_model?: string;
   audio_enabled?: boolean;
   manifest_id?: string | null;
-  scene_edits?: Record<number, SceneEditPayload>;
-  removed_scenes?: number[];
-  scene_order?: number[];  // scene_indices in desired display order
+  shot_edits?: Record<number, ShotEditPayload>;
+  removed_shots?: number[];
+  shot_order?: number[];  // shot_indices in desired display order
   commit_message?: string;
   expected_sha?: string;
 }
@@ -182,26 +182,26 @@ export interface CheckpointDiff {
   changes: Array<{
     type: string;
     field?: string;
-    scene_index?: number;
+    shot_index?: number;
     old?: string | null;
     new?: string | null;
   }>;
 }
 
-/** Request body for POST /api/projects/{id}/scenes/{idx}/regenerate */
-export interface RegenerateSceneRequest {
+/** Request body for POST /api/projects/{id}/shots/{idx}/regenerate */
+export interface RegenerateShotRequest {
   targets: string[];
   prompt_overrides?: Record<string, string>;
   skip_checkpoint?: boolean;
   video_model?: string;
   image_model?: string;
-  scene_edits?: Record<string, string>;
+  shot_edits?: Record<string, string>;
 }
 
 /** Request body for POST /api/projects/{id}/regenerate */
 export interface RegenerateProjectRequest {
   scope: "stale" | "all" | "stitch_only" | "storyboard" | "keyframes" | "clips" | "all_phases";
-  scene_indices?: number[];
+  shot_indices?: number[];
   text_model?: string;
   image_model?: string;
   video_model?: string;
@@ -286,8 +286,8 @@ export interface ForkRequest {
   video_model?: string;
   audio_enabled?: boolean;
   vision_model?: string;
-  scene_edits?: Record<number, Record<string, string>>;
-  deleted_scenes?: number[];
+  shot_edits?: Record<number, Record<string, string>>;
+  deleted_shots?: number[];
   clear_keyframes?: number[];
   asset_changes?: AssetChanges;
 }
@@ -298,7 +298,7 @@ export interface ForkResponse {
   forked_from: string;
   status: string;
   status_url: string;
-  copied_scenes: number;
+  copied_shots: number;
   resume_from: string;
 }
 
@@ -312,7 +312,7 @@ export interface MetricsResponse {
   image_model_counts: Record<string, number>;
   video_model_counts: Record<string, number>;
   audio_counts: Record<string, number>;
-  scene_count_counts: Record<string, number>;
+  shot_count_counts: Record<string, number>;
   total_estimated_cost: number;
   total_video_seconds: number;
   avg_clip_duration: number | null;
@@ -474,52 +474,52 @@ export interface EnabledModelsResponse {
   show_cost: boolean;
 }
 
-/** Request body for POST /api/projects/{id}/scenes/{idx}/regenerate-text */
+/** Request body for POST /api/projects/{id}/shots/{idx}/regenerate-text */
 export interface RegenerateTextRequest {
   field: string;
   extra_context?: string;
   text_model?: string;
-  scene_edits?: Record<string, string>;
+  shot_edits?: Record<string, string>;
   prompt?: string;
 }
 
-/** Response from POST /api/projects/{id}/scenes/{idx}/regenerate-text */
+/** Response from POST /api/projects/{id}/shots/{idx}/regenerate-text */
 export interface RegenerateTextResponse {
   field: string;
   text: string;
 }
 
-/** Request body for POST /api/projects/{id}/generate-scene-fields */
-export interface GenerateSceneFieldsRequest {
-  scene_index: number;
-  all_scene_edits?: Record<number, Record<string, string>>;
+/** Request body for POST /api/projects/{id}/generate-shot-fields */
+export interface GenerateShotFieldsRequest {
+  shot_index: number;
+  all_shot_edits?: Record<number, Record<string, string>>;
   text_model?: string;
   prompt?: string;
 }
 
-/** Response from POST /api/projects/{id}/generate-scene-fields */
-export interface GenerateSceneFieldsResponse {
-  scene_description: string;
+/** Response from POST /api/projects/{id}/generate-shot-fields */
+export interface GenerateShotFieldsResponse {
+  shot_description: string;
   start_frame_prompt: string;
   end_frame_prompt: string;
   video_motion_prompt: string;
   transition_notes: string;
 }
 
-/** Request body for POST /api/projects/{id}/generate-new-scene */
-export interface GenerateNewSceneRequest {
-  scene_index: number;
-  all_scene_edits?: Record<number, Record<string, string>>;
+/** Request body for POST /api/projects/{id}/generate-new-shot */
+export interface GenerateNewShotRequest {
+  shot_index: number;
+  all_shot_edits?: Record<number, Record<string, string>>;
   text_model?: string;
   image_model?: string;
   video_model?: string;
   prompt?: string;
 }
 
-/** Response from POST /api/projects/{id}/generate-new-scene */
-export interface GenerateNewSceneResponse {
-  scene_index: number;
-  scene_description: string;
+/** Response from POST /api/projects/{id}/generate-new-shot */
+export interface GenerateNewShotResponse {
+  shot_index: number;
+  shot_description: string;
   start_frame_prompt: string;
   end_frame_prompt: string;
   video_motion_prompt: string;
@@ -534,7 +534,7 @@ export interface CreateDraftProjectRequest {
   style?: string;
   aspect_ratio?: string;
   clip_duration?: number;
-  scene_count?: number;
+  shot_count?: number;
   text_model?: string;
   image_model?: string;
   video_model?: string;
@@ -549,7 +549,7 @@ export interface CreateDraftProjectRequest {
 export interface CreateDraftProjectResponse {
   project_id: string;
   status: string;
-  scene_count: number;
+  shot_count: number;
 }
 
 /** Request body for POST /api/projects/{id}/generate */

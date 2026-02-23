@@ -39,7 +39,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   const [selectedManifestId, setSelectedManifestId] = useState<string | null>(null);
   const [visionModel, setVisionModel] = useState<string>("");
   const [runThrough, setRunThrough] = useState<string | null>(null);
-  const [directSceneCount, setDirectSceneCount] = useState(3);
+  const [directShotCount, setDirectShotCount] = useState(3);
   const [qualityMode, setQualityMode] = useState(false);
   const [candidateCount, setCandidateCount] = useState(2);
   const [submitting, setSubmitting] = useState(false);
@@ -134,30 +134,30 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
     }
   }, [allowedDurations, clipDuration]);
 
-  // In partial mode (storyboard/keyframes), user picks scene count directly.
-  // Video model / scene length aren't chosen yet.
+  // In partial mode (storyboard/keyframes), user picks shot count directly.
+  // Video model / shot length aren't chosen yet.
   const isPartialMode = runThrough === "storyboard" || runThrough === "keyframes";
-  const sceneCount = isPartialMode ? directSceneCount : Math.ceil(totalDuration / clipDuration);
+  const shotCount = isPartialMode ? directShotCount : Math.ceil(totalDuration / clipDuration);
   const audioActive = enableAudio && selectedVideoModel.supportsAudio;
 
-  // Sync directSceneCount <-> totalDuration when switching modes
+  // Sync directShotCount <-> totalDuration when switching modes
   useEffect(() => {
     if (isPartialMode) {
-      // Entering partial mode: seed scene count from current derived value
-      setDirectSceneCount(Math.ceil(totalDuration / clipDuration));
+      // Entering partial mode: seed shot count from current derived value
+      setDirectShotCount(Math.ceil(totalDuration / clipDuration));
     }
   }, [isPartialMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Override ComfyUI cost from user settings if configured
   const comfyuiCostOverride = modelSettings?.comfyui_cost_per_second;
-  // In partial mode, compute total_duration from scene count * default clip for cost estimation
-  const effectiveTotalDuration = isPartialMode ? directSceneCount * clipDuration : totalDuration;
+  // In partial mode, compute total_duration from shot count * default clip for cost estimation
+  const effectiveTotalDuration = isPartialMode ? directShotCount * clipDuration : totalDuration;
 
   const effectiveCost = useMemo(() => {
     const base = estimatePartialCost(effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, runThrough);
     if (videoModel === "wan-2.2-ref-i2v" && comfyuiCostOverride != null && comfyuiCostOverride > 0 && runThrough !== "storyboard" && runThrough !== "keyframes") {
-      const scenes = Math.ceil(effectiveTotalDuration / clipDuration);
-      return base + scenes * clipDuration * comfyuiCostOverride;
+      const shots = Math.ceil(effectiveTotalDuration / clipDuration);
+      return base + shots * clipDuration * comfyuiCostOverride;
     }
     return base;
   }, [effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, comfyuiCostOverride, runThrough]);
@@ -191,7 +191,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         style,
         aspect_ratio: aspectRatio,
         clip_duration: clipDuration,
-        total_duration: isPartialMode ? directSceneCount * clipDuration : totalDuration,
+        total_duration: isPartialMode ? directShotCount * clipDuration : totalDuration,
         text_model: textModel,
         image_model: imageModel,
         video_model: videoModel,
@@ -329,19 +329,19 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
       </div>
 
       {isPartialMode ? (
-        /* Scene Count — direct picker in partial mode (no video model chosen yet) */
+        /* Shot Count — direct picker in partial mode (no video model chosen yet) */
         <div>
-          <label htmlFor="sceneCount" className="mb-2 block text-sm font-medium text-gray-300">
-            Scenes: {directSceneCount}
+          <label htmlFor="shotCount" className="mb-2 block text-sm font-medium text-gray-300">
+            Shots: {directShotCount}
           </label>
           <input
-            id="sceneCount"
+            id="shotCount"
             type="range"
             min={1}
             max={50}
             step={1}
-            value={directSceneCount}
-            onChange={(e) => setDirectSceneCount(Number(e.target.value))}
+            value={directShotCount}
+            onChange={(e) => setDirectShotCount(Number(e.target.value))}
             className="w-full accent-cyan-500"
           />
           <div className="mt-1 flex justify-between text-xs text-gray-600">
@@ -351,10 +351,10 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         </div>
       ) : (
         <>
-          {/* Scene Length (clip duration) */}
+          {/* Shot Length (clip duration) */}
           <div>
             <label className="mb-2 block text-sm font-medium text-gray-300">
-              Scene Length
+              Shot Length
             </label>
             <div className="flex gap-2">
               {allowedDurations.map((d) => (
@@ -378,7 +378,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
           {/* Total Duration */}
           <div>
             <label htmlFor="totalDuration" className="mb-2 block text-sm font-medium text-gray-300">
-              Total Duration: {totalDuration}s ({sceneCount} scenes)
+              Total Duration: {totalDuration}s ({shotCount} shots)
             </label>
             <input
               id="totalDuration"
@@ -565,7 +565,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
           <div>
             <label className="text-sm font-medium text-gray-200">Quality Mode</label>
             <p className="text-xs text-gray-500 mt-0.5">
-              Generate multiple candidates per scene and auto-select the best
+              Generate multiple candidates per shot and auto-select the best
             </p>
           </div>
           <button
@@ -588,7 +588,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         {qualityMode && (
           <div className="mt-3 space-y-2">
             <div className="flex items-center gap-3">
-              <label className="text-xs text-gray-400">Candidates per scene:</label>
+              <label className="text-xs text-gray-400">Candidates per shot:</label>
               <div className="flex gap-1">
                 {[2, 3, 4].map((n) => (
                   <button
@@ -625,7 +625,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
           {runThrough && <span className="ml-1 text-xs text-cyan-400">(through {runThrough})</span>}
         </div>
         <div className="mt-1 text-xs text-gray-500">
-          {sceneCount} scenes
+          {shotCount} shots
           {runThrough !== "storyboard" && <> &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img</>}
           {runThrough !== "storyboard" && runThrough !== "keyframes" && <> &middot; ${videoCostPerSecond.toFixed(2)}/s video{audioActive ? " (with audio)" : ""}</>}
         </div>

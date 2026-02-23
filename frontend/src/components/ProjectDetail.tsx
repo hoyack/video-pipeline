@@ -5,21 +5,21 @@ import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, estimateCos
 import { useShowCost } from "../hooks/useShowCost.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { PipelineStepper } from "./PipelineStepper.tsx";
-import { SceneCard } from "./SceneCard.tsx";
+import { ShotCard } from "./ShotCard.tsx";
 import { EditForkPanel } from "./EditForkPanel.tsx";
 import { EditModeOverlay } from "./EditModeOverlay.tsx";
 import { ContinuePanel } from "./ContinuePanel.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { CheckpointLog } from "./CheckpointLog.tsx";
-import type { SceneDetail } from "../api/types.ts";
+import type { ShotDetail } from "../api/types.ts";
 
-function CopyAllScenesButton({ scenes }: { scenes: SceneDetail[] }) {
+function CopyAllShotsButton({ shots }: { shots: ShotDetail[] }) {
   const [copied, setCopied] = useState(false);
 
   function handleCopy() {
-    const text = scenes
+    const text = shots
       .map((s) => {
-        const lines = [`Scene ${s.scene_index + 1}:`];
+        const lines = [`Shot ${s.shot_index + 1}:`];
         lines.push(`  Description: ${s.description}`);
         if (s.start_frame_prompt) lines.push(`  Start Frame: ${s.start_frame_prompt}`);
         if (s.end_frame_prompt) lines.push(`  End Frame: ${s.end_frame_prompt}`);
@@ -52,7 +52,7 @@ function CopyAllScenesButton({ scenes }: { scenes: SceneDetail[] }) {
           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
           </svg>
-          Copy All Scenes
+          Copy All Shots
         </>
       )}
     </button>
@@ -293,8 +293,8 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
         </div>
         )}
         <div>
-          <span className="text-xs text-gray-500">Scenes</span>
-          <p className="mt-1 text-sm text-gray-200">{detail.scene_count}</p>
+          <span className="text-xs text-gray-500">Shots</span>
+          <p className="mt-1 text-sm text-gray-200">{detail.shot_count}</p>
         </div>
         {detail.total_duration && (
           <div>
@@ -433,20 +433,20 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
         </div>
       )}
 
-      {/* Scenes */}
-      {detail.scenes.length > 0 && (
+      {/* Shots */}
+      {detail.shots.length > 0 && (
         <div>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-medium text-gray-400">
-              Scenes ({detail.scenes.length})
+              Shots ({detail.shots.length})
             </h2>
-            <CopyAllScenesButton scenes={detail.scenes} />
+            <CopyAllShotsButton shots={detail.shots} />
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {detail.scenes.map((scene) => (
-              <SceneCard
-                key={scene.scene_index}
-                scene={scene}
+            {detail.shots.map((shot) => (
+              <ShotCard
+                key={shot.shot_index}
+                shot={shot}
                 defaultExpanded={false}
                 projectId={detail.project_id}
                 qualityMode={detail.quality_mode}

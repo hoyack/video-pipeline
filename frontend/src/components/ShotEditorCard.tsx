@@ -1,26 +1,26 @@
 import clsx from "clsx";
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { SceneDetail } from "../api/types.ts";
+import type { ShotDetail } from "../api/types.ts";
 import {
-  regenerateScene,
-  regenerateSceneText,
-  generateSceneFields,
+  regenerateShot,
+  regenerateShotText,
+  generateShotFields,
   uploadKeyframe,
   uploadClip,
-  deleteSceneKeyframe,
-  deleteSceneClip,
+  deleteShotKeyframe,
+  deleteShotClip,
 } from "../api/client.ts";
 import { usePolling } from "../hooks/usePolling.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
 
-interface SceneEditorCardProps {
-  scene: SceneDetail;
+interface ShotEditorCardProps {
+  shot: ShotDetail;
   edits: Record<string, string>;
-  onChange: (sceneIndex: number, field: string, value: string) => void;
-  onRemove: (sceneIndex: number) => void;
+  onChange: (shotIndex: number, field: string, value: string) => void;
+  onRemove: (shotIndex: number) => void;
   removed: boolean;
-  onRestore: (sceneIndex: number) => void;
+  onRestore: (shotIndex: number) => void;
   canRemove: boolean;
   projectId?: string;
   onAssetChanged?: () => void;
@@ -32,15 +32,15 @@ interface SceneEditorCardProps {
   videoModel?: string;
   /** Current image model selection from edit mode (used for keyframe regen) */
   imageModel?: string;
-  /** All scene edits across the project — for generate-scene-fields neighbor context */
-  allSceneEdits?: Record<number, Record<string, string>>;
+  /** All shot edits across the project — for generate-shot-fields neighbor context */
+  allShotEdits?: Record<number, Record<string, string>>;
   /** Current project prompt from edit form (may differ from saved DB value) */
   prompt?: string;
-  /** Called to generate a complete new scene (text + assets) from an empty slot */
-  onGenerateScene?: (sceneIndex: number) => Promise<void>;
-  /** True when background asset generation is in progress for this scene */
+  /** Called to generate a complete new shot (text + assets) from an empty slot */
+  onGenerateShot?: (shotIndex: number) => Promise<void>;
+  /** True when background asset generation is in progress for this shot */
   isGeneratingAssets?: boolean;
-  /** When true, parent WS handles refreshes — suppress per-scene polling */
+  /** When true, parent WS handles refreshes — suppress per-shot polling */
   wsConnected?: boolean;
   /** Whether this card is expanded (accordion) */
   expanded?: boolean;
@@ -216,8 +216,8 @@ function EditableField({
   );
 }
 
-export function SceneEditorCard({
-  scene,
+export function ShotEditorCard({
+  shot,
   edits,
   onChange,
   onRemove,
@@ -230,9 +230,9 @@ export function SceneEditorCard({
   textModel,
   videoModel,
   imageModel,
-  allSceneEdits,
+  allShotEdits,
   prompt,
-  onGenerateScene,
+  onGenerateShot,
   isGeneratingAssets,
   wsConnected,
   expanded,
@@ -240,8 +240,8 @@ export function SceneEditorCard({
   displayIndex,
   dragHandleListeners,
   dragHandleAttributes,
-}: SceneEditorCardProps) {
-  const idx = scene.scene_index;
+}: ShotEditorCardProps) {
+  const idx = shot.shot_index;
   const [promptDetailsOpen, setPromptDetailsOpen] = useState(false);
   const [regenerating, setRegenerating] = useState<string | null>(null);
   const [regenQueued, setRegenQueued] = useState<string | null>(null);
@@ -255,7 +255,7 @@ export function SceneEditorCard({
   const baselineUrl = useRef<string | null>(null);
   const pollCount = useRef(0);
   const POLL_INTERVAL = 5000;
-  const MAX_POLLS = 120; // 120 × 5s = 600s (10 min)
+  const MAX_POLLS = 120; // 120 * 5s = 600s (10 min)
 
   // Extra context state (for keyframe/clip regen)
   const [showContextFor, setShowContextFor] = useState<string | null>(null);
@@ -278,13 +278,13 @@ export function SceneEditorCard({
   const [emptySlotGenError, setEmptySlotGenError] = useState<string | null>(null);
 
   // Derived: pipeline generation_status from DB (set during bulk regen)
-  const genStatus = scene.generation_status ?? null;
+  const genStatus = shot.generation_status ?? null;
 
-  // Map target → scene URL field
+  // Map target -> shot URL field
   function getUrlForTarget(target: string): string | null | undefined {
-    if (target === "start_keyframe") return scene.start_keyframe_url;
-    if (target === "end_keyframe") return scene.end_keyframe_url;
-    if (target === "video_clip") return scene.clip_url;
+    if (target === "start_keyframe") return shot.start_keyframe_url;
+    if (target === "end_keyframe") return shot.end_keyframe_url;
+    if (target === "video_clip") return shot.clip_url;
     return undefined;
   }
 
@@ -311,7 +311,7 @@ export function SceneEditorCard({
       setRegenQueued(null);
       pollCount.current = 0;
     }
-  }, [pollingTarget, scene.start_keyframe_url, scene.end_keyframe_url, scene.clip_url]);
+  }, [pollingTarget, shot.start_keyframe_url, shot.end_keyframe_url, shot.clip_url]);
 
   async function handleRegenerate(target: string) {
     if (!projectId) return;
@@ -325,11 +325,11 @@ export function SceneEditorCard({
     if (context) {
       let basePrompt: string;
       if (target === "video_clip") {
-        basePrompt = edits["video_motion_prompt"] ?? scene.rewritten_video_prompt ?? scene.video_motion_prompt ?? "";
+        basePrompt = edits["video_motion_prompt"] ?? shot.rewritten_video_prompt ?? shot.video_motion_prompt ?? "";
       } else if (target === "start_keyframe") {
-        basePrompt = edits["start_frame_prompt"] ?? scene.rewritten_keyframe_prompt ?? scene.start_frame_prompt ?? "";
+        basePrompt = edits["start_frame_prompt"] ?? shot.rewritten_keyframe_prompt ?? shot.start_frame_prompt ?? "";
       } else {
-        basePrompt = edits["end_frame_prompt"] ?? scene.rewritten_keyframe_prompt ?? scene.end_frame_prompt ?? "";
+        basePrompt = edits["end_frame_prompt"] ?? shot.rewritten_keyframe_prompt ?? shot.end_frame_prompt ?? "";
       }
       promptOverrides = { [target]: basePrompt + "\n\n[Additional direction: " + context + "]" };
     }
@@ -339,13 +339,13 @@ export function SceneEditorCard({
       baselineUrl.current = getUrlForTarget(target) ?? null;
       pollCount.current = 0;
 
-      const resp = await regenerateScene(projectId, idx, {
+      const resp = await regenerateShot(projectId, idx, {
         targets: [target],
         skip_checkpoint: true,
         ...(promptOverrides && { prompt_overrides: promptOverrides }),
         video_model: videoModel,
         image_model: imageModel,
-        scene_edits: Object.keys(edits).length > 0 ? edits : undefined,
+        shot_edits: Object.keys(edits).length > 0 ? edits : undefined,
       });
       // Notify parent of baseline sha for revert-on-cancel
       onRegenStarted?.(resp.head_sha ?? null);
@@ -390,7 +390,7 @@ export function SceneEditorCard({
     if (!projectId) return;
     setActionError(null);
     try {
-      await deleteSceneKeyframe(projectId, idx, position);
+      await deleteShotKeyframe(projectId, idx, position);
       onAssetChanged?.();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Delete failed");
@@ -401,7 +401,7 @@ export function SceneEditorCard({
     if (!projectId) return;
     setActionError(null);
     try {
-      await deleteSceneClip(projectId, idx);
+      await deleteShotClip(projectId, idx);
       onAssetChanged?.();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Delete failed");
@@ -413,11 +413,11 @@ export function SceneEditorCard({
     setRegenTextFields((prev) => new Set(prev).add(field));
     setActionError(null);
     try {
-      const resp = await regenerateSceneText(projectId, idx, {
+      const resp = await regenerateShotText(projectId, idx, {
         field,
         extra_context: textExtraContext[field]?.trim() || undefined,
         text_model: textModel,
-        scene_edits: Object.keys(edits).length > 0 ? edits : undefined,
+        shot_edits: Object.keys(edits).length > 0 ? edits : undefined,
         prompt: prompt || undefined,
       });
       onChange(idx, field, resp.text);
@@ -438,23 +438,23 @@ export function SceneEditorCard({
   const getOriginal = (_field: string, original: string | null | undefined) =>
     original ?? "";
 
-  // Treat any scene with no content (no text, no assets) as "new" — not just synthetic empty slots
-  const isNewScene = scene.is_empty_slot || (
-    !scene.description &&
-    !scene.start_frame_prompt &&
-    !scene.end_frame_prompt &&
-    !scene.video_motion_prompt &&
-    !scene.has_start_keyframe &&
-    !scene.has_end_keyframe &&
-    !scene.has_clip
+  // Treat any shot with no content (no text, no assets) as "new" — not just synthetic empty slots
+  const isNewShot = shot.is_empty_slot || (
+    !shot.description &&
+    !shot.start_frame_prompt &&
+    !shot.end_frame_prompt &&
+    !shot.video_motion_prompt &&
+    !shot.has_start_keyframe &&
+    !shot.has_end_keyframe &&
+    !shot.has_clip
   );
 
-  async function handleGenerateFullScene() {
-    if (!onGenerateScene) return;
+  async function handleGenerateFullShot() {
+    if (!onGenerateShot) return;
     setEmptySlotGenerating(true);
     setEmptySlotGenError(null);
     try {
-      await onGenerateScene(idx);
+      await onGenerateShot(idx);
     } catch (err) {
       setEmptySlotGenError(err instanceof Error ? err.message : "Generation failed");
     } finally {
@@ -462,14 +462,14 @@ export function SceneEditorCard({
     }
   }
 
-  // Removed scene
+  // Removed shot
   if (removed) {
     return (
       <div className="rounded-lg border border-red-900/50 bg-gray-900/50 p-3">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-gray-500 line-through">
-            Scene {idx + 1} &mdash; {scene.description?.slice(0, 60)}
-            {(scene.description?.length ?? 0) > 60 ? "..." : ""}
+            Shot {idx + 1} &mdash; {shot.description?.slice(0, 60)}
+            {(shot.description?.length ?? 0) > 60 ? "..." : ""}
           </span>
           <button
             type="button"
@@ -489,7 +489,7 @@ export function SceneEditorCard({
     <div
       className={clsx(
         "rounded-lg border p-3",
-        isNewScene
+        isNewShot
           ? "border-dashed border-gray-700 bg-gray-900/50"
           : hasEdits ? "border-amber-700 bg-gray-900" : "border-gray-800 bg-gray-900",
       )}
@@ -524,36 +524,36 @@ export function SceneEditorCard({
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
             </svg>
           )}
-          <span className={clsx("text-xs font-medium flex-shrink-0", isNewScene ? "text-emerald-400" : "text-gray-400")}>
-            Scene {displayIndex ?? (idx + 1)}{isNewScene ? " — New" : ""}
+          <span className={clsx("text-xs font-medium flex-shrink-0", isNewShot ? "text-emerald-400" : "text-gray-400")}>
+            Shot {displayIndex ?? (idx + 1)}{isNewShot ? " — New" : ""}
           </span>
           {expanded === false && (
             <>
               <span className="text-xs text-gray-500 truncate min-w-0">
-                {getValue("scene_description", scene.description).slice(0, 80) || "No description"}
+                {getValue("shot_description", shot.description).slice(0, 80) || "No description"}
               </span>
               {/* Compact asset dots */}
               <span className="flex items-center gap-1 flex-shrink-0 ml-1">
-                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", scene.has_start_keyframe ? "bg-blue-400" : "bg-gray-700")} title="Start KF" />
-                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", scene.has_end_keyframe ? "bg-indigo-400" : "bg-gray-700")} title="End KF" />
-                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", scene.has_clip ? "bg-green-400" : "bg-gray-700")} title="Clip" />
+                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", shot.has_start_keyframe ? "bg-blue-400" : "bg-gray-700")} title="Start KF" />
+                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", shot.has_end_keyframe ? "bg-indigo-400" : "bg-gray-700")} title="End KF" />
+                <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", shot.has_clip ? "bg-green-400" : "bg-gray-700")} title="Clip" />
               </span>
-              {(scene.start_keyframe_staleness === "stale" || scene.end_keyframe_staleness === "stale" || scene.clip_staleness === "stale") && (
+              {(shot.start_keyframe_staleness === "stale" || shot.end_keyframe_staleness === "stale" || shot.clip_staleness === "stale") && (
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Has stale assets" />
               )}
             </>
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          {isNewScene && projectId && onGenerateScene && (
+          {isNewShot && projectId && onGenerateShot && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); handleGenerateFullScene(); }}
+              onClick={(e) => { e.stopPropagation(); handleGenerateFullShot(); }}
               disabled={emptySlotGenerating}
               className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-indigo-400 hover:bg-indigo-900/30 transition-colors disabled:opacity-50"
             >
               {emptySlotGenerating && <Spinner className="h-2.5 w-2.5 text-indigo-400" />}
-              {emptySlotGenerating ? "Generating..." : "Generate Scene"}
+              {emptySlotGenerating ? "Generating..." : "Generate Shot"}
             </button>
           )}
           {hasEdits && (
@@ -564,7 +564,7 @@ export function SceneEditorCard({
               type="button"
               onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
               className="text-gray-600 hover:text-red-400 transition-colors"
-              title="Remove scene"
+              title="Remove shot"
             >
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -595,7 +595,7 @@ export function SceneEditorCard({
         </div>
       )}
 
-      {/* Generating assets banner (shown after scene created, before assets arrive) */}
+      {/* Generating assets banner (shown after shot created, before assets arrive) */}
       {isGeneratingAssets && (
         <div className="mt-2 mb-2 flex items-center gap-1.5 rounded border border-indigo-800 bg-indigo-900/50 px-2 py-1 text-[11px] text-indigo-300">
           <Spinner className="h-2.5 w-2.5 text-indigo-400" />
@@ -624,17 +624,17 @@ export function SceneEditorCard({
             <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
               Start KF
             </span>
-            <StalenessBadge staleness={scene.start_keyframe_staleness} />
+            <StalenessBadge staleness={shot.start_keyframe_staleness} />
           </div>
           <div className="relative mt-0.5">
-            {scene.start_keyframe_url ? (
+            {shot.start_keyframe_url ? (
               <img
-                src={scene.start_keyframe_url}
-                alt={`Scene ${idx + 1} start`}
-                onClick={() => { setLightboxUrl(scene.start_keyframe_url!); setLightboxLabel(`Scene ${idx + 1} — Start Keyframe`); }}
+                src={shot.start_keyframe_url}
+                alt={`Shot ${idx + 1} start`}
+                onClick={() => { setLightboxUrl(shot.start_keyframe_url!); setLightboxLabel(`Shot ${idx + 1} — Start Keyframe`); }}
                 className={clsx(
                   "w-full rounded border cursor-pointer hover:brightness-110 transition",
-                  scene.start_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
+                  shot.start_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
                 )}
                 loading="lazy"
               />
@@ -645,7 +645,7 @@ export function SceneEditorCard({
                 ) : "No keyframe"}
               </div>
             )}
-            {genStatus === "generating_start_kf" && scene.start_keyframe_url && (
+            {genStatus === "generating_start_kf" && shot.start_keyframe_url && (
               <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-950/60">
                 <span className="flex items-center gap-1 text-[10px] text-indigo-400"><Spinner className="h-3 w-3" /> Regenerating...</span>
               </div>
@@ -684,7 +684,7 @@ export function SceneEditorCard({
                 >
                   Upload
                 </button>
-                {scene.has_start_keyframe && (
+                {shot.has_start_keyframe && (
                   <button
                     type="button"
                     onClick={() => handleDeleteKeyframe("start")}
@@ -713,17 +713,17 @@ export function SceneEditorCard({
             <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
               End KF
             </span>
-            <StalenessBadge staleness={scene.end_keyframe_staleness} />
+            <StalenessBadge staleness={shot.end_keyframe_staleness} />
           </div>
           <div className="relative mt-0.5">
-            {scene.end_keyframe_url ? (
+            {shot.end_keyframe_url ? (
               <img
-                src={scene.end_keyframe_url}
-                alt={`Scene ${idx + 1} end`}
-                onClick={() => { setLightboxUrl(scene.end_keyframe_url!); setLightboxLabel(`Scene ${idx + 1} — End Keyframe`); }}
+                src={shot.end_keyframe_url}
+                alt={`Shot ${idx + 1} end`}
+                onClick={() => { setLightboxUrl(shot.end_keyframe_url!); setLightboxLabel(`Shot ${idx + 1} — End Keyframe`); }}
                 className={clsx(
                   "w-full rounded border cursor-pointer hover:brightness-110 transition",
-                  scene.end_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
+                  shot.end_keyframe_staleness === "stale" ? "border-amber-700" : "border-gray-700",
                 )}
                 loading="lazy"
               />
@@ -734,7 +734,7 @@ export function SceneEditorCard({
                 ) : "No keyframe"}
               </div>
             )}
-            {genStatus === "generating_end_kf" && scene.end_keyframe_url && (
+            {genStatus === "generating_end_kf" && shot.end_keyframe_url && (
               <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-950/60">
                 <span className="flex items-center gap-1 text-[10px] text-indigo-400"><Spinner className="h-3 w-3" /> Regenerating...</span>
               </div>
@@ -773,7 +773,7 @@ export function SceneEditorCard({
                 >
                   Upload
                 </button>
-                {scene.has_end_keyframe && (
+                {shot.has_end_keyframe && (
                   <button
                     type="button"
                     onClick={() => handleDeleteKeyframe("end")}
@@ -804,16 +804,16 @@ export function SceneEditorCard({
           <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
             Clip
           </span>
-          <StalenessBadge staleness={scene.clip_staleness} />
+          <StalenessBadge staleness={shot.clip_staleness} />
         </div>
         <div className="relative mt-0.5">
-          {scene.clip_url ? (
+          {shot.clip_url ? (
             /* eslint-disable-next-line jsx-a11y/media-has-caption */
             <video
-              src={scene.clip_url}
+              src={shot.clip_url}
               className={clsx(
                 "w-full rounded border",
-                scene.clip_staleness === "stale" ? "border-amber-700" : "border-gray-700",
+                shot.clip_staleness === "stale" ? "border-amber-700" : "border-gray-700",
               )}
               controls
               preload="metadata"
@@ -826,7 +826,7 @@ export function SceneEditorCard({
               ) : "No clip"}
             </div>
           )}
-          {genStatus === "generating_clip" && scene.clip_url && (
+          {genStatus === "generating_clip" && shot.clip_url && (
             <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-950/60">
               <span className="flex items-center gap-1 text-[10px] text-indigo-400"><Spinner className="h-3 w-3" /> Regenerating clip...</span>
             </div>
@@ -835,7 +835,7 @@ export function SceneEditorCard({
       </div>
 
       {/* Clip staleness + actions */}
-      {scene.has_clip && scene.clip_staleness === "stale" && !scene.clip_url && (
+      {shot.has_clip && shot.clip_staleness === "stale" && !shot.clip_url && (
         <div className="mb-2 flex items-center gap-1 rounded border border-amber-800/50 bg-amber-950/30 px-2 py-1">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
           <span className="text-[11px] text-amber-400">Video clip is stale — prompt has changed</span>
@@ -874,7 +874,7 @@ export function SceneEditorCard({
             >
               Upload Clip
             </button>
-            {scene.has_clip && (
+            {shot.has_clip && (
               <button
                 type="button"
                 onClick={handleDeleteClip}
@@ -900,25 +900,25 @@ export function SceneEditorCard({
       {/* Editable fields */}
       <EditableField
         label="Description"
-        value={getValue("scene_description", scene.description)}
-        originalValue={getOriginal("scene_description", scene.description)}
-        onChange={(v) => onChange(idx, "scene_description", v)}
-        onClear={() => onChange(idx, "scene_description", "")}
-        onRegen={projectId && textModel ? () => handleTextRegen("scene_description") : undefined}
-        regenerating={regenTextFields.has("scene_description") || genStatus === "generating_text"}
-        showContext={showTextContextFor === "scene_description"}
-        onToggleContext={() => setShowTextContextFor((prev) => prev === "scene_description" ? null : "scene_description")}
-        contextValue={textExtraContext["scene_description"] ?? ""}
-        onContextChange={(v) => setTextExtraContext((prev) => ({ ...prev, scene_description: v }))}
-        onOpenEditor={() => setEditorField("scene_description")}
+        value={getValue("shot_description", shot.description)}
+        originalValue={getOriginal("shot_description", shot.description)}
+        onChange={(v) => onChange(idx, "shot_description", v)}
+        onClear={() => onChange(idx, "shot_description", "")}
+        onRegen={projectId && textModel ? () => handleTextRegen("shot_description") : undefined}
+        regenerating={regenTextFields.has("shot_description") || genStatus === "generating_text"}
+        showContext={showTextContextFor === "shot_description"}
+        onToggleContext={() => setShowTextContextFor((prev) => prev === "shot_description" ? null : "shot_description")}
+        contextValue={textExtraContext["shot_description"] ?? ""}
+        onContextChange={(v) => setTextExtraContext((prev) => ({ ...prev, shot_description: v }))}
+        onOpenEditor={() => setEditorField("shot_description")}
       />
       <EditableField
         label="Start Frame Prompt"
-        value={getValue("start_frame_prompt", scene.start_frame_prompt)}
-        originalValue={getOriginal("start_frame_prompt", scene.start_frame_prompt)}
+        value={getValue("start_frame_prompt", shot.start_frame_prompt)}
+        originalValue={getOriginal("start_frame_prompt", shot.start_frame_prompt)}
         onChange={(v) => onChange(idx, "start_frame_prompt", v)}
         onClear={() => onChange(idx, "start_frame_prompt", "")}
-        staleness={scene.start_keyframe_staleness}
+        staleness={shot.start_keyframe_staleness}
         onRegen={projectId && textModel ? () => handleTextRegen("start_frame_prompt") : undefined}
         regenerating={regenTextFields.has("start_frame_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "start_frame_prompt"}
@@ -929,11 +929,11 @@ export function SceneEditorCard({
       />
       <EditableField
         label="End Frame Prompt"
-        value={getValue("end_frame_prompt", scene.end_frame_prompt)}
-        originalValue={getOriginal("end_frame_prompt", scene.end_frame_prompt)}
+        value={getValue("end_frame_prompt", shot.end_frame_prompt)}
+        originalValue={getOriginal("end_frame_prompt", shot.end_frame_prompt)}
         onChange={(v) => onChange(idx, "end_frame_prompt", v)}
         onClear={() => onChange(idx, "end_frame_prompt", "")}
-        staleness={scene.end_keyframe_staleness}
+        staleness={shot.end_keyframe_staleness}
         onRegen={projectId && textModel ? () => handleTextRegen("end_frame_prompt") : undefined}
         regenerating={regenTextFields.has("end_frame_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "end_frame_prompt"}
@@ -944,11 +944,11 @@ export function SceneEditorCard({
       />
       <EditableField
         label="Motion Prompt"
-        value={getValue("video_motion_prompt", scene.video_motion_prompt)}
-        originalValue={getOriginal("video_motion_prompt", scene.video_motion_prompt)}
+        value={getValue("video_motion_prompt", shot.video_motion_prompt)}
+        originalValue={getOriginal("video_motion_prompt", shot.video_motion_prompt)}
         onChange={(v) => onChange(idx, "video_motion_prompt", v)}
         onClear={() => onChange(idx, "video_motion_prompt", "")}
-        staleness={scene.clip_staleness}
+        staleness={shot.clip_staleness}
         onRegen={projectId && textModel ? () => handleTextRegen("video_motion_prompt") : undefined}
         regenerating={regenTextFields.has("video_motion_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "video_motion_prompt"}
@@ -959,8 +959,8 @@ export function SceneEditorCard({
       />
       <EditableField
         label="Transition Notes"
-        value={getValue("transition_notes", scene.transition_notes)}
-        originalValue={getOriginal("transition_notes", scene.transition_notes)}
+        value={getValue("transition_notes", shot.transition_notes)}
+        originalValue={getOriginal("transition_notes", shot.transition_notes)}
         onChange={(v) => onChange(idx, "transition_notes", v)}
         onClear={() => onChange(idx, "transition_notes", "")}
         onRegen={projectId && textModel ? () => handleTextRegen("transition_notes") : undefined}
@@ -973,8 +973,8 @@ export function SceneEditorCard({
       />
 
       {/* Prompt details (collapsible) */}
-      {(scene.rewritten_keyframe_prompt || scene.rewritten_video_prompt ||
-        scene.start_keyframe_prompt_used || scene.clip_prompt_used) && (
+      {(shot.rewritten_keyframe_prompt || shot.rewritten_video_prompt ||
+        shot.start_keyframe_prompt_used || shot.clip_prompt_used) && (
         <div className="mt-2">
           <button
             type="button"
@@ -991,34 +991,34 @@ export function SceneEditorCard({
           </button>
           {promptDetailsOpen && (
             <div className="mt-1 space-y-1.5 rounded border border-gray-800 bg-gray-950 p-2 text-[11px]">
-              {scene.rewritten_keyframe_prompt && (
+              {shot.rewritten_keyframe_prompt && (
                 <div>
                   <span className="font-medium text-gray-500">Rewritten KF:</span>
-                  <p className="text-gray-400">{scene.rewritten_keyframe_prompt}</p>
+                  <p className="text-gray-400">{shot.rewritten_keyframe_prompt}</p>
                 </div>
               )}
-              {scene.rewritten_video_prompt && (
+              {shot.rewritten_video_prompt && (
                 <div>
                   <span className="font-medium text-gray-500">Rewritten Video:</span>
-                  <p className="text-gray-400">{scene.rewritten_video_prompt}</p>
+                  <p className="text-gray-400">{shot.rewritten_video_prompt}</p>
                 </div>
               )}
-              {scene.start_keyframe_prompt_used && (
+              {shot.start_keyframe_prompt_used && (
                 <div>
                   <span className="font-medium text-gray-500">Start KF sent:</span>
-                  <p className="text-gray-400">{scene.start_keyframe_prompt_used}</p>
+                  <p className="text-gray-400">{shot.start_keyframe_prompt_used}</p>
                 </div>
               )}
-              {scene.end_keyframe_prompt_used && (
+              {shot.end_keyframe_prompt_used && (
                 <div>
                   <span className="font-medium text-gray-500">End KF sent:</span>
-                  <p className="text-gray-400">{scene.end_keyframe_prompt_used}</p>
+                  <p className="text-gray-400">{shot.end_keyframe_prompt_used}</p>
                 </div>
               )}
-              {scene.clip_prompt_used && (
+              {shot.clip_prompt_used && (
                 <div>
                   <span className="font-medium text-gray-500">Video sent:</span>
-                  <p className="text-gray-400">{scene.clip_prompt_used}</p>
+                  <p className="text-gray-400">{shot.clip_prompt_used}</p>
                 </div>
               )}
             </div>
@@ -1061,22 +1061,22 @@ export function SceneEditorCard({
       {/* Markdown editor modal */}
       {editorField && (() => {
         const fieldLabelMap: Record<string, string> = {
-          scene_description: "Description",
+          shot_description: "Description",
           start_frame_prompt: "Start Frame Prompt",
           end_frame_prompt: "End Frame Prompt",
           video_motion_prompt: "Motion Prompt",
           transition_notes: "Transition Notes",
         };
         const fieldOriginalMap: Record<string, string | null | undefined> = {
-          scene_description: scene.description,
-          start_frame_prompt: scene.start_frame_prompt,
-          end_frame_prompt: scene.end_frame_prompt,
-          video_motion_prompt: scene.video_motion_prompt,
-          transition_notes: scene.transition_notes,
+          shot_description: shot.description,
+          start_frame_prompt: shot.start_frame_prompt,
+          end_frame_prompt: shot.end_frame_prompt,
+          video_motion_prompt: shot.video_motion_prompt,
+          transition_notes: shot.transition_notes,
         };
         return (
           <MarkdownEditorModal
-            label={`Scene ${idx + 1} — ${fieldLabelMap[editorField] ?? editorField}`}
+            label={`Shot ${idx + 1} — ${fieldLabelMap[editorField] ?? editorField}`}
             value={getValue(editorField, fieldOriginalMap[editorField])}
             onChange={(v) => onChange(idx, editorField, v)}
             onClose={() => setEditorField(null)}

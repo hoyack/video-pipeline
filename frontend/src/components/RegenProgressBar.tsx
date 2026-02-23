@@ -1,9 +1,9 @@
 interface RegenProgressBarProps {
   scope: string | null;
   phase: string | null;
-  totalScenes: number;
-  completedScenes: number;
-  currentSceneIndex: number | null;
+  totalShots: number;
+  completedShots: number;
+  currentShotIndex: number | null;
   currentStatus: string | null;
   wsConnected: boolean;
   completedPhases: string[];
@@ -42,9 +42,9 @@ const PHASE_WEIGHTS: Record<string, number> = {
 export function RegenProgressBar({
   scope,
   phase,
-  totalScenes,
-  completedScenes,
-  currentSceneIndex,
+  totalShots,
+  completedShots,
+  currentShotIndex,
   currentStatus,
   wsConnected,
   completedPhases,
@@ -62,7 +62,7 @@ export function RegenProgressBar({
     0,
   );
   const currentPhaseWeight = phase ? (PHASE_WEIGHTS[phase] ?? 1) : 0;
-  const currentPhasePct = totalScenes > 0 ? completedScenes / totalScenes : 0;
+  const currentPhasePct = totalShots > 0 ? completedShots / totalShots : 0;
   const overallPct = totalWeight > 0
     ? Math.round(((completedWeight + currentPhaseWeight * currentPhasePct) / totalWeight) * 100)
     : 0;
@@ -79,9 +79,9 @@ export function RegenProgressBar({
             </span>
           )}
           {phaseLabel}
-          {currentSceneIndex !== null && (
+          {currentShotIndex !== null && (
             <span className="text-gray-400 ml-1">
-              — Scene {currentSceneIndex + 1}
+              — Shot {currentShotIndex + 1}
               {statusLabel && <span className="ml-1 text-gray-500">({statusLabel})</span>}
             </span>
           )}

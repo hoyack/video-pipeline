@@ -36,7 +36,7 @@ class RewrittenKeyframePromptOutput(BaseModel):
     )
     continuity_applied: Optional[str] = Field(
         default=None,
-        description="Summary of continuity corrections applied (None if scene 0)"
+        description="Summary of continuity corrections applied (None if shot 0)"
     )
 
 
@@ -65,5 +65,5 @@ class RewrittenVideoPromptOutput(BaseModel):
     )
     continuity_applied: Optional[str] = Field(
         default=None,
-        description="Summary of continuity corrections applied (None if scene 0)"
+        description="Summary of continuity corrections applied (None if shot 0)"
     )

@@ -111,7 +111,7 @@ export function estimateCost(
   videoModelId: string,
   enableAudio: boolean = false,
 ): number {
-  const sceneCount = Math.ceil(totalDuration / clipDuration);
+  const shotCount = Math.ceil(totalDuration / clipDuration);
   const videoModel = VIDEO_MODELS.find((m) => m.id === videoModelId);
   const imageModel = IMAGE_MODELS.find((m) => m.id === imageModelId);
   const textModel = TEXT_MODELS.find((m) => m.id === textModelId);
@@ -119,8 +119,8 @@ export function estimateCost(
   const videoCostPerSecond = enableAudio && videoModel?.supportsAudio
     ? (videoModel?.costPerSecondAudio ?? 0.40)
     : (videoModel?.costPerSecond ?? 0.40);
-  const videoCost = sceneCount * clipDuration * videoCostPerSecond;
-  const imageCost = (sceneCount + 1) * (imageModel?.costPerImage ?? 0.04);
+  const videoCost = shotCount * clipDuration * videoCostPerSecond;
+  const imageCost = (shotCount + 1) * (imageModel?.costPerImage ?? 0.04);
   const textCost = textModel?.costPerCall ?? 0.01;
 
   return videoCost + imageCost + textCost;
@@ -139,7 +139,7 @@ export function estimatePartialCost(
   if (runThrough === null) {
     return estimateCost(totalDuration, clipDuration, textModelId, imageModelId, videoModelId, enableAudio);
   }
-  const sceneCount = Math.ceil(totalDuration / clipDuration);
+  const shotCount = Math.ceil(totalDuration / clipDuration);
   const textModel = TEXT_MODELS.find((m) => m.id === textModelId);
   const textCost = textModel?.costPerCall ?? 0.01;
 
@@ -148,7 +148,7 @@ export function estimatePartialCost(
   }
 
   const imageModel = IMAGE_MODELS.find((m) => m.id === imageModelId);
-  const imageCost = (sceneCount + 1) * (imageModel?.costPerImage ?? 0.04);
+  const imageCost = (shotCount + 1) * (imageModel?.costPerImage ?? 0.04);
 
   if (runThrough === "keyframes") {
     return textCost + imageCost;
@@ -159,7 +159,7 @@ export function estimatePartialCost(
   const videoCostPerSecond = enableAudio && videoModel?.supportsAudio
     ? (videoModel?.costPerSecondAudio ?? 0.40)
     : (videoModel?.costPerSecond ?? 0.40);
-  const videoCost = sceneCount * clipDuration * videoCostPerSecond;
+  const videoCost = shotCount * clipDuration * videoCostPerSecond;
 
   return textCost + imageCost + videoCost;
 }

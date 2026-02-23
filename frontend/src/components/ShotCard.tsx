@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import clsx from "clsx";
-import type { SceneDetail, CandidateScore } from "../api/types.ts";
+import type { ShotDetail, CandidateScore } from "../api/types.ts";
 import { listCandidates, selectCandidate } from "../api/client.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { ImageLightbox } from "./ImageLightbox.tsx";
@@ -51,15 +51,15 @@ function PulseDot({ failed }: { failed?: boolean }) {
   );
 }
 
-export function SceneCard({
-  scene,
+export function ShotCard({
+  shot,
   defaultExpanded = false,
   projectId,
   qualityMode = false,
   onViewManifest,
   manifestId,
 }: {
-  scene: SceneDetail;
+  shot: ShotDetail;
   defaultExpanded?: boolean;
   projectId?: string;
   qualityMode?: boolean;
@@ -67,15 +67,15 @@ export function SceneCard({
   manifestId?: string | null;
 }) {
   const hasExpandableContent = !!(
-    scene.start_frame_prompt ||
-    scene.end_frame_prompt ||
-    scene.video_motion_prompt ||
-    scene.transition_notes ||
-    scene.start_keyframe_url ||
-    scene.end_keyframe_url ||
-    scene.clip_url
+    shot.start_frame_prompt ||
+    shot.end_frame_prompt ||
+    shot.video_motion_prompt ||
+    shot.transition_notes ||
+    shot.start_keyframe_url ||
+    shot.end_keyframe_url ||
+    shot.clip_url
   );
-  const genStatus = scene.generation_status ?? null;
+  const genStatus = shot.generation_status ?? null;
   const isGenerating = !!genStatus && genStatus !== "failed";
 
   const [expanded, setExpanded] = useState(defaultExpanded || isGenerating);
@@ -86,28 +86,28 @@ export function SceneCard({
 
   // Track previous asset states for arrival flash
   const prevAssets = useRef({
-    start: scene.has_start_keyframe,
-    end: scene.has_end_keyframe,
-    clip: scene.has_clip,
+    start: shot.has_start_keyframe,
+    end: shot.has_end_keyframe,
+    clip: shot.has_clip,
   });
 
   useEffect(() => {
     const prev = prevAssets.current;
     const arrived =
-      (!prev.start && scene.has_start_keyframe) ||
-      (!prev.end && scene.has_end_keyframe) ||
-      (!prev.clip && scene.has_clip);
+      (!prev.start && shot.has_start_keyframe) ||
+      (!prev.end && shot.has_end_keyframe) ||
+      (!prev.clip && shot.has_clip);
     prevAssets.current = {
-      start: scene.has_start_keyframe,
-      end: scene.has_end_keyframe,
-      clip: scene.has_clip,
+      start: shot.has_start_keyframe,
+      end: shot.has_end_keyframe,
+      clip: shot.has_clip,
     };
     if (arrived) {
       setFlash(true);
       const t = setTimeout(() => setFlash(false), 1200);
       return () => clearTimeout(t);
     }
-  }, [scene.has_start_keyframe, scene.has_end_keyframe, scene.has_clip]);
+  }, [shot.has_start_keyframe, shot.has_end_keyframe, shot.has_clip]);
 
   // Auto-expand when generation_status becomes active
   useEffect(() => {
@@ -116,24 +116,24 @@ export function SceneCard({
 
   useEffect(() => {
     if (qualityMode && projectId && expanded && !candidatesLoaded) {
-      listCandidates(projectId, scene.scene_index)
+      listCandidates(projectId, shot.shot_index)
         .then((data) => {
           setCandidates(data);
           setCandidatesLoaded(true);
         })
-        .catch(() => {}); // Non-critical — scene card still shows normally
+        .catch(() => {}); // Non-critical — shot card still shows normally
     }
-  }, [qualityMode, projectId, expanded, candidatesLoaded, scene.scene_index]);
+  }, [qualityMode, projectId, expanded, candidatesLoaded, shot.shot_index]);
 
-  const sceneLabel = `Scene ${scene.scene_index + 1}`;
+  const shotLabel = `Shot ${shot.shot_index + 1}`;
 
-  function buildSceneText(): string {
-    const lines = [sceneLabel];
-    lines.push(`Description: ${scene.description}`);
-    if (scene.start_frame_prompt) lines.push(`Start Frame Prompt: ${scene.start_frame_prompt}`);
-    if (scene.end_frame_prompt) lines.push(`End Frame Prompt: ${scene.end_frame_prompt}`);
-    if (scene.video_motion_prompt) lines.push(`Motion: ${scene.video_motion_prompt}`);
-    if (scene.transition_notes) lines.push(`Transition: ${scene.transition_notes}`);
+  function buildShotText(): string {
+    const lines = [shotLabel];
+    lines.push(`Description: ${shot.description}`);
+    if (shot.start_frame_prompt) lines.push(`Start Frame Prompt: ${shot.start_frame_prompt}`);
+    if (shot.end_frame_prompt) lines.push(`End Frame Prompt: ${shot.end_frame_prompt}`);
+    if (shot.video_motion_prompt) lines.push(`Motion: ${shot.video_motion_prompt}`);
+    if (shot.transition_notes) lines.push(`Transition: ${shot.transition_notes}`);
     return lines.join("\n");
   }
 
@@ -150,9 +150,9 @@ export function SceneCard({
       <div className="mb-1 flex items-center justify-between">
         <div className="flex items-center gap-1">
           <span className="text-xs font-medium text-gray-400">
-            {sceneLabel}
+            {shotLabel}
           </span>
-          <CopyButton text={buildSceneText()} />
+          <CopyButton text={buildShotText()} />
         </div>
         <div className="flex items-center gap-1.5">
           {hasExpandableContent && (
@@ -172,10 +172,10 @@ export function SceneCard({
           <span
             className={clsx(
               "text-[10px] font-medium uppercase",
-              scene.has_clip ? "text-green-400" : "text-gray-500",
+              shot.has_clip ? "text-green-400" : "text-gray-500",
             )}
           >
-            {scene.clip_status ?? scene.status}
+            {shot.clip_status ?? shot.status}
           </span>
         </div>
       </div>
@@ -185,7 +185,7 @@ export function SceneCard({
           !expanded && "line-clamp-2",
         )}
       >
-        {scene.description}
+        {shot.description}
       </p>
       {genStatus && (
         <div className="mb-2 flex items-center gap-1.5">
@@ -202,38 +202,38 @@ export function SceneCard({
       )}
       {expanded && (
         <div className="border-t border-gray-800 pt-1">
-          {(scene.start_keyframe_url || scene.end_keyframe_url) && (
+          {(shot.start_keyframe_url || shot.end_keyframe_url) && (
             <div className="mt-2 flex gap-2">
-              {scene.start_keyframe_url && (
+              {shot.start_keyframe_url && (
                 <div className="flex-1">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                     Start Keyframe
                   </span>
                   <img
-                    src={scene.start_keyframe_url}
-                    alt={`${sceneLabel} start`}
+                    src={shot.start_keyframe_url}
+                    alt={`${shotLabel} start`}
                     className="mt-0.5 w-full cursor-zoom-in rounded border border-gray-700 hover:border-gray-500 transition-colors"
                     loading="lazy"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setLightboxImage({ src: scene.start_keyframe_url!, title: `${sceneLabel} — Start Keyframe` });
+                      setLightboxImage({ src: shot.start_keyframe_url!, title: `${shotLabel} — Start Keyframe` });
                     }}
                   />
                 </div>
               )}
-              {scene.end_keyframe_url && (
+              {shot.end_keyframe_url && (
                 <div className="flex-1">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                     End Keyframe
                   </span>
                   <img
-                    src={scene.end_keyframe_url}
-                    alt={`${sceneLabel} end`}
+                    src={shot.end_keyframe_url}
+                    alt={`${shotLabel} end`}
                     className="mt-0.5 w-full cursor-zoom-in rounded border border-gray-700 hover:border-gray-500 transition-colors"
                     loading="lazy"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setLightboxImage({ src: scene.end_keyframe_url!, title: `${sceneLabel} — End Keyframe` });
+                      setLightboxImage({ src: shot.end_keyframe_url!, title: `${shotLabel} — End Keyframe` });
                     }}
                   />
                 </div>
@@ -241,13 +241,13 @@ export function SceneCard({
             </div>
           )}
           {/* Identity References (Phase 8) */}
-          {scene.selected_references && scene.selected_references.length > 0 && (
+          {shot.selected_references && shot.selected_references.length > 0 && (
             <div className="mt-2">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                 Identity References
               </span>
               <div className="mt-1 flex flex-wrap gap-2">
-                {scene.selected_references.map((ref) => {
+                {shot.selected_references.map((ref) => {
                   const canNavigate = !!(onViewManifest && manifestId);
                   return (
                     <button
@@ -286,36 +286,36 @@ export function SceneCard({
               </div>
             </div>
           )}
-          {scene.start_frame_prompt && (
-            <PromptSection label="Start Frame Prompt" text={scene.start_frame_prompt} copyable />
+          {shot.start_frame_prompt && (
+            <PromptSection label="Start Frame Prompt" text={shot.start_frame_prompt} copyable />
           )}
-          {scene.end_frame_prompt && (
-            <PromptSection label="End Frame Prompt" text={scene.end_frame_prompt} copyable />
+          {shot.end_frame_prompt && (
+            <PromptSection label="End Frame Prompt" text={shot.end_frame_prompt} copyable />
           )}
-          {scene.video_motion_prompt && (
-            <PromptSection label="Motion" text={scene.video_motion_prompt} copyable />
+          {shot.video_motion_prompt && (
+            <PromptSection label="Motion" text={shot.video_motion_prompt} copyable />
           )}
-          {scene.transition_notes && (
-            <PromptSection label="Transition" text={scene.transition_notes} copyable />
+          {shot.transition_notes && (
+            <PromptSection label="Transition" text={shot.transition_notes} copyable />
           )}
           {/* Prompt chain viewers */}
-          {(scene.rewritten_keyframe_prompt || scene.start_keyframe_prompt_used) && (
+          {(shot.rewritten_keyframe_prompt || shot.start_keyframe_prompt_used) && (
             <div className="mt-2 space-y-1" onClick={(e) => e.stopPropagation()}>
               <PromptChainViewer
                 label="Keyframe"
-                basePrompt={scene.start_frame_prompt}
-                rewrittenPrompt={scene.rewritten_keyframe_prompt}
-                sentPrompt={scene.start_keyframe_prompt_used}
+                basePrompt={shot.start_frame_prompt}
+                rewrittenPrompt={shot.rewritten_keyframe_prompt}
+                sentPrompt={shot.start_keyframe_prompt_used}
               />
             </div>
           )}
-          {(scene.rewritten_video_prompt || scene.clip_prompt_used) && (
+          {(shot.rewritten_video_prompt || shot.clip_prompt_used) && (
             <div className="mt-1" onClick={(e) => e.stopPropagation()}>
               <PromptChainViewer
                 label="Video"
-                basePrompt={scene.video_motion_prompt}
-                rewrittenPrompt={scene.rewritten_video_prompt}
-                sentPrompt={scene.clip_prompt_used}
+                basePrompt={shot.video_motion_prompt}
+                rewrittenPrompt={shot.rewritten_video_prompt}
+                sentPrompt={shot.clip_prompt_used}
               />
             </div>
           )}
@@ -332,7 +332,7 @@ export function SceneCard({
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!c.is_selected && projectId) {
-                        selectCandidate(projectId, scene.scene_index, c.candidate_id)
+                        selectCandidate(projectId, shot.shot_index, c.candidate_id)
                           .then(() => {
                             setCandidates((prev) =>
                               prev.map((p) => ({
@@ -402,14 +402,14 @@ export function SceneCard({
       )}
 
       {/* Clip video player */}
-      {scene.clip_url && (
+      {shot.clip_url && (
         <div className="mt-2">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
             Clip
           </span>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video
-            src={scene.clip_url}
+            src={shot.clip_url}
             className="mt-0.5 w-full rounded border border-gray-700"
             controls
             preload="metadata"
@@ -419,9 +419,9 @@ export function SceneCard({
       )}
 
       <div className="mt-2 flex items-center gap-1.5">
-        <Dot filled={scene.has_start_keyframe} color="bg-blue-400" />
-        <Dot filled={scene.has_end_keyframe} color="bg-indigo-400" />
-        <Dot filled={scene.has_clip} color="bg-green-400" />
+        <Dot filled={shot.has_start_keyframe} color="bg-blue-400" />
+        <Dot filled={shot.has_end_keyframe} color="bg-indigo-400" />
+        <Dot filled={shot.has_clip} color="bg-green-400" />
         <span className="ml-1 text-[10px] text-gray-600">
           KF start / KF end / clip
         </span>

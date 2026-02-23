@@ -211,9 +211,9 @@ export function Dashboard() {
           labelFn={(k) => k}
         />
         <DistributionSection
-          title="Scenes per Project"
-          data={metrics.scene_count_counts}
-          labelFn={(k) => `${k} scene${k === "1" ? "" : "s"}`}
+          title="Shots per Project"
+          data={metrics.shot_count_counts}
+          labelFn={(k) => `${k} shot${k === "1" ? "" : "s"}`}
         />
       </div>
     </div>

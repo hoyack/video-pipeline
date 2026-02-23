@@ -59,7 +59,7 @@ class PipelineConfig(BaseModel):
     default_style: str
     default_aspect_ratio: str
     default_clip_duration: int
-    max_scenes: int
+    max_shots: int
     image_gen_delay: int
     video_poll_interval: int
     video_poll_max: int

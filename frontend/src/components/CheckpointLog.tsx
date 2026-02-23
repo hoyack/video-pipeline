@@ -144,20 +144,20 @@ export function CheckpointLog({ projectId, headSha, onReverted }: CheckpointLogP
                               {change.new && <span className="text-green-400"> {change.new}</span>}
                             </span>
                           )}
-                          {change.type === "scene_field" && (
+                          {change.type === "shot_field" && (
                             <span>
-                              Scene {(change.scene_index ?? 0) + 1}: changed{" "}
+                              Shot {(change.shot_index ?? 0) + 1}: changed{" "}
                               <span className="text-gray-300">{change.field}</span>
                             </span>
                           )}
-                          {change.type === "scene_added" && (
+                          {change.type === "shot_added" && (
                             <span className="text-green-400">
-                              Added scene {(change.scene_index ?? 0) + 1}
+                              Added shot {(change.shot_index ?? 0) + 1}
                             </span>
                           )}
-                          {change.type === "scene_removed" && (
+                          {change.type === "shot_removed" && (
                             <span className="text-red-400">
-                              Removed scene {(change.scene_index ?? 0) + 1}
+                              Removed shot {(change.shot_index ?? 0) + 1}
                             </span>
                           )}
                         </div>

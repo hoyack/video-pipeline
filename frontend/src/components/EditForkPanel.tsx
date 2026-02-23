@@ -13,7 +13,7 @@ import {
   VIDEO_MODELS,
   estimateCost,
 } from "../lib/constants.ts";
-import { EditableSceneCard } from "./EditableSceneCard.tsx";
+import { EditableShotCard } from "./EditableShotCard.tsx";
 
 interface EditForkPanelProps {
   detail: ProjectDetail;
@@ -39,11 +39,11 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
   const [visionModel, setVisionModel] = useState(detail.vision_model ?? "");
   const [enableAudio, setEnableAudio] = useState(detail.audio_enabled ?? false);
 
-  // Scene edits: { sceneIndex: { field: value } }
-  const [sceneEdits, setSceneEdits] = useState<Record<number, Record<string, string>>>({});
+  // Shot edits: { shotIndex: { field: value } }
+  const [shotEdits, setShotEdits] = useState<Record<number, Record<string, string>>>({});
 
   // Deletion state
-  const [deletedScenes, setDeletedScenes] = useState<Set<number>>(new Set());
+  const [deletedShots, setDeletedShots] = useState<Set<number>>(new Set());
   const [clearedKeyframes, setClearedKeyframes] = useState<Set<number>>(new Set());
 
   const [submitting, setSubmitting] = useState(false);
@@ -111,7 +111,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
 
   const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel) ?? VIDEO_MODELS[0];
   const allowedDurations = selectedVideoModel.allowedDurations;
-  const sceneCount = Math.round(totalDuration / clipDuration);
+  const shotCount = Math.round(totalDuration / clipDuration);
   const audioActive = enableAudio && selectedVideoModel.supportsAudio;
 
   function handleClipDurationChange(newClip: number) {
@@ -131,47 +131,47 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     setEnableAudio(model.supportsAudio);
   }
 
-  function handleSceneChange(sceneIndex: number, field: string, value: string) {
-    setSceneEdits((prev) => {
-      const scene = detail.scenes.find((s) => s.scene_index === sceneIndex);
-      if (!scene) return prev;
+  function handleShotChange(shotIndex: number, field: string, value: string) {
+    setShotEdits((prev) => {
+      const shot = detail.shots.find((s) => s.shot_index === shotIndex);
+      if (!shot) return prev;
 
       // Get original value
       const origMap: Record<string, string | null | undefined> = {
-        scene_description: scene.description,
-        start_frame_prompt: scene.start_frame_prompt,
-        end_frame_prompt: scene.end_frame_prompt,
-        video_motion_prompt: scene.video_motion_prompt,
-        transition_notes: scene.transition_notes,
+        shot_description: shot.description,
+        start_frame_prompt: shot.start_frame_prompt,
+        end_frame_prompt: shot.end_frame_prompt,
+        video_motion_prompt: shot.video_motion_prompt,
+        transition_notes: shot.transition_notes,
       };
       const original = origMap[field] ?? "";
 
-      const sceneEditsForIdx = { ...(prev[sceneIndex] || {}) };
+      const shotEditsForIdx = { ...(prev[shotIndex] || {}) };
 
       if (value === original) {
         // Remove edit if back to original
-        delete sceneEditsForIdx[field];
+        delete shotEditsForIdx[field];
       } else {
-        sceneEditsForIdx[field] = value;
+        shotEditsForIdx[field] = value;
       }
 
       const next = { ...prev };
-      if (Object.keys(sceneEditsForIdx).length === 0) {
-        delete next[sceneIndex];
+      if (Object.keys(shotEditsForIdx).length === 0) {
+        delete next[shotIndex];
       } else {
-        next[sceneIndex] = sceneEditsForIdx;
+        next[shotIndex] = shotEditsForIdx;
       }
       return next;
     });
   }
 
-  function handleDeleteScene(idx: number) {
-    setDeletedScenes((prev) => new Set(prev).add(idx));
+  function handleDeleteShot(idx: number) {
+    setDeletedShots((prev) => new Set(prev).add(idx));
     setTotalDuration((prev) => Math.max(clipDuration, prev - clipDuration));
   }
 
-  function handleRestoreScene(idx: number) {
-    setDeletedScenes((prev) => {
+  function handleRestoreShot(idx: number) {
+    setDeletedShots((prev) => {
       const next = new Set(prev);
       next.delete(idx);
       return next;
@@ -191,7 +191,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     });
   }
 
-  // Asset management helpers (Phase 12)
+  // Asset management helpers
   function getAssetStatus(assetId: string): "locked" | "modified" | "removed" {
     if (removedAssetIds.has(assetId)) return "removed";
     if (modifiedAssets[assetId]) return "modified";
@@ -269,23 +269,23 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     if (clipDuration !== (detail.clip_duration ?? 6)) req.clip_duration = clipDuration;
     const origClip = detail.clip_duration ?? 6;
     const origSnapped = Math.ceil((detail.total_duration ?? 15) / origClip) * origClip;
-    if (totalDuration !== origSnapped || clipDuration !== origClip || deletedScenes.size > 0) req.total_duration = totalDuration;
+    if (totalDuration !== origSnapped || clipDuration !== origClip || deletedShots.size > 0) req.total_duration = totalDuration;
     if (textModel !== (detail.text_model ?? TEXT_MODELS[0].id)) req.text_model = textModel;
     if (imageModel !== (detail.image_model ?? IMAGE_MODELS[0].id)) req.image_model = imageModel;
     if (videoModel !== (detail.video_model ?? VIDEO_MODELS[0].id)) req.video_model = videoModel;
     if ((visionModel || undefined) !== (detail.vision_model || undefined)) req.vision_model = visionModel || undefined;
     if (enableAudio !== (detail.audio_enabled ?? false)) req.audio_enabled = enableAudio;
 
-    if (Object.keys(sceneEdits).length > 0) {
-      req.scene_edits = sceneEdits;
+    if (Object.keys(shotEdits).length > 0) {
+      req.shot_edits = shotEdits;
     }
 
-    if (deletedScenes.size > 0) {
-      req.deleted_scenes = [...deletedScenes];
+    if (deletedShots.size > 0) {
+      req.deleted_shots = [...deletedShots];
     }
 
     if (clearedKeyframes.size > 0) {
-      const filtered = [...clearedKeyframes].filter((i) => !deletedScenes.has(i));
+      const filtered = [...clearedKeyframes].filter((i) => !deletedShots.has(i));
       if (filtered.length > 0) {
         req.clear_keyframes = filtered;
       }
@@ -327,7 +327,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
         <div>
           <h2 className="text-lg font-bold text-white">Fork Project</h2>
           <p className="text-sm text-gray-400">
-            Modify settings or scene prompts, then fork to create a new project.
+            Modify settings or shot prompts, then fork to create a new project.
           </p>
         </div>
         <button
@@ -401,9 +401,9 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
         </div>
       </div>
 
-      {/* Scene Length */}
+      {/* Shot Length */}
       <div>
-        <label className="mb-2 block text-sm font-medium text-gray-300">Scene Length</label>
+        <label className="mb-2 block text-sm font-medium text-gray-300">Shot Length</label>
         <div className="flex gap-2">
           {allowedDurations.map((d) => (
             <button
@@ -426,7 +426,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
       {/* Total Duration */}
       <div>
         <label htmlFor="fork-totalDuration" className="mb-2 block text-sm font-medium text-gray-300">
-          Total Duration: {totalDuration}s ({sceneCount} scene{sceneCount !== 1 ? "s" : ""})
+          Total Duration: {totalDuration}s ({shotCount} shot{shotCount !== 1 ? "s" : ""})
         </label>
         <input
           id="fork-totalDuration"
@@ -572,10 +572,10 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
       {/* Cost Estimate */}
       {showCost && <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
         <div>Estimated cost for fork: ~${estimateCost(
-          sceneCount * clipDuration, clipDuration, textModel, imageModel, videoModel, audioActive
+          shotCount * clipDuration, clipDuration, textModel, imageModel, videoModel, audioActive
         ).toFixed(2)}</div>
         <div className="mt-1 text-xs text-gray-500">
-          {sceneCount} scene{sceneCount !== 1 ? "s" : ""} &middot; Full regeneration cost shown (inherited assets reduce actual cost)
+          {shotCount} shot{shotCount !== 1 ? "s" : ""} &middot; Full regeneration cost shown (inherited assets reduce actual cost)
         </div>
       </div>}
 
@@ -715,28 +715,28 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
         </div>
       )}
 
-      {/* Scene Edits */}
-      {detail.scenes.length > 0 && (
+      {/* Shot Edits */}
+      {detail.shots.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-medium text-gray-400">
-            Scenes ({deletedScenes.size > 0
-              ? `${detail.scenes.length} \u2192 ${sceneCount}`
-              : detail.scenes.length})
+            Shots ({deletedShots.size > 0
+              ? `${detail.shots.length} \u2192 ${shotCount}`
+              : detail.shots.length})
           </h3>
           <div className="grid gap-3 sm:grid-cols-2">
-            {detail.scenes.map((scene) => (
-              <EditableSceneCard
-                key={scene.scene_index}
-                scene={scene}
-                edits={sceneEdits[scene.scene_index] || {}}
-                onChange={handleSceneChange}
-                deleted={deletedScenes.has(scene.scene_index)}
-                keyframesCleared={clearedKeyframes.has(scene.scene_index)}
-                onDelete={handleDeleteScene}
-                onRestoreScene={handleRestoreScene}
+            {detail.shots.map((shot) => (
+              <EditableShotCard
+                key={shot.shot_index}
+                shot={shot}
+                edits={shotEdits[shot.shot_index] || {}}
+                onChange={handleShotChange}
+                deleted={deletedShots.has(shot.shot_index)}
+                keyframesCleared={clearedKeyframes.has(shot.shot_index)}
+                onDelete={handleDeleteShot}
+                onRestoreShot={handleRestoreShot}
                 onClearKeyframes={handleClearKeyframes}
                 onRestoreKeyframes={handleRestoreKeyframes}
-                canDelete={sceneCount > 1}
+                canDelete={shotCount > 1}
               />
             ))}
           </div>

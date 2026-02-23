@@ -110,11 +110,11 @@ class AssetCleanReference(Base):
 
 
 class AssetAppearance(Base):
-    """Track where each asset appears across scenes in generated content.
+    """Track where each asset appears across shots in generated content.
 
     Enables:
-    - UI timeline view (show which assets appear in which scenes)
-    - Debugging queries (find all scenes containing CHAR_01)
+    - UI timeline view (show which assets appear in which shots)
+    - Debugging queries (find all shots containing CHAR_01)
     - Continuity validation (did expected asset appear?)
 
     Spec reference: Phase 9 - CV Analysis Pipeline
@@ -124,7 +124,7 @@ class AssetAppearance(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assets.id"), index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
-    scene_index: Mapped[int] = mapped_column(Integer)
+    shot_index: Mapped[int] = mapped_column(Integer)
     frame_index: Mapped[int] = mapped_column(Integer)  # Which sampled frame (0-7)
     timestamp_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     bbox: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # [x1, y1, x2, y2]
@@ -161,7 +161,7 @@ class Project(Base):
     style: Mapped[str] = mapped_column(String(50))
     aspect_ratio: Mapped[str] = mapped_column(String(10))
     target_clip_duration: Mapped[int] = mapped_column(Integer)
-    target_scene_count: Mapped[int] = mapped_column(Integer, default=3)
+    target_shot_count: Mapped[int] = mapped_column(Integer, default=3)
     total_duration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     text_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     image_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -203,17 +203,17 @@ class Project(Base):
     )
 
 
-class Scene(Base):
-    """Scene model representing a single scene within a project.
+class Shot(Base):
+    """Shot model representing a single shot within a project.
 
     Spec reference: Section 4.2
     """
-    __tablename__ = "scenes"
+    __tablename__ = "shots"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
-    scene_index: Mapped[int] = mapped_column(Integer)
-    scene_description: Mapped[str] = mapped_column(Text)
+    shot_index: Mapped[int] = mapped_column(Integer)
+    shot_description: Mapped[str] = mapped_column(Text)
     start_frame_prompt: Mapped[str] = mapped_column(Text)
     end_frame_prompt: Mapped[str] = mapped_column(Text)
     video_motion_prompt: Mapped[str] = mapped_column(Text)
@@ -224,15 +224,15 @@ class Scene(Base):
     )
 
 
-class SceneManifest(Base):
-    """Per-scene asset placement manifest with composition metadata.
+class ShotManifest(Base):
+    """Per-shot asset placement manifest with composition metadata.
 
     Spec reference: Phase 7
     """
-    __tablename__ = "scene_manifests"
+    __tablename__ = "shot_manifests"
 
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), primary_key=True)
-    scene_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shot_index: Mapped[int] = mapped_column(Integer, primary_key=True)
     manifest_json: Mapped[dict] = mapped_column(JSON)
     composition_shot_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     composition_camera_movement: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -249,15 +249,15 @@ class SceneManifest(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
-class SceneAudioManifest(Base):
-    """Per-scene audio direction manifest with dialogue, SFX, ambient, and music.
+class ShotAudioManifest(Base):
+    """Per-shot audio direction manifest with dialogue, SFX, ambient, and music.
 
     Spec reference: Phase 7
     """
-    __tablename__ = "scene_audio_manifests"
+    __tablename__ = "shot_audio_manifests"
 
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), primary_key=True)
-    scene_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shot_index: Mapped[int] = mapped_column(Integer, primary_key=True)
     dialogue_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     sfx_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     ambient_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -270,14 +270,14 @@ class SceneAudioManifest(Base):
 
 
 class Keyframe(Base):
-    """Keyframe model representing start/end frame images for scenes.
+    """Keyframe model representing start/end frame images for shots.
 
     Spec reference: Section 4.3
     """
     __tablename__ = "keyframes"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
+    shot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("shots.id"), index=True)
     position: Mapped[str] = mapped_column(String(10))  # 'start' or 'end'
     prompt_used: Mapped[str] = mapped_column(Text)
     file_path: Mapped[str] = mapped_column(String(255))
@@ -287,14 +287,14 @@ class Keyframe(Base):
 
 
 class VideoClip(Base):
-    """VideoClip model representing generated video clips for scenes.
+    """VideoClip model representing generated video clips for shots.
 
     Spec reference: Section 4.4
     """
     __tablename__ = "video_clips"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
+    shot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("shots.id"), index=True)
     operation_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     source: Mapped[str] = mapped_column(String(20), default="generated")
     status: Mapped[str] = mapped_column(String(50))
@@ -317,12 +317,12 @@ class GenerationCandidate(Base):
     """
     __tablename__ = "generation_candidates"
     __table_args__ = (
-        Index("idx_candidates_project_scene", "project_id", "scene_index"),
+        Index("idx_candidates_project_shot", "project_id", "shot_index"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
-    scene_index: Mapped[int] = mapped_column(Integer)
+    shot_index: Mapped[int] = mapped_column(Integer)
     candidate_number: Mapped[int] = mapped_column(Integer)  # 0-based index within batch
     local_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     thumbnail_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # First frame JPEG

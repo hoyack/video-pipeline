@@ -7,7 +7,7 @@ pipeline:
   default_style: "cinematic"
   default_aspect_ratio: "16:9"
   default_clip_duration: 4
-  max_scenes: 15
+  max_shots: 15
   image_gen_delay: 3
   video_poll_interval: 15
   video_poll_max: 40

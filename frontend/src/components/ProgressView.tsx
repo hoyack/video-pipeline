@@ -4,23 +4,23 @@ import type { ProjectDetail } from "../api/types.ts";
 import { useProjectStatus } from "../hooks/useProjectStatus.ts";
 import { TERMINAL_STATUSES } from "../lib/constants.ts";
 import { PipelineStepper } from "./PipelineStepper.tsx";
-import { SceneCard } from "./SceneCard.tsx";
+import { ShotCard } from "./ShotCard.tsx";
 
 interface LatestActivity {
   type: "clip" | "keyframe" | "storyboard";
-  scene: number;
+  shot: number;
   url?: string;
   desc: string;
 }
 
 function getLatestActivity(detail: ProjectDetail): LatestActivity | null {
-  for (let i = detail.scenes.length - 1; i >= 0; i--) {
-    const s = detail.scenes[i];
-    if (s.clip_url) return { type: "clip", scene: i, url: s.clip_url, desc: s.description };
-    if (s.end_keyframe_url) return { type: "keyframe", scene: i, url: s.end_keyframe_url, desc: s.description };
-    if (s.start_keyframe_url) return { type: "keyframe", scene: i, url: s.start_keyframe_url, desc: s.description };
+  for (let i = detail.shots.length - 1; i >= 0; i--) {
+    const s = detail.shots[i];
+    if (s.clip_url) return { type: "clip", shot: i, url: s.clip_url, desc: s.description };
+    if (s.end_keyframe_url) return { type: "keyframe", shot: i, url: s.end_keyframe_url, desc: s.description };
+    if (s.start_keyframe_url) return { type: "keyframe", shot: i, url: s.start_keyframe_url, desc: s.description };
   }
-  if (detail.scenes.length > 0) return { type: "storyboard", scene: 0, desc: detail.scenes[0].description };
+  if (detail.shots.length > 0) return { type: "storyboard", shot: 0, desc: detail.shots[0].description };
   return null;
 }
 
@@ -35,7 +35,7 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
   const [stopping, setStopping] = useState(false);
   const [resuming, setResuming] = useState(false);
 
-  // Fetch full detail periodically to get scene info
+  // Fetch full detail periodically to get shot info
   useEffect(() => {
     if (!projectId) return;
 
@@ -136,14 +136,14 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
       )}
 
       {/* Latest Activity */}
-      {detail && detail.scenes.length > 0 && (() => {
+      {detail && detail.shots.length > 0 && (() => {
         const activity = getLatestActivity(detail);
         if (!activity) return null;
         return (
           <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-4">
             <h3 className="mb-2 text-sm font-medium text-blue-300">Latest Activity</h3>
             <p className="mb-1 text-xs text-gray-500">
-              Scene {activity.scene + 1} &mdash; {activity.type}
+              Shot {activity.shot + 1} &mdash; {activity.type}
             </p>
             <p className="mb-2 text-sm text-gray-300 line-clamp-2">{activity.desc}</p>
             {activity.type === "clip" && activity.url && (
@@ -158,29 +158,29 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
             {activity.type === "keyframe" && activity.url && (
               <img
                 src={activity.url}
-                alt={`Latest keyframe — Scene ${activity.scene + 1}`}
+                alt={`Latest keyframe — Shot ${activity.shot + 1}`}
                 className="w-full rounded border border-gray-700"
                 loading="lazy"
               />
             )}
             {activity.type === "storyboard" && (
               <p className="text-xs text-gray-500">
-                {detail.scenes.length} scenes planned
+                {detail.shots.length} shots planned
               </p>
             )}
           </div>
         );
       })()}
 
-      {/* Scenes grid */}
-      {detail && detail.scenes.length > 0 && (
+      {/* Shots grid */}
+      {detail && detail.shots.length > 0 && (
         <div>
           <h2 className="mb-3 text-sm font-medium text-gray-400">
-            Scenes ({detail.scenes.length})
+            Shots ({detail.shots.length})
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {detail.scenes.map((scene) => (
-              <SceneCard key={scene.scene_index} scene={scene} />
+            {detail.shots.map((shot) => (
+              <ShotCard key={shot.shot_index} shot={shot} />
             ))}
           </div>
         </div>

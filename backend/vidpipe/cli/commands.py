@@ -23,7 +23,7 @@ from sqlalchemy import select, func
 
 from vidpipe import validate_dependencies
 from vidpipe.db import init_database, async_session
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, PipelineRun
+from vidpipe.db.models import Project, Shot, Keyframe, VideoClip, PipelineRun
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.pipeline.stitcher import stitch_videos
@@ -69,7 +69,7 @@ _ALLOWED_DURATIONS: dict[str, list[int]] = {
     "veo-3.1-fast-generate-001": [4, 6, 8],
 }
 
-app = typer.Typer(name="vidpipe", help="AI-powered multi-scene video generation pipeline")
+app = typer.Typer(name="vidpipe", help="AI-powered multi-shot video generation pipeline")
 console = Console()
 
 
@@ -125,18 +125,18 @@ def generate(
         raise typer.Exit(code=1)
 
     # Dynamic cost estimate
-    scene_count = math.ceil(total_duration / clip_duration)
+    shot_count = math.ceil(total_duration / clip_duration)
     if enable_audio and video_model in _VIDEO_COST_PER_SECOND_AUDIO:
         vid_rate = _VIDEO_COST_PER_SECOND_AUDIO[video_model]
     else:
         vid_rate = _VIDEO_COST_PER_SECOND.get(video_model, 0.40)
-    vid_cost = scene_count * clip_duration * vid_rate
-    img_cost = (scene_count + 1) * _IMAGE_COST_PER_IMAGE.get(image_model, 0.04)
+    vid_cost = shot_count * clip_duration * vid_rate
+    img_cost = (shot_count + 1) * _IMAGE_COST_PER_IMAGE.get(image_model, 0.04)
     txt_cost = _TEXT_COST_PER_CALL.get(text_model, 0.01)
     est_cost = vid_cost + img_cost + txt_cost
 
     audio_label = " +audio" if enable_audio else ""
-    console.print(f"[yellow]Estimated cost:[/yellow] ~${est_cost:.2f} ({scene_count} scenes, {video_model}{audio_label})")
+    console.print(f"[yellow]Estimated cost:[/yellow] ~${est_cost:.2f} ({shot_count} shots, {video_model}{audio_label})")
     console.print()
 
     asyncio.run(_generate_async(
@@ -155,7 +155,7 @@ async def _generate_async(
     # Initialize database
     await init_database()
 
-    scene_count = math.ceil(total_duration / clip_duration)
+    shot_count = math.ceil(total_duration / clip_duration)
 
     # Create project
     async with async_session() as session:
@@ -164,7 +164,7 @@ async def _generate_async(
             style=style,
             aspect_ratio=aspect_ratio,
             target_clip_duration=clip_duration,
-            target_scene_count=scene_count,
+            target_shot_count=shot_count,
             total_duration=total_duration,
             text_model=text_model,
             image_model=image_model,
@@ -324,11 +324,11 @@ async def _status_async(project_id_str: str):
             console.print(f"[red]Error:[/red] Project not found: {project_uuid}")
             raise typer.Exit(code=1)
 
-        # Query scene count
-        scene_count_result = await session.execute(
-            select(func.count(Scene.id)).where(Scene.project_id == project.id)
+        # Query shot count
+        shot_count_result = await session.execute(
+            select(func.count(Shot.id)).where(Shot.project_id == project.id)
         )
-        scene_count = scene_count_result.scalar()
+        shot_count = shot_count_result.scalar()
 
         # Query latest pipeline run
         run_result = await session.execute(
@@ -354,7 +354,7 @@ async def _status_async(project_id_str: str):
             f"[bold]Style:[/bold] {project.style}",
             f"[bold]Aspect Ratio:[/bold] {project.aspect_ratio}",
             f"[bold]Clip Duration:[/bold] {project.target_clip_duration}s",
-            f"[bold]Scenes:[/bold] {scene_count}",
+            f"[bold]Shots:[/bold] {shot_count}",
             f"[bold]Created:[/bold] {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
             f"[bold]Updated:[/bold] {project.updated_at.strftime('%Y-%m-%d %H:%M:%S')}",
         ]
@@ -488,8 +488,8 @@ async def _stitch_async(project_id_str: str, crossfade: float):
         # Check for completed clips
         clip_count_result = await session.execute(
             select(func.count(VideoClip.id))
-            .join(Scene, Scene.id == VideoClip.scene_id)
-            .where(Scene.project_id == project.id)
+            .join(Shot, Shot.id == VideoClip.shot_id)
+            .where(Shot.project_id == project.id)
             .where(VideoClip.status == "completed")
         )
         clip_count = clip_count_result.scalar()

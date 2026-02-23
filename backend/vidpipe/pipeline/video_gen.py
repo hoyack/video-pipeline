@@ -16,7 +16,7 @@ Usage:
     from vidpipe.pipeline.video_gen import generate_videos
 
     async with async_session() as session:
-        await generate_videos(session, project)
+        await generate_videos(session, scene)
 """
 
 import asyncio
@@ -38,7 +38,7 @@ from tenacity import (
 )
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Shot, Keyframe, VideoClip, GenerationCandidate
+from vidpipe.db.models import Scene, Shot, Keyframe, VideoClip, GenerationCandidate
 from vidpipe.services.candidate_scoring import CandidateScoringService
 from vidpipe.services.cv_analysis_service import CVAnalysisService
 from vidpipe.services.entity_extraction import identify_new_entities, extract_and_register_new_entities
@@ -200,7 +200,7 @@ async def _submit_video_job(
     video_prompt: str,
     start_frame_bytes: bytes,
     end_frame_bytes: bytes,
-    project: Project,
+    scene: Scene,
     reference_images: Optional[list] = None,
     candidate_count: int = 1,
 ):
@@ -210,8 +210,8 @@ async def _submit_video_job(
     they propagate to the caller for escalation.
     """
     video_config = types.GenerateVideosConfig(
-        aspect_ratio=project.aspect_ratio,
-        duration_seconds=project.target_clip_duration,
+        aspect_ratio=scene.aspect_ratio,
+        duration_seconds=scene.target_clip_duration,
         number_of_videos=candidate_count,
         negative_prompt=(
             "photorealistic, photo, photograph, hyperrealistic, "
@@ -221,11 +221,11 @@ async def _submit_video_job(
 
     # Audio generation for Veo 3+ models
     if video_model != "veo-2.0-generate-001":
-        video_config.generate_audio = bool(project.audio_enabled)
+        video_config.generate_audio = bool(scene.audio_enabled)
 
     # Consistent seed for visual coherence across shots
-    if project.seed is not None:
-        video_config.seed = project.seed
+    if scene.seed is not None:
+        video_config.seed = scene.seed
 
     # Disable prompt rewriter on Veo 2
     if video_model == "veo-2.0-generate-001":
@@ -259,7 +259,7 @@ async def _submit_video_job(
 async def _regenerate_end_keyframe_safe(
     session: AsyncSession,
     shot: Shot,
-    project: Project,
+    scene: Scene,
     start_frame_bytes: bytes,
     end_kf: Keyframe,
     file_mgr: FileManager,
@@ -271,12 +271,12 @@ async def _regenerate_end_keyframe_safe(
     """
     from vidpipe.pipeline.keyframes import _generate_image_conditioned, COMFYUI_IMAGE_MODELS, _generate_image_comfyui
 
-    image_model = project.image_model or settings.models.image_gen
+    image_model = scene.image_model or settings.models.image_gen
     # Guard: Imagen models no longer supported — fall back to config default
     if image_model.startswith("imagen-"):
         image_model = settings.models.image_gen
 
-    style_label = project.style.replace("_", " ")
+    style_label = scene.style.replace("_", " ")
     conditioning_prompt = (
         f"Generate a safe, family-friendly keyframe for a {style_label} production. "
         f"Do NOT include any violence, weapons, nudity, blood, or controversial content.\n\n"
@@ -293,7 +293,7 @@ async def _regenerate_end_keyframe_safe(
             comfy_client = await get_comfyui_client()
             end_frame_bytes = await _generate_image_comfyui(
                 comfy_client, conditioning_prompt,
-                seed=project.seed + shot.shot_index + 2000,
+                seed=scene.seed + shot.shot_index + 2000,
             )
         else:
             conditioned_client = get_vertex_client(
@@ -303,13 +303,13 @@ async def _regenerate_end_keyframe_safe(
                 conditioned_client,
                 start_frame_bytes,
                 conditioning_prompt,
-                project.aspect_ratio,
+                scene.aspect_ratio,
                 image_model,
             )
 
         # Save to disk (overwrites existing file)
         end_file_path = file_mgr.save_keyframe(
-            project.id, shot.shot_index, "end", end_frame_bytes,
+            scene.id, shot.shot_index, "end", end_frame_bytes,
         )
         end_kf.file_path = str(end_file_path)
         end_kf.prompt_used = conditioning_prompt
@@ -335,7 +335,7 @@ async def _poll_video_operation(
     session: AsyncSession,
     clip: VideoClip,
     client,
-    project: Project,
+    scene: Scene,
     shot: Shot,
     file_mgr: FileManager,
     selected_refs: Optional[list] = None,
@@ -395,11 +395,11 @@ async def _poll_video_operation(
 
                 # Save video clip (VGEN-06)
                 file_path = file_mgr.save_clip(
-                    project.id, shot.shot_index, video_bytes,
+                    scene.id, shot.shot_index, video_bytes,
                 )
                 clip.local_path = str(file_path)
                 clip.status = "complete"
-                clip.duration_seconds = project.target_clip_duration
+                clip.duration_seconds = scene.target_clip_duration
                 clip.source = "generated"
                 shot.status = "video_done"
                 await session.commit()
@@ -422,8 +422,8 @@ async def _poll_video_operation(
         await asyncio.sleep(poll_interval)
 
         # Check for user-requested stop between polls
-        await session.refresh(project)
-        if project.status == "stopped":
+        await session.refresh(scene)
+        if scene.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
             raise PipelineStopped("Pipeline stopped by user")
 
@@ -444,7 +444,7 @@ async def _poll_and_collect_candidates(
     session: AsyncSession,
     clip: VideoClip,
     client,
-    project: Project,
+    scene: Scene,
     shot: Shot,
     file_mgr: FileManager,
     selected_refs: Optional[list] = None,
@@ -551,8 +551,8 @@ async def _poll_and_collect_candidates(
         await asyncio.sleep(poll_interval)
 
         # Check for user-requested stop between polls
-        await session.refresh(project)
-        if project.status == "stopped":
+        await session.refresh(scene)
+        if scene.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
             raise PipelineStopped("Pipeline stopped by user")
 
@@ -572,7 +572,7 @@ async def _poll_and_collect_candidates(
 async def _handle_quality_mode_candidates(
     session: AsyncSession,
     shot: Shot,
-    project: Project,
+    scene: Scene,
     clip: VideoClip,
     file_mgr: FileManager,
     video_bytes_list: list[bytes],
@@ -593,7 +593,7 @@ async def _handle_quality_mode_candidates(
     5. Update VideoClip.local_path to point to selected candidate
     6. Run CV analysis on selected candidate only
     """
-    clips_dir = file_mgr.base_dir / str(project.id) / "clips"
+    clips_dir = file_mgr.base_dir / str(scene.id) / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
 
     candidate_records: list[GenerationCandidate] = []
@@ -604,7 +604,7 @@ async def _handle_quality_mode_candidates(
         candidate_path.write_bytes(video_bytes)
 
         candidate = GenerationCandidate(
-            project_id=project.id,
+            scene_id=scene.id,
             shot_index=shot.shot_index,
             candidate_number=i,
             local_path=str(candidate_path),
@@ -619,7 +619,7 @@ async def _handle_quality_mode_candidates(
     if shot.shot_index > 0:
         prev_shot_result = await session.execute(
             select(Shot).where(
-                Shot.project_id == project.id,
+                Shot.scene_id == scene.id,
                 Shot.shot_index == shot.shot_index - 1,
             )
         )
@@ -672,14 +672,14 @@ async def _handle_quality_mode_candidates(
 
     # Step 7: Update VideoClip.local_path to point to selected candidate
     clip.local_path = candidate_records[winner_idx].local_path
-    clip.duration_seconds = project.target_clip_duration
+    clip.duration_seconds = scene.target_clip_duration
     clip.source = "generated"
     shot.status = "video_done"
 
     await session.commit()
 
     # Step 8: Run CV analysis on selected candidate only
-    await _run_post_generation_analysis(session, shot, clip, project, shot_manifest_row, cv_service=cv_service)
+    await _run_post_generation_analysis(session, shot, clip, scene, shot_manifest_row, cv_service=cv_service)
 
 
 # ---------------------------------------------------------------------------
@@ -689,7 +689,7 @@ async def _run_post_generation_analysis(
     session: AsyncSession,
     shot: Shot,
     clip: VideoClip,
-    project: Project,
+    scene: Scene,
     shot_manifest_row,  # ShotManifest | None (imported inline to avoid circular)
     cv_service: Optional[CVAnalysisService] = None,
 ) -> None:
@@ -700,11 +700,11 @@ async def _run_post_generation_analysis(
     shot N+1's reference selection.
 
     Gracefully degrades — if analysis fails, logs warning and pipeline continues.
-    Non-manifest projects skip CV analysis entirely (backward compatible).
+    Non-manifest scenes skip CV analysis entirely (backward compatible).
     """
     try:
-        # Guard 1: non-manifest projects skip CV analysis entirely
-        if not project.manifest_id:
+        # Guard 1: non-manifest scenes skip CV analysis entirely
+        if not scene.manifest_id:
             return
 
         # Guard 2: no video clip path to analyze
@@ -716,7 +716,7 @@ async def _run_post_generation_analysis(
 
         # Load all manifest assets for face matching and entity extraction
         all_assets = await manifest_service.load_manifest_assets(
-            session, project.manifest_id
+            session, scene.manifest_id
         )
 
         # Collect keyframe paths (start and end frames for this shot)
@@ -751,7 +751,7 @@ async def _run_post_generation_analysis(
 
             # Step 6: Track appearances — persist AssetAppearance records
             await effective_cv_service.track_appearances(
-                session, project.id, shot.shot_index, analysis_result
+                session, scene.id, shot.shot_index, analysis_result
             )
 
             # Step 7: Extract and register new entities into Asset Registry
@@ -759,8 +759,8 @@ async def _run_post_generation_analysis(
             if new_entities:
                 await extract_and_register_new_entities(
                     session,
-                    project.id,
-                    project.manifest_id,
+                    scene.id,
+                    scene.manifest_id,
                     shot.shot_index,
                     new_entities,
                     source="CLIP_EXTRACT",
@@ -795,7 +795,7 @@ async def _run_post_generation_analysis(
 # ---------------------------------------------------------------------------
 async def generate_videos(
     session: AsyncSession,
-    project: Project,
+    scene: Scene,
     text_adapter: Optional[LLMAdapter] = None,
     vision_adapter: Optional[LLMAdapter] = None,
 ) -> None:
@@ -806,13 +806,13 @@ async def generate_videos(
 
     Args:
         session: Database session for persisting clips and candidates
-        project: Project containing shots to generate videos for
+        scene: Scene containing shots to generate videos for
         text_adapter: Optional LLMAdapter for prompt rewriting. If None,
             PromptRewriterService falls back to get_adapter("gemini-2.5-flash").
         vision_adapter: Optional LLMAdapter for CV analysis and candidate scoring.
             If None, services fall back to get_adapter("gemini-2.5-flash").
     """
-    video_model = project.video_model or settings.models.video_gen
+    video_model = scene.video_model or settings.models.video_gen
     is_comfyui = video_model in COMFYUI_VIDEO_MODELS
     client = None if is_comfyui else get_vertex_client(location=location_for_model(video_model))
     file_mgr = FileManager()
@@ -824,19 +824,19 @@ async def generate_videos(
     # Query shots ready for video generation
     result = await session.execute(
         select(Shot)
-        .where(Shot.project_id == project.id)
+        .where(Shot.scene_id == scene.id)
         .where(Shot.status == "keyframes_done")
         .order_by(Shot.shot_index)
     )
     shots = result.scalars().all()
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(project.id, "phase_started", phase="clips", total_shots=len(shots))
+    event_bus.emit(scene.id, "phase_started", phase="clips", total_shots=len(shots))
 
     for shot in shots:
         # Per-shot stop flag check (VGED-11)
-        await session.refresh(project)
-        if project.status == "stopped":
+        await session.refresh(scene)
+        if scene.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
             logger.info(f"Pipeline stopped by user at shot {shot.shot_index}")
             raise PipelineStopped("Stopped by user")
@@ -859,16 +859,16 @@ async def generate_videos(
         # Set generation_status before video generation (VGED-05)
         shot.generation_status = "generating_clip"
         await session.commit()
-        event_bus.emit(project.id, "shot_status", shot_index=shot.shot_index, status="generating_clip", phase="clips")
+        event_bus.emit(scene.id, "shot_status", shot_index=shot.shot_index, status="generating_clip", phase="clips")
 
         try:
             if is_comfyui:
                 await _generate_video_comfyui(
-                    session, shot, file_mgr, project, video_model,
+                    session, shot, file_mgr, scene, video_model,
                 )
             else:
                 await _generate_video_for_shot(
-                    session, shot, file_mgr, client, project, video_model,
+                    session, shot, file_mgr, client, scene, video_model,
                     cv_service=cv_service,
                     scoring_service=scoring_service,
                     text_adapter=text_adapter,
@@ -877,19 +877,19 @@ async def generate_videos(
             # Clear generation_status after successful generation (VGED-05)
             shot.generation_status = None
             await session.commit()
-            event_bus.emit(project.id, "shot_clip_ready", shot_index=shot.shot_index)
-            event_bus.emit(project.id, "refresh")
+            event_bus.emit(scene.id, "shot_clip_ready", shot_index=shot.shot_index)
+            event_bus.emit(scene.id, "refresh")
         except Exception as e:
             # On exception: set generation_status to "failed" (VGED-05)
             shot.generation_status = "failed"
             await session.commit()
-            event_bus.emit(project.id, "error", phase="clips", shot_index=shot.shot_index, message=str(e))
+            event_bus.emit(scene.id, "error", phase="clips", shot_index=shot.shot_index, message=str(e))
             raise
 
-    # Update project status
-    project.status = "stitching"
+    # Update scene status
+    scene.status = "stitching"
     await session.commit()
-    event_bus.emit(project.id, "phase_completed", phase="clips")
+    event_bus.emit(scene.id, "phase_completed", phase="clips")
 
 
 # ---------------------------------------------------------------------------
@@ -899,7 +899,7 @@ async def _generate_video_comfyui(
     session: AsyncSession,
     shot: Shot,
     file_mgr: FileManager,
-    project: Project,
+    scene: Scene,
     video_model: str,
 ) -> None:
     """Generate video clip for a single shot via ComfyUI Cloud.
@@ -946,10 +946,10 @@ async def _generate_video_comfyui(
 
     # Load shot manifest for prompt rewriting and char refs
     shot_manifest_row = None
-    if project.manifest_id:
+    if scene.manifest_id:
         sm_result = await session.execute(
             select(ShotManifestModel).where(
-                ShotManifestModel.project_id == project.id,
+                ShotManifestModel.scene_id == scene.id,
                 ShotManifestModel.shot_index == shot.shot_index,
             )
         )
@@ -987,18 +987,18 @@ async def _generate_video_comfyui(
         # Fresh submission via adapter
         logger.info("Shot %d: submitting to ComfyUI", shot.shot_index)
 
-        # Load character reference images (if manifest project)
+        # Load character reference images (if manifest scene)
         char_ref_bytes: list[bytes] = []
-        if project.manifest_id:
-            char_ref_bytes = await _load_char_ref_images(session, project)
+        if scene.manifest_id:
+            char_ref_bytes = await _load_char_ref_images(session, scene)
 
         operation_id = await adapter.submit(
             video_prompt=video_prompt,
             start_frame_bytes=start_frame_bytes,
             end_frame_bytes=end_frame_bytes,
             char_ref_bytes=char_ref_bytes,
-            aspect_ratio=project.aspect_ratio,
-            seed=project.seed or 0,
+            aspect_ratio=scene.aspect_ratio,
+            seed=scene.seed or 0,
             shot_index=shot.shot_index,
             video_model=video_model,
         )
@@ -1044,7 +1044,7 @@ async def _generate_video_comfyui(
 
             # Save clip to disk
             file_path = file_mgr.save_clip(
-                project.id, shot.shot_index, video_bytes,
+                scene.id, shot.shot_index, video_bytes,
             )
             clip.local_path = str(file_path)
             clip.status = "complete"
@@ -1055,7 +1055,7 @@ async def _generate_video_comfyui(
 
             # Post-generation CV analysis (reuse existing)
             await _run_post_generation_analysis(
-                session, shot, clip, project, shot_manifest_row,
+                session, shot, clip, scene, shot_manifest_row,
             )
 
             logger.info("Shot %d: ComfyUI video complete", shot.shot_index)
@@ -1074,8 +1074,8 @@ async def _generate_video_comfyui(
         await asyncio.sleep(poll_interval)
 
         # Check for user-requested stop
-        await session.refresh(project)
-        if project.status == "stopped":
+        await session.refresh(scene)
+        if scene.status == "stopped":
             from vidpipe.orchestrator.pipeline import PipelineStopped
             raise PipelineStopped("Pipeline stopped by user")
 
@@ -1090,19 +1090,19 @@ async def _generate_video_comfyui(
 
 
 async def _load_char_ref_images(
-    session: AsyncSession, project: Project
+    session: AsyncSession, scene: Scene
 ) -> list[bytes]:
     """Load up to 2 CHARACTER asset reference images from the manifest.
 
     Returns a list of image bytes (0-2 items).
     """
-    if not project.manifest_id:
+    if not scene.manifest_id:
         return []
 
     from vidpipe.db.models import Asset
     result = await session.execute(
         select(Asset).where(
-            Asset.manifest_id == project.manifest_id,
+            Asset.manifest_id == scene.manifest_id,
             Asset.asset_type == "CHARACTER",
             Asset.reference_image_url != None,
             Asset.is_inherited == False,
@@ -1145,7 +1145,7 @@ async def _generate_video_for_shot(
     shot: Shot,
     file_mgr: FileManager,
     client,
-    project: Project,
+    scene: Scene,
     video_model: str,
     cv_service: Optional[CVAnalysisService] = None,
     scoring_service: Optional[CandidateScoringService] = None,
@@ -1192,11 +1192,11 @@ async def _generate_video_for_shot(
     shot_manifest_row = None
     selected_refs = []
     all_assets: list = []
-    if project.manifest_id:
+    if scene.manifest_id:
         # Query shot manifest
         sm_result = await session.execute(
             select(ShotManifestModel).where(
-                ShotManifestModel.project_id == project.id,
+                ShotManifestModel.scene_id == scene.id,
                 ShotManifestModel.shot_index == shot.shot_index
             )
         )
@@ -1204,7 +1204,7 @@ async def _generate_video_for_shot(
 
         if shot_manifest_row and shot_manifest_row.manifest_json:
             # Load all manifest assets
-            all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
+            all_assets = await manifest_service.load_manifest_assets(session, scene.manifest_id)
             selected_refs = select_references_for_shot(
                 shot_manifest_row.manifest_json,
                 all_assets
@@ -1220,9 +1220,9 @@ async def _generate_video_for_shot(
             f"{[r.manifest_tag for r in selected_refs]}"
         )
 
-    # Phase 10: Adaptive Prompt Rewriting for manifest projects
+    # Phase 10: Adaptive Prompt Rewriting for manifest scenes
     base_video_prompt = None  # Will hold rewritten or original prompt
-    if project.manifest_id and shot_manifest_row and shot_manifest_row.manifest_json:
+    if scene.manifest_id and shot_manifest_row and shot_manifest_row.manifest_json:
         try:
             from vidpipe.services.prompt_rewriter import PromptRewriterService
             from vidpipe.db.models import ShotAudioManifest as ShotAudioManifestModel
@@ -1230,7 +1230,7 @@ async def _generate_video_for_shot(
             # Load audio manifest
             audio_result = await session.execute(
                 select(ShotAudioManifestModel).where(
-                    ShotAudioManifestModel.project_id == project.id,
+                    ShotAudioManifestModel.scene_id == scene.id,
                     ShotAudioManifestModel.shot_index == shot.shot_index
                 )
             )
@@ -1249,7 +1249,7 @@ async def _generate_video_for_shot(
             if shot.shot_index > 0:
                 prev_sm_result = await session.execute(
                     select(ShotManifestModel).where(
-                        ShotManifestModel.project_id == project.id,
+                        ShotManifestModel.scene_id == scene.id,
                         ShotManifestModel.shot_index == shot.shot_index - 1
                     )
                 )
@@ -1334,14 +1334,14 @@ async def _generate_video_for_shot(
 
     # If clip exists and is still polling, resume the poll (crash recovery)
     if clip and clip.status == "polling" and clip.operation_name:
-        if project.quality_mode and project.candidate_count > 1:
+        if scene.quality_mode and scene.candidate_count > 1:
             # Phase 11: Quality mode crash recovery — use multi-candidate poll
             poll_result, video_bytes_list = await _poll_and_collect_candidates(
-                session, clip, client, project, shot, file_mgr, selected_refs,
+                session, clip, client, scene, shot, file_mgr, selected_refs,
             )
             if poll_result == "complete":
                 await _handle_quality_mode_candidates(
-                    session, shot, project, clip, file_mgr,
+                    session, shot, scene, clip, file_mgr,
                     video_bytes_list,
                     shot_manifest_row,
                     base_video_prompt or shot.video_motion_prompt,
@@ -1361,13 +1361,13 @@ async def _generate_video_for_shot(
         else:
             # Standard mode crash recovery: existing behavior
             poll_result = await _poll_video_operation(
-                session, clip, client, project, shot, file_mgr, selected_refs,
+                session, clip, client, scene, shot, file_mgr, selected_refs,
             )
             if poll_result != "content_policy":
                 if poll_result == "complete":
                     # Phase 9: Post-generation CV analysis for progressive enrichment
                     await _run_post_generation_analysis(
-                        session, shot, clip, project, shot_manifest_row, cv_service=cv_service,
+                        session, shot, clip, scene, shot_manifest_row, cv_service=cv_service,
                     )
                 return  # complete, failed, or timed_out
             # Content policy → fall through to escalation loop
@@ -1412,7 +1412,7 @@ async def _generate_video_for_shot(
         # Level 2+: regenerate end keyframe with safety-focused prompt
         if safety_level >= 2:
             new_bytes = await _regenerate_end_keyframe_safe(
-                session, shot, project, start_frame_bytes, end_kf, file_mgr,
+                session, shot, scene, start_frame_bytes, end_kf, file_mgr,
             )
             if new_bytes:
                 end_frame_bytes = new_bytes
@@ -1421,7 +1421,7 @@ async def _generate_video_for_shot(
                     clip.safety_regen_count = (clip.safety_regen_count or 0) + 1
 
         # Build video prompt with escalating safety prefix
-        # Phase 10: Use rewritten prompt as base if available (manifest projects)
+        # Phase 10: Use rewritten prompt as base if available (manifest scenes)
         # Safety prefix stacks on top; rewritten prompt already includes full formula + audio
         if base_video_prompt:
             video_prompt = (
@@ -1436,7 +1436,7 @@ async def _generate_video_for_shot(
             )
 
         # Phase 11: Determine candidate count for this submission
-        candidate_count = project.candidate_count if project.quality_mode else 1
+        candidate_count = scene.candidate_count if scene.quality_mode else 1
 
         # ---- Inner transient-error retry loop ----
         for transient_attempt in range(max_transient_retries):
@@ -1451,8 +1451,8 @@ async def _generate_video_for_shot(
                 await asyncio.sleep(backoff_seconds)
 
                 # Check for user-requested stop during backoff
-                await session.refresh(project)
-                if project.status == "stopped":
+                await session.refresh(scene)
+                if scene.status == "stopped":
                     from vidpipe.orchestrator.pipeline import PipelineStopped
                     raise PipelineStopped("Pipeline stopped by user")
 
@@ -1460,7 +1460,7 @@ async def _generate_video_for_shot(
             try:
                 operation = await _submit_video_job(
                     client, video_model, video_prompt,
-                    start_frame_bytes, end_frame_bytes, project,
+                    start_frame_bytes, end_frame_bytes, scene,
                     reference_images=veo_ref_images,
                     candidate_count=candidate_count,
                 )
@@ -1515,13 +1515,13 @@ async def _generate_video_for_shot(
             await session.commit()
 
             # Phase 11: Choose poll function based on mode
-            if project.quality_mode and project.candidate_count > 1:
+            if scene.quality_mode and scene.candidate_count > 1:
                 poll_result, video_bytes_list = await _poll_and_collect_candidates(
-                    session, clip, client, project, shot, file_mgr, selected_refs,
+                    session, clip, client, scene, shot, file_mgr, selected_refs,
                 )
             else:
                 poll_result = await _poll_video_operation(
-                    session, clip, client, project, shot, file_mgr, selected_refs,
+                    session, clip, client, scene, shot, file_mgr, selected_refs,
                 )
                 video_bytes_list = []  # Not used in standard mode
 
@@ -1532,9 +1532,9 @@ async def _generate_video_for_shot(
                         f"{safety_level}, transient attempt {transient_attempt}"
                     )
                 # Phase 11: Quality mode — save/score/select all candidates
-                if project.quality_mode and project.candidate_count > 1:
+                if scene.quality_mode and scene.candidate_count > 1:
                     await _handle_quality_mode_candidates(
-                        session, shot, project, clip, file_mgr,
+                        session, shot, scene, clip, file_mgr,
                         video_bytes_list,
                         shot_manifest_row,
                         base_video_prompt or shot.video_motion_prompt,
@@ -1546,7 +1546,7 @@ async def _generate_video_for_shot(
                 else:
                     # Standard mode: Phase 9 post-generation CV analysis
                     await _run_post_generation_analysis(
-                        session, shot, clip, project, shot_manifest_row, cv_service=cv_service,
+                        session, shot, clip, scene, shot_manifest_row, cv_service=cv_service,
                     )
                 return
             elif poll_result == "content_policy":

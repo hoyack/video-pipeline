@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown
-from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, ProjectCheckpoint, DEFAULT_USER_ID
+from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, SceneCheckpoint, Production, DEFAULT_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +45,12 @@ async def _seed_default_user(conn) -> None:
 async def _run_migrations(conn) -> None:
     """Run safe ALTER TABLE migrations for new columns (idempotent)."""
     migrations = [
-        "ALTER TABLE projects ADD COLUMN forked_from_id TEXT REFERENCES projects(id)",
+        "ALTER TABLE scenes ADD COLUMN forked_from_id TEXT REFERENCES scenes(id)",
         "ALTER TABLE video_clips ADD COLUMN source VARCHAR(20) DEFAULT 'generated'",
         "ALTER TABLE video_clips ADD COLUMN veo_submission_count INTEGER DEFAULT 0",
         "ALTER TABLE video_clips ADD COLUMN safety_regen_count INTEGER DEFAULT 0",
-        "ALTER TABLE projects ADD COLUMN manifest_id TEXT REFERENCES manifests(id)",
-        "ALTER TABLE projects ADD COLUMN manifest_version INTEGER",
+        "ALTER TABLE scenes ADD COLUMN manifest_id TEXT REFERENCES manifests(id)",
+        "ALTER TABLE scenes ADD COLUMN manifest_version INTEGER",
         # Phase 5: Manifesting Engine fields
         "ALTER TABLE assets ADD COLUMN reverse_prompt TEXT",
         "ALTER TABLE assets ADD COLUMN visual_description TEXT",
@@ -69,8 +69,8 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE shot_manifests ADD COLUMN rewritten_keyframe_prompt TEXT",
         "ALTER TABLE shot_manifests ADD COLUMN rewritten_video_prompt TEXT",
         # Phase 11: Multi-Candidate Quality Mode
-        "ALTER TABLE projects ADD COLUMN quality_mode INTEGER DEFAULT 0",
-        "ALTER TABLE projects ADD COLUMN candidate_count INTEGER DEFAULT 1",
+        "ALTER TABLE scenes ADD COLUMN quality_mode INTEGER DEFAULT 0",
+        "ALTER TABLE scenes ADD COLUMN candidate_count INTEGER DEFAULT 1",
         # ComfyUI integration
         "ALTER TABLE user_settings ADD COLUMN comfyui_host VARCHAR(500)",
         "ALTER TABLE user_settings ADD COLUMN comfyui_api_key TEXT",
@@ -80,18 +80,20 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE user_settings ADD COLUMN ollama_api_key TEXT",
         "ALTER TABLE user_settings ADD COLUMN ollama_endpoint VARCHAR(500)",
         "ALTER TABLE user_settings ADD COLUMN ollama_models TEXT",  # JSON stored as TEXT in SQLite
-        "ALTER TABLE projects ADD COLUMN vision_model VARCHAR(100)",
-        "ALTER TABLE projects ADD COLUMN deleted_at TIMESTAMP",
+        "ALTER TABLE scenes ADD COLUMN vision_model VARCHAR(100)",
+        "ALTER TABLE scenes ADD COLUMN deleted_at TIMESTAMP",
         # Selective stage execution
-        "ALTER TABLE projects ADD COLUMN run_through VARCHAR(20)",
-        # Project title
-        "ALTER TABLE projects ADD COLUMN title VARCHAR(200)",
+        "ALTER TABLE scenes ADD COLUMN run_through VARCHAR(20)",
+        # Scene title
+        "ALTER TABLE scenes ADD COLUMN title VARCHAR(200)",
         # PipeSVN: version control
-        "ALTER TABLE projects ADD COLUMN head_sha VARCHAR(40)",
+        "ALTER TABLE scenes ADD COLUMN head_sha VARCHAR(40)",
         "ALTER TABLE video_clips ADD COLUMN prompt_used TEXT",
         "ALTER TABLE shots ADD COLUMN generation_status VARCHAR(32)",
         # Display preferences
         "ALTER TABLE user_settings ADD COLUMN show_cost INTEGER DEFAULT 1",
+        # Productions
+        "ALTER TABLE scenes ADD COLUMN production_id TEXT REFERENCES productions(id)",
     ]
     for sql in migrations:
         try:

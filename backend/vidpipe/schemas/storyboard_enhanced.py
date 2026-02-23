@@ -2,7 +2,7 @@
 
 These schemas extend the base storyboard schemas with ShotManifest and ShotAudioManifest,
 enabling Gemini to produce structured output that references manifest assets and includes
-detailed audio direction. Used when project.manifest_id is set.
+detailed audio direction. Used when scene.manifest_id is set.
 
 Spec reference: Phase 7 - Manifest-Aware Storyboarding and Audio Manifest
 """

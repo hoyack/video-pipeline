@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import clsx from "clsx";
-import { getEnabledModels, resumeProject } from "../api/client.ts";
-import type { ProjectDetail } from "../api/types.ts";
+import { getEnabledModels, resumeScene } from "../api/client.ts";
+import type { SceneDetail } from "../api/types.ts";
 import type { EnabledModelsResponse } from "../api/types.ts";
 import {
   TEXT_MODELS,
@@ -18,10 +18,10 @@ import {
 type StageTarget = "keyframes" | "video" | "completion";
 
 interface ContinuePanelProps {
-  detail: ProjectDetail;
+  detail: SceneDetail;
   /** run_through value for the next leg (null = all/completion) */
   nextRunThrough: string | null;
-  onContinued: (projectId: string) => void;
+  onContinued: (sceneId: string) => void;
   onCancel: () => void;
 }
 
@@ -37,7 +37,7 @@ export function ContinuePanel({ detail, nextRunThrough, onContinued, onCancel }:
   const needsImageConfig = currentStage === "storyboard";
   const needsVideoConfig = currentStage === "storyboard" || currentStage === "keyframes";
 
-  // State for model selections, seeded from project
+  // State for model selections, seeded from scene
   const [imageModel, setImageModel] = useState(detail.image_model ?? IMAGE_MODELS[0].id);
   const [visionModel, setVisionModel] = useState(detail.vision_model ?? "");
   const [videoModel, setVideoModel] = useState(detail.video_model ?? VIDEO_MODELS[0].id);
@@ -124,8 +124,8 @@ export function ContinuePanel({ detail, nextRunThrough, onContinued, onCancel }:
         body.audio_enabled = enableAudio && selectedVideoModel.supportsAudio;
         body.clip_duration = clipDuration;
       }
-      await resumeProject(detail.project_id, body as Parameters<typeof resumeProject>[1]);
-      onContinued(detail.project_id);
+      await resumeScene(detail.scene_id, body as Parameters<typeof resumeScene>[1]);
+      onContinued(detail.scene_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Continue failed");
     } finally {

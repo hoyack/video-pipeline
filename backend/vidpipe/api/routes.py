@@ -17,7 +17,7 @@ from sqlalchemy import and_ as sa_and, case, func as sa_func, select, update
 from sqlalchemy.orm import selectinload
 
 from vidpipe.db import async_session
-from vidpipe.db.models import Project, Shot, Keyframe, VideoClip, Manifest, Asset, ShotManifest as ShotManifestModel, ShotAudioManifest as ShotAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID, ProjectCheckpoint, AssetAppearance
+from vidpipe.db.models import Scene, Shot, Keyframe, VideoClip, Manifest, Asset, ShotManifest as ShotManifestModel, ShotAudioManifest as ShotAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID, SceneCheckpoint, AssetAppearance, Production
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import ShotSchema
@@ -117,8 +117,8 @@ VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
 }
 
 
-def _estimate_project_cost(
-    project: "Project",
+def _estimate_scene_cost(
+    scene: "Scene",
     generated_keyframes: int = 0,
     completed_clips: int = 0,
     generated_clips: int = 0,
@@ -128,9 +128,9 @@ def _estimate_project_cost(
 ) -> float:
     """Estimate cost based on actual artifacts generated.
 
-    For complete projects, uses theoretical cost minus inherited assets,
+    For complete scenes, uses theoretical cost minus inherited assets,
     plus extra costs from escalation retries and safety regens.
-    For incomplete projects, uses billed_veo_submissions (all Veo ops
+    For incomplete scenes, uses billed_veo_submissions (all Veo ops
     that Google charged for, including failed/polling clips and retries).
 
     Args:
@@ -142,20 +142,20 @@ def _estimate_project_cost(
             (includes failed clips + escalation retries)
         extra_image_regens: Safety-regen image calls (from safety_regen_count)
     """
-    clip_dur = project.target_clip_duration or 6
-    audio = project.audio_enabled and project.video_model in AUDIO_CAPABLE_MODELS
+    clip_dur = scene.target_clip_duration or 6
+    audio = scene.audio_enabled and scene.video_model in AUDIO_CAPABLE_MODELS
     vid_rate = (
-        VIDEO_MODEL_COST_AUDIO.get(project.video_model or "", 0.40)
+        VIDEO_MODEL_COST_AUDIO.get(scene.video_model or "", 0.40)
         if audio
-        else VIDEO_MODEL_COST_SILENT.get(project.video_model or "", 0.40)
+        else VIDEO_MODEL_COST_SILENT.get(scene.video_model or "", 0.40)
     )
-    img_rate = IMAGE_MODEL_COST.get(project.image_model or "", 0.04)
-    text_cost_rate = TEXT_MODEL_COST.get(project.text_model or "", 0.01)
+    img_rate = IMAGE_MODEL_COST.get(scene.image_model or "", 0.04)
+    text_cost_rate = TEXT_MODEL_COST.get(scene.text_model or "", 0.01)
 
-    if project.status == "complete":
+    if scene.status == "complete":
         # Full theoretical cost minus inherited assets
-        shot_count = project.target_shot_count or math.ceil(
-            (project.total_duration or 15) / clip_dur
+        shot_count = scene.target_shot_count or math.ceil(
+            (scene.total_duration or 15) / clip_dur
         )
         full_cost = (
             text_cost_rate
@@ -173,7 +173,7 @@ def _estimate_project_cost(
         cost += extra_image_regens * img_rate
         return cost
 
-    if project.status == "pending":
+    if scene.status == "pending":
         return 0.0
 
     # Partial cost based on actual billed artifacts
@@ -219,14 +219,14 @@ class GenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     """Response schema for POST /api/generate."""
-    project_id: str
+    scene_id: str
     status: str
     status_url: str
 
 
 class StatusResponse(BaseModel):
-    """Response schema for GET /api/projects/{id}/status."""
-    project_id: str
+    """Response schema for GET /api/scenes/{id}/status."""
+    scene_id: str
     status: str
     created_at: str
     updated_at: str
@@ -246,7 +246,7 @@ class ShotReference(BaseModel):
 
 
 class ShotDetail(BaseModel):
-    """Shot detail within ProjectDetail response."""
+    """Shot detail within SceneDetail response."""
     shot_index: int
     description: str
     status: str
@@ -275,9 +275,9 @@ class ShotDetail(BaseModel):
     generation_status: Optional[str] = None
 
 
-class ProjectDetail(BaseModel):
-    """Response schema for GET /api/projects/{id}."""
-    project_id: str
+class SceneDetail(BaseModel):
+    """Response schema for GET /api/scenes/{id}."""
+    scene_id: str
     title: Optional[str] = None
     prompt: str
     style: Optional[str] = None
@@ -316,8 +316,8 @@ class ShotEditPayload(BaseModel):
     transition_notes: Optional[str] = None
 
 
-class EditProjectRequest(BaseModel):
-    """Request body for PATCH /api/projects/{id}/edit."""
+class EditSceneRequest(BaseModel):
+    """Request body for PATCH /api/scenes/{id}/edit."""
     prompt: Optional[str] = None
     title: Optional[str] = None
     style: Optional[str] = None
@@ -337,17 +337,17 @@ class EditProjectRequest(BaseModel):
     expected_sha: Optional[str] = None
 
 
-class EditProjectResponse(BaseModel):
-    """Response from PATCH /api/projects/{id}/edit."""
-    project_id: str
+class EditSceneResponse(BaseModel):
+    """Response from PATCH /api/scenes/{id}/edit."""
+    scene_id: str
     head_sha: str
     message: str
     changes_count: int
 
 
-class ProjectListItem(BaseModel):
-    """Item in list response for GET /api/projects."""
-    project_id: str
+class SceneListItem(BaseModel):
+    """Item in list response for GET /api/scenes."""
+    scene_id: str
     title: Optional[str] = None
     prompt: str
     status: str
@@ -370,25 +370,25 @@ class ProjectListItem(BaseModel):
     thumbnail_url: Optional[str] = None
 
 
-class PaginatedProjects(BaseModel):
-    """Paginated response envelope for GET /api/projects."""
-    items: list[ProjectListItem]
+class PaginatedScenes(BaseModel):
+    """Paginated response envelope for GET /api/scenes."""
+    items: list[SceneListItem]
     total: int
     page: int
     per_page: int
 
 
 class ResumeResponse(BaseModel):
-    """Response schema for POST /api/projects/{id}/resume."""
-    project_id: str
+    """Response schema for POST /api/scenes/{id}/resume."""
+    scene_id: str
     status: str
     status_url: str
 
 
 class ContinueRequest(BaseModel):
-    """Optional body for POST /api/projects/{id}/resume to advance run_through."""
+    """Optional body for POST /api/scenes/{id}/resume to advance run_through."""
     run_through: Optional[str] = None  # "keyframes", "video", or "all" (= run everything)
-    # Model overrides — applied to the project before resuming
+    # Model overrides — applied to the scene before resuming
     image_model: Optional[str] = None
     vision_model: Optional[str] = None
     video_model: Optional[str] = None
@@ -418,7 +418,7 @@ class AssetChanges(BaseModel):
 
 
 class ForkRequest(BaseModel):
-    """Request schema for POST /api/projects/{id}/fork."""
+    """Request schema for POST /api/scenes/{id}/fork."""
     prompt: Optional[str] = None
     style: Optional[str] = None
     aspect_ratio: Optional[str] = None
@@ -437,8 +437,8 @@ class ForkRequest(BaseModel):
 
 
 class ForkResponse(BaseModel):
-    """Response schema for POST /api/projects/{id}/fork."""
-    project_id: str
+    """Response schema for POST /api/scenes/{id}/fork."""
+    scene_id: str
     forked_from: str
     status: str
     status_url: str
@@ -447,14 +447,14 @@ class ForkResponse(BaseModel):
 
 
 class StopResponse(BaseModel):
-    """Response schema for POST /api/projects/{id}/stop."""
-    project_id: str
+    """Response schema for POST /api/scenes/{id}/stop."""
+    scene_id: str
     status: str
 
 
 class MetricsResponse(BaseModel):
     """Response schema for GET /api/metrics."""
-    total_projects: int
+    total_scenes: int
     status_counts: dict[str, int]
     style_counts: dict[str, int]
     aspect_ratio_counts: dict[str, int]
@@ -486,9 +486,9 @@ class UpdateManifestRequest(BaseModel):
     tags: Optional[list[str]] = None
 
 
-class CreateManifestFromProjectRequest(BaseModel):
-    """Request schema for POST /api/manifests/from-project."""
-    project_id: str
+class CreateManifestFromSceneRequest(BaseModel):
+    """Request schema for POST /api/manifests/from-scene."""
+    scene_id: str
     name: Optional[str] = None
 
 
@@ -611,8 +611,8 @@ class CandidateResponse(BaseModel):
 # Phase 15: Video Generation Editor Schemas
 # ---------------------------------------------------------------------------
 
-class CreateProjectRequest(BaseModel):
-    """Request schema for POST /api/projects (draft project creation)."""
+class CreateSceneRequest(BaseModel):
+    """Request schema for POST /api/scenes (draft scene creation)."""
     prompt: str = ""
     title: str = ""
     style: Optional[str] = None
@@ -629,15 +629,15 @@ class CreateProjectRequest(BaseModel):
     vision_model: Optional[str] = None
 
 
-class CreateProjectResponse(BaseModel):
-    """Response schema for POST /api/projects."""
-    project_id: str
+class CreateSceneResponse(BaseModel):
+    """Response schema for POST /api/scenes."""
+    scene_id: str
     status: str
     shot_count: int
 
 
 class StartGenerationRequest(BaseModel):
-    """Request schema for POST /api/projects/{id}/generate."""
+    """Request schema for POST /api/scenes/{id}/generate."""
     run_through: Optional[str] = None  # "storyboard"|"keyframes"|"video"|None (all)
     text_model: Optional[str] = None
     image_model: Optional[str] = None
@@ -648,8 +648,8 @@ class StartGenerationRequest(BaseModel):
 
 
 class StartGenerationResponse(BaseModel):
-    """Response schema for POST /api/projects/{id}/generate."""
-    project_id: str
+    """Response schema for POST /api/scenes/{id}/generate."""
+    scene_id: str
     status: str
 
 
@@ -657,7 +657,7 @@ class StartGenerationResponse(BaseModel):
 # Background Task Wrapper
 # ============================================================================
 
-async def run_pipeline_background(project_id: uuid.UUID):
+async def run_pipeline_background(scene_id: uuid.UUID):
     """Run pipeline in background with fresh session.
 
     CRITICAL: Never share session across async boundaries.
@@ -665,10 +665,10 @@ async def run_pipeline_background(project_id: uuid.UUID):
     """
     async with async_session() as session:
         try:
-            await run_pipeline(session, project_id)
+            await run_pipeline(session, scene_id)
         except Exception as e:
             # Error already persisted to database by orchestrator
-            logger.error(f"Background pipeline failed for {project_id}: {type(e).__name__}: {str(e)}")
+            logger.error(f"Background pipeline failed for {scene_id}: {type(e).__name__}: {str(e)}")
 
 
 # ============================================================================
@@ -679,8 +679,8 @@ async def run_pipeline_background(project_id: uuid.UUID):
 async def generate_video(request: GenerateRequest, background_tasks: BackgroundTasks):
     """Start video generation pipeline in background.
 
-    Creates project record with pending status and adds pipeline execution
-    to background tasks. Returns 202 Accepted with project_id and status URL.
+    Creates scene record with pending status and adds pipeline execution
+    to background tasks. Returns 202 Accepted with scene_id and status URL.
     """
     # Validate aspect ratio (Veo supports 16:9 and 9:16 only)
     if request.aspect_ratio not in ("16:9", "9:16"):
@@ -730,8 +730,8 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
     shot_count = math.ceil(request.total_duration / request.clip_duration)
 
     async with async_session() as session:
-        # Create project record
-        project = Project(
+        # Create scene record
+        scene = Scene(
             title=request.title,
             prompt=request.prompt,
             style=request.style,
@@ -750,8 +750,8 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             run_through=request.run_through,
             status="pending",
         )
-        session.add(project)
-        await session.flush()  # Get project.id before snapshot creation
+        session.add(scene)
+        await session.flush()  # Get scene.id before snapshot creation
 
         # Handle manifest_id if provided
         if request.manifest_id:
@@ -762,38 +762,38 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             if not manifest:
                 raise HTTPException(status_code=404, detail=f"Manifest {request.manifest_id} not found")
 
-            # Set project manifest fields
-            project.manifest_id = manifest_uuid
-            project.manifest_version = manifest.version
+            # Set scene manifest fields
+            scene.manifest_id = manifest_uuid
+            scene.manifest_version = manifest.version
 
             # Create snapshot
-            await manifest_service.create_snapshot(session, manifest_uuid, project.id)
+            await manifest_service.create_snapshot(session, manifest_uuid, scene.id)
 
             # Increment usage tracking
             await manifest_service.increment_usage(session, manifest_uuid)
 
-            logger.info(f"Project {project.id} using manifest {request.manifest_id}, snapshot created")
+            logger.info(f"Scene {scene.id} using manifest {request.manifest_id}, snapshot created")
 
             # Note: Conditional manifesting skip (Phase 6 success criteria #5) is achieved
-            # by the presence of manifest_id on the project. When manifest_id is set, the
+            # by the presence of manifest_id on the scene. When manifest_id is set, the
             # pipeline knows assets are pre-processed (snapshot exists). The pipeline's
-            # manifesting step (to be added in Phase 7+) will check project.manifest_id
+            # manifesting step (to be added in Phase 7+) will check scene.manifest_id
             # and skip if present. For now, the pipeline has no manifesting step, so the
             # skip is implicit — pre-built manifests just bypass the need for one.
 
         await session.commit()
-        await session.refresh(project)
+        await session.refresh(scene)
 
-        project_id = project.id
-        logger.info(f"Created project {project_id} for prompt: {request.prompt[:50]}...")
+        scene_id = scene.id
+        logger.info(f"Created scene {scene_id} for prompt: {request.prompt[:50]}...")
 
-    # Add background task AFTER committing project
-    background_tasks.add_task(run_pipeline_background, project_id)
+    # Add background task AFTER committing scene
+    background_tasks.add_task(run_pipeline_background, scene_id)
 
     return GenerateResponse(
-        project_id=str(project_id),
+        scene_id=str(scene_id),
         status="pending",
-        status_url=f"/api/projects/{project_id}/status",
+        status_url=f"/api/scenes/{scene_id}/status",
     )
 
 
@@ -801,12 +801,12 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
 # Phase 15: Video Generation Editor Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/projects", status_code=201, response_model=CreateProjectResponse)
-async def create_draft_project(request: CreateProjectRequest):
-    """Create a draft project with empty Shot rows.
+@router.post("/scenes", status_code=201, response_model=CreateSceneResponse)
+async def create_draft_scene(request: CreateSceneRequest):
+    """Create a draft scene with empty Shot rows.
 
-    Does NOT start the pipeline. The project remains in "draft" status until
-    POST /api/projects/{id}/generate is called.
+    Does NOT start the pipeline. The scene remains in "draft" status until
+    POST /api/scenes/{id}/generate is called.
     """
     # Validate aspect ratio (skip if None — draft may not have one yet)
     if request.aspect_ratio is not None:
@@ -857,7 +857,7 @@ async def create_draft_project(request: CreateProjectRequest):
 
     async with async_session() as session:
         clip_dur = request.clip_duration or 0
-        project = Project(
+        scene = Scene(
             title=request.title or None,
             prompt=request.prompt,
             style=request.style or "",
@@ -875,7 +875,7 @@ async def create_draft_project(request: CreateProjectRequest):
             candidate_count=request.candidate_count if request.quality_mode else 1,
             status="draft",
         )
-        session.add(project)
+        session.add(scene)
         await session.flush()
 
         # Handle manifest_id if provided (reuse same snapshot logic as POST /api/generate)
@@ -884,16 +884,16 @@ async def create_draft_project(request: CreateProjectRequest):
             manifest = await manifest_service.get_manifest(session, manifest_uuid)
             if not manifest:
                 raise HTTPException(status_code=404, detail=f"Manifest {request.manifest_id} not found")
-            project.manifest_id = manifest_uuid
-            project.manifest_version = manifest.version
-            await manifest_service.create_snapshot(session, manifest_uuid, project.id)
+            scene.manifest_id = manifest_uuid
+            scene.manifest_version = manifest.version
+            await manifest_service.create_snapshot(session, manifest_uuid, scene.id)
             await manifest_service.increment_usage(session, manifest_uuid)
-            logger.info(f"Draft project {project.id} using manifest {request.manifest_id}, snapshot created")
+            logger.info(f"Draft scene {scene.id} using manifest {request.manifest_id}, snapshot created")
 
         # Create empty Shot rows
         for i in range(request.shot_count):
             shot = Shot(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=i,
                 shot_description="",
                 start_frame_prompt="",
@@ -905,44 +905,44 @@ async def create_draft_project(request: CreateProjectRequest):
             session.add(shot)
 
         await session.commit()
-        await session.refresh(project)
+        await session.refresh(scene)
 
-        project_id = project.id
-        logger.info(f"Created draft project {project_id} with {request.shot_count} empty shots")
+        scene_id = scene.id
+        logger.info(f"Created draft scene {scene_id} with {request.shot_count} empty shots")
 
-    return CreateProjectResponse(
-        project_id=str(project_id),
+    return CreateSceneResponse(
+        scene_id=str(scene_id),
         status="draft",
         shot_count=request.shot_count,
     )
 
 
-@router.post("/projects/{project_id}/generate", status_code=202, response_model=StartGenerationResponse)
+@router.post("/scenes/{scene_id}/generate", status_code=202, response_model=StartGenerationResponse)
 async def start_generation(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     background_tasks: BackgroundTasks,
     body: Optional[StartGenerationRequest] = None,
 ):
-    """Start or resume pipeline generation for a project.
+    """Start or resume pipeline generation for a scene.
 
-    Transitions draft/stopped/staged/failed/complete projects into pipeline
+    Transitions draft/stopped/staged/failed/complete scenes into pipeline
     execution with gap-filling semantics (empty shots get generated, filled
     shots are preserved).
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         # Only allow generation from specific states
         allowed_states = ("draft", "stopped", "staged", "failed", "complete")
-        if project.status not in allowed_states:
+        if scene.status not in allowed_states:
             raise HTTPException(
                 status_code=409,
-                detail=f"Cannot start generation from status '{project.status}'. Allowed: {', '.join(allowed_states)}",
+                detail=f"Cannot start generation from status '{scene.status}'. Allowed: {', '.join(allowed_states)}",
             )
 
         # Apply optional overrides from request body
@@ -954,54 +954,54 @@ async def start_generation(
                         status_code=422,
                         detail=f"run_through must be 'storyboard', 'keyframes', 'video', or null; got '{body.run_through}'",
                     )
-                project.run_through = new_val
+                scene.run_through = new_val
             else:
                 # Default: clear run_through to run all stages
-                project.run_through = None
+                scene.run_through = None
 
             if body.text_model is not None:
                 if not (body.text_model in ALLOWED_TEXT_MODELS or body.text_model.startswith("ollama/")):
                     raise HTTPException(status_code=422, detail=f"Invalid text_model: {body.text_model}")
-                project.text_model = body.text_model
+                scene.text_model = body.text_model
             if body.image_model is not None:
                 if body.image_model not in ALLOWED_IMAGE_MODELS:
                     raise HTTPException(status_code=422, detail=f"Invalid image_model: {body.image_model}")
-                project.image_model = body.image_model
+                scene.image_model = body.image_model
             if body.video_model is not None:
                 if body.video_model not in ALLOWED_VIDEO_MODELS:
                     raise HTTPException(status_code=422, detail=f"Invalid video_model: {body.video_model}")
-                project.video_model = body.video_model
+                scene.video_model = body.video_model
             if body.vision_model is not None:
                 if not (body.vision_model in ALLOWED_TEXT_MODELS or body.vision_model.startswith("ollama/")):
                     raise HTTPException(status_code=422, detail=f"Invalid vision_model: {body.vision_model}")
-                project.vision_model = body.vision_model if body.vision_model else None
+                scene.vision_model = body.vision_model if body.vision_model else None
             if body.clip_duration is not None:
-                dur_allowed = ALLOWED_DURATIONS.get(project.video_model or "", [5, 6, 7, 8])
+                dur_allowed = ALLOWED_DURATIONS.get(scene.video_model or "", [5, 6, 7, 8])
                 if body.clip_duration not in dur_allowed:
                     raise HTTPException(
                         status_code=422,
-                        detail=f"clip_duration {body.clip_duration} not supported for {project.video_model}. Allowed: {dur_allowed}",
+                        detail=f"clip_duration {body.clip_duration} not supported for {scene.video_model}. Allowed: {dur_allowed}",
                     )
-                project.target_clip_duration = body.clip_duration
+                scene.target_clip_duration = body.clip_duration
             if body.enable_audio is not None:
-                if body.enable_audio and project.video_model not in AUDIO_CAPABLE_MODELS:
-                    raise HTTPException(status_code=422, detail=f"Audio not supported for {project.video_model}")
-                project.audio_enabled = body.enable_audio
+                if body.enable_audio and scene.video_model not in AUDIO_CAPABLE_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Audio not supported for {scene.video_model}")
+                scene.audio_enabled = body.enable_audio
 
-        # Verify project is fully configured before launching pipeline
-        run_through = project.run_through
+        # Verify scene is fully configured before launching pipeline
+        run_through = scene.run_through
         required_fields: dict[str, object] = {
-            "text_model": project.text_model,
-            "image_model": project.image_model,
-            "video_model": project.video_model,
-            "aspect_ratio": project.aspect_ratio,
+            "text_model": scene.text_model,
+            "image_model": scene.image_model,
+            "video_model": scene.video_model,
+            "aspect_ratio": scene.aspect_ratio,
         }
         if run_through == "storyboard":
-            required_fields = {"text_model": project.text_model}
+            required_fields = {"text_model": scene.text_model}
         elif run_through == "keyframes":
             required_fields = {
-                "text_model": project.text_model,
-                "image_model": project.image_model,
+                "text_model": scene.text_model,
+                "image_model": scene.image_model,
             }
         missing = [k for k, v in required_fields.items() if not v]
         if missing:
@@ -1011,41 +1011,41 @@ async def start_generation(
             )
 
         # Ensure clip_duration is set (default to 6 if missing)
-        if not project.target_clip_duration:
-            project.target_clip_duration = 6
-            project.total_duration = (project.target_shot_count or 1) * 6
+        if not scene.target_clip_duration:
+            scene.target_clip_duration = 6
+            scene.total_duration = (scene.target_shot_count or 1) * 6
 
         # Ensure style has a value (default to "cinematic")
-        if not project.style:
-            project.style = "cinematic"
+        if not scene.style:
+            scene.style = "cinematic"
 
         # Ensure aspect_ratio is set for non-storyboard runs
-        if not project.aspect_ratio and run_through != "storyboard":
+        if not scene.aspect_ratio and run_through != "storyboard":
             raise HTTPException(status_code=422, detail="Cannot start generation: aspect_ratio is required")
 
         # Transition status
-        if project.status == "draft":
-            project.status = "pending"
+        if scene.status == "draft":
+            scene.status = "pending"
         # For stopped/staged/failed/complete: follow existing resume pattern
         # (pipeline's run_pipeline checks get_resume_step to find correct re-entry point)
 
         await session.commit()
 
-        logger.info(f"Starting generation for project {project_id} (was {project.status})")
+        logger.info(f"Starting generation for scene {scene_id} (was {scene.status})")
 
-    background_tasks.add_task(run_pipeline_background, project_id)
+    background_tasks.add_task(run_pipeline_background, scene_id)
 
     return StartGenerationResponse(
-        project_id=str(project_id),
+        scene_id=str(scene_id),
         status="pending",
     )
 
 
-@router.put("/projects/{project_id}/final-video")
-async def upload_final_video(project_id: uuid.UUID, file: UploadFile = File(...)):
-    """Upload a final video file for a project.
+@router.put("/scenes/{scene_id}/final-video")
+async def upload_final_video(scene_id: uuid.UUID, file: UploadFile = File(...)):
+    """Upload a final video file for a scene.
 
-    Accepts a multipart video upload and saves it as the project's output file.
+    Accepts a multipart video upload and saves it as the scene's output file.
     """
     # Validate content type
     if not file.content_type or not file.content_type.startswith("video/"):
@@ -1056,78 +1056,78 @@ async def upload_final_video(project_id: uuid.UUID, file: UploadFile = File(...)
 
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
-        # Save file using same path convention as stitcher: tmp/{project_id}/output/final.mp4
+        # Save file using same path convention as stitcher: tmp/{scene_id}/output/final.mp4
         file_mgr = FileManager()
-        output_path = file_mgr.get_output_path(project.id, "final.mp4")
+        output_path = file_mgr.get_output_path(scene.id, "final.mp4")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_path, "wb") as f:
             content = await file.read()
             f.write(content)
 
-        project.output_path = str(output_path)
+        scene.output_path = str(output_path)
         await session.commit()
 
-        logger.info(f"Uploaded final video for project {project_id}: {output_path}")
+        logger.info(f"Uploaded final video for scene {scene_id}: {output_path}")
 
         return {
-            "project_id": str(project_id),
+            "scene_id": str(scene_id),
             "output_path": str(output_path),
-            "status": project.status,
+            "status": scene.status,
         }
 
 
-@router.get("/projects/{project_id}/status", response_model=StatusResponse)
-async def get_project_status(project_id: uuid.UUID):
-    """Get lightweight project status for polling.
+@router.get("/scenes/{scene_id}/status", response_model=StatusResponse)
+async def get_scene_status(scene_id: uuid.UUID):
+    """Get lightweight scene status for polling.
 
-    Returns project-level status only (no shot details).
-    Use GET /api/projects/{id} for full detail.
+    Returns scene-level status only (no shot details).
+    Use GET /api/scenes/{id} for full detail.
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         return StatusResponse(
-            project_id=str(project.id),
-            status=project.status,
-            created_at=project.created_at.isoformat(),
-            updated_at=project.updated_at.isoformat(),
-            error_message=project.error_message,
+            scene_id=str(scene.id),
+            status=scene.status,
+            created_at=scene.created_at.isoformat(),
+            updated_at=scene.updated_at.isoformat(),
+            error_message=scene.error_message,
         )
 
 
-@router.get("/projects/{project_id}", response_model=ProjectDetail)
-async def get_project_detail(project_id: uuid.UUID):
-    """Get full project detail with shot breakdown.
+@router.get("/scenes/{scene_id}", response_model=SceneDetail)
+async def get_scene_detail(scene_id: uuid.UUID):
+    """Get full scene detail with shot breakdown.
 
     Includes shot-level status, keyframe existence, and clip status.
     """
     async with async_session() as session:
-        # Load project
+        # Load scene
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         # Load shots with their keyframes and clips
         shots_result = await session.execute(
             select(Shot)
-            .where(Shot.project_id == project_id)
+            .where(Shot.scene_id == scene_id)
             .order_by(Shot.shot_index)
         )
         shots = shots_result.scalars().all()
@@ -1174,18 +1174,18 @@ async def get_project_detail(project_id: uuid.UUID):
         # Load selected reference tags for all shots (Phase 8)
         sm_result = await session.execute(
             select(ShotManifestModel).where(
-                ShotManifestModel.project_id == project.id
+                ShotManifestModel.scene_id == scene.id
             )
         )
         shot_manifests_by_index = {
             sm.shot_index: sm for sm in sm_result.scalars().all()
         }
 
-        # If project has manifest, load assets for reference resolution
+        # If scene has manifest, load assets for reference resolution
         ref_assets_by_tag = {}
-        if project.manifest_id:
+        if scene.manifest_id:
             assets_result = await session.execute(
-                select(Asset).where(Asset.manifest_id == project.manifest_id)
+                select(Asset).where(Asset.manifest_id == scene.manifest_id)
             )
             ref_assets_by_tag = {
                 a.manifest_tag: a for a in assets_result.scalars().all()
@@ -1243,48 +1243,48 @@ async def get_project_detail(project_id: uuid.UUID):
                 sd.rewritten_keyframe_prompt = sm.rewritten_keyframe_prompt
                 sd.rewritten_video_prompt = sm.rewritten_video_prompt
 
-        return ProjectDetail(
-            project_id=str(project.id),
-            title=project.title,
-            prompt=project.prompt,
-            style=project.style,
-            aspect_ratio=project.aspect_ratio,
-            status=project.status,
-            created_at=project.created_at.isoformat(),
-            updated_at=project.updated_at.isoformat(),
+        return SceneDetail(
+            scene_id=str(scene.id),
+            title=scene.title,
+            prompt=scene.prompt,
+            style=scene.style,
+            aspect_ratio=scene.aspect_ratio,
+            status=scene.status,
+            created_at=scene.created_at.isoformat(),
+            updated_at=scene.updated_at.isoformat(),
             shot_count=len(shots),
             shots=shot_details,
-            error_message=project.error_message,
-            total_duration=project.total_duration,
-            clip_duration=project.target_clip_duration,
-            text_model=project.text_model,
-            image_model=project.image_model,
-            video_model=project.video_model,
-            audio_enabled=project.audio_enabled,
-            forked_from=str(project.forked_from_id) if project.forked_from_id else None,
-            manifest_id=str(project.manifest_id) if project.manifest_id else None,
-            quality_mode=project.quality_mode,
-            candidate_count=project.candidate_count,
-            vision_model=project.vision_model,
-            run_through=project.run_through,
-            head_sha=project.head_sha,
+            error_message=scene.error_message,
+            total_duration=scene.total_duration,
+            clip_duration=scene.target_clip_duration,
+            text_model=scene.text_model,
+            image_model=scene.image_model,
+            video_model=scene.video_model,
+            audio_enabled=scene.audio_enabled,
+            forked_from=str(scene.forked_from_id) if scene.forked_from_id else None,
+            manifest_id=str(scene.manifest_id) if scene.manifest_id else None,
+            quality_mode=scene.quality_mode,
+            candidate_count=scene.candidate_count,
+            vision_model=scene.vision_model,
+            run_through=scene.run_through,
+            head_sha=scene.head_sha,
         )
 
 
-@router.get("/projects", response_model=PaginatedProjects)
-async def list_projects(
+@router.get("/scenes", response_model=PaginatedScenes)
+async def list_scenes(
     page: int = 1,
     per_page: int = 12,
     view: Optional[str] = None,
     status: Optional[str] = None,
 ):
-    """List projects with server-side pagination (newest first).
+    """List scenes with server-side pagination (newest first).
 
     Query params:
       - page: 1-based page number (default 1)
       - per_page: items per page, must be 12, 24, 48, or 96 (default 12)
       - view: "cards" to include thumbnail_url (avoids extra query for list view)
-      - status: filter by project status (e.g. "complete", "failed", "stopped")
+      - status: filter by scene status (e.g. "complete", "failed", "stopped")
     """
     if per_page not in (12, 24, 48, 96):
         per_page = 12
@@ -1294,35 +1294,35 @@ async def list_projects(
     VALID_STATUSES = {"draft", "pending", "storyboarding", "keyframing", "video_gen", "stitching", "complete", "failed", "stopped", "staged"}
 
     async with async_session() as session:
-        filters = [Project.deleted_at.is_(None)]
+        filters = [Scene.deleted_at.is_(None)]
         if status and status in VALID_STATUSES:
-            filters.append(Project.status == status)
+            filters.append(Scene.status == status)
         base_filter = filters[0] if len(filters) == 1 else sa_and(*filters)
 
         # Total count
         count_result = await session.execute(
-            select(sa_func.count(Project.id)).where(base_filter)
+            select(sa_func.count(Scene.id)).where(base_filter)
         )
         total = count_result.scalar() or 0
 
-        # Paginated projects
+        # Paginated scenes
         result = await session.execute(
-            select(Project)
+            select(Scene)
             .where(base_filter)
-            .order_by(Project.created_at.desc())
+            .order_by(Scene.created_at.desc())
             .offset((page - 1) * per_page)
             .limit(per_page)
         )
-        projects = result.scalars().all()
+        scenes = result.scalars().all()
 
         # Build thumbnail map when cards view requested
         thumbnail_map: dict[str, str] = {}
-        if view == "cards" and projects:
-            project_ids = [p.id for p in projects]
+        if view == "cards" and scenes:
+            scene_ids = [p.id for p in scenes]
             thumb_q = await session.execute(
-                select(Shot.project_id, Keyframe.id)
+                select(Shot.scene_id, Keyframe.id)
                 .join(Shot, Keyframe.shot_id == Shot.id)
-                .where(Shot.project_id.in_(project_ids))
+                .where(Shot.scene_id.in_(scene_ids))
                 .where(Shot.shot_index == 0)
                 .where(Keyframe.position == "start")
             )
@@ -1331,10 +1331,10 @@ async def list_projects(
                 if pid_str not in thumbnail_map:
                     thumbnail_map[pid_str] = f"/api/keyframes/{row[1]}"
 
-        return PaginatedProjects(
+        return PaginatedScenes(
             items=[
-                ProjectListItem(
-                    project_id=str(p.id),
+                SceneListItem(
+                    scene_id=str(p.id),
                     title=p.title,
                     prompt=p.prompt,
                     status=p.status,
@@ -1351,7 +1351,7 @@ async def list_projects(
                     aspect_ratio=p.aspect_ratio,
                     thumbnail_url=thumbnail_map.get(str(p.id)),
                 )
-                for p in projects
+                for p in scenes
             ],
             total=total,
             page=page,
@@ -1359,9 +1359,9 @@ async def list_projects(
         )
 
 
-@router.post("/projects/{project_id}/resume", status_code=202, response_model=ResumeResponse)
-async def resume_project(
-    project_id: uuid.UUID,
+@router.post("/scenes/{scene_id}/resume", status_code=202, response_model=ResumeResponse)
+async def resume_scene(
+    scene_id: uuid.UUID,
     background_tasks: BackgroundTasks,
     body: Optional[ContinueRequest] = None,
 ):
@@ -1370,170 +1370,170 @@ async def resume_project(
     Accepts optional ContinueRequest body to advance run_through when
     continuing from a "staged" state.
 
-    Returns 409 if project is not in a resumable state (including complete).
+    Returns 409 if scene is not in a resumable state (including complete).
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
-        # Check if project can be resumed
-        if not can_resume(project.status):
+        # Check if scene can be resumed
+        if not can_resume(scene.status):
             raise HTTPException(
                 status_code=409,
-                detail=f"Project cannot be resumed from status '{project.status}'"
+                detail=f"Scene cannot be resumed from status '{scene.status}'"
             )
 
         # Apply updates from ContinueRequest body
         if body:
             # Update run_through when continuing from staged state
-            if project.status == "staged" and body.run_through is not None:
+            if scene.status == "staged" and body.run_through is not None:
                 new_val = None if body.run_through == "all" else body.run_through
                 if new_val is not None and new_val not in ("storyboard", "keyframes", "video"):
                     raise HTTPException(
                         status_code=422,
                         detail=f"run_through must be 'storyboard', 'keyframes', 'video', or 'all'; got '{body.run_through}'",
                     )
-                project.run_through = new_val
+                scene.run_through = new_val
 
             # Apply model overrides
             if body.image_model is not None:
                 if body.image_model not in ALLOWED_IMAGE_MODELS:
                     raise HTTPException(status_code=422, detail=f"Invalid image_model: {body.image_model}")
-                project.image_model = body.image_model
+                scene.image_model = body.image_model
             if body.vision_model is not None:
                 if not (body.vision_model in ALLOWED_TEXT_MODELS or body.vision_model.startswith("ollama/")):
                     raise HTTPException(status_code=422, detail=f"Invalid vision_model: {body.vision_model}")
-                project.vision_model = body.vision_model if body.vision_model else None
+                scene.vision_model = body.vision_model if body.vision_model else None
             if body.video_model is not None:
                 if body.video_model not in ALLOWED_VIDEO_MODELS:
                     raise HTTPException(status_code=422, detail=f"Invalid video_model: {body.video_model}")
-                project.video_model = body.video_model
+                scene.video_model = body.video_model
             if body.audio_enabled is not None:
-                if body.audio_enabled and project.video_model not in AUDIO_CAPABLE_MODELS:
-                    raise HTTPException(status_code=422, detail=f"Audio not supported for {project.video_model}")
-                project.audio_enabled = body.audio_enabled
+                if body.audio_enabled and scene.video_model not in AUDIO_CAPABLE_MODELS:
+                    raise HTTPException(status_code=422, detail=f"Audio not supported for {scene.video_model}")
+                scene.audio_enabled = body.audio_enabled
             if body.clip_duration is not None:
-                allowed = ALLOWED_DURATIONS.get(project.video_model or "", [5, 6, 7, 8])
+                allowed = ALLOWED_DURATIONS.get(scene.video_model or "", [5, 6, 7, 8])
                 if body.clip_duration not in allowed:
                     raise HTTPException(
                         status_code=422,
-                        detail=f"clip_duration {body.clip_duration} not supported for {project.video_model}. Allowed: {allowed}",
+                        detail=f"clip_duration {body.clip_duration} not supported for {scene.video_model}. Allowed: {allowed}",
                     )
-                project.target_clip_duration = body.clip_duration
+                scene.target_clip_duration = body.clip_duration
 
             await session.commit()
 
-        logger.info(f"Resuming project {project_id} from status {project.status}")
+        logger.info(f"Resuming scene {scene_id} from status {scene.status}")
 
     # Add background task
-    background_tasks.add_task(run_pipeline_background, project_id)
+    background_tasks.add_task(run_pipeline_background, scene_id)
 
     return ResumeResponse(
-        project_id=str(project_id),
-        status=project.status,
-        status_url=f"/api/projects/{project_id}/status",
+        scene_id=str(scene_id),
+        status=scene.status,
+        status_url=f"/api/scenes/{scene_id}/status",
     )
 
 
-@router.post("/projects/{project_id}/stop", response_model=StopResponse)
-async def stop_project(project_id: uuid.UUID):
+@router.post("/scenes/{scene_id}/stop", response_model=StopResponse)
+async def stop_scene(scene_id: uuid.UUID):
     """Stop a running pipeline.
 
-    Sets the project status to 'stopped'. The background pipeline checks this
+    Sets the scene status to 'stopped'. The background pipeline checks this
     flag between steps and inside long-running loops, then exits gracefully.
-    The project can be resumed later with POST /resume.
+    The scene can be resumed later with POST /resume.
 
-    Returns 409 if project is already in a terminal state (complete/failed/stopped).
+    Returns 409 if scene is already in a terminal state (complete/failed/stopped).
     """
     ACTIVE_STATUSES = {"pending", "storyboarding", "keyframing", "video_gen", "stitching"}
 
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
-        if project.status not in ACTIVE_STATUSES:
+        if scene.status not in ACTIVE_STATUSES:
             raise HTTPException(
                 status_code=409,
-                detail=f"Project cannot be stopped from status '{project.status}'"
+                detail=f"Scene cannot be stopped from status '{scene.status}'"
             )
 
-        project.status = "stopped"
+        scene.status = "stopped"
         await session.commit()
 
-        logger.info(f"Project {project_id} marked as stopped")
+        logger.info(f"Scene {scene_id} marked as stopped")
 
-    return StopResponse(project_id=str(project_id), status="stopped")
+    return StopResponse(scene_id=str(scene_id), status="stopped")
 
 
-class UpdateProjectRequest(BaseModel):
+class UpdateSceneRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
 
 
-@router.patch("/projects/{project_id}", response_model=dict)
-async def update_project(project_id: uuid.UUID, body: UpdateProjectRequest):
-    """Update mutable project fields (currently just title)."""
+@router.patch("/scenes/{scene_id}", response_model=dict)
+async def update_scene(scene_id: uuid.UUID, body: UpdateSceneRequest):
+    """Update mutable scene fields (currently just title)."""
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
+        scene = result.scalar_one_or_none()
 
-        if not project or project.deleted_at is not None:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not scene or scene.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
-        project.title = body.title
+        scene.title = body.title
         await session.commit()
 
-    return {"project_id": str(project_id), "title": body.title}
+    return {"scene_id": str(scene_id), "title": body.title}
 
 
-@router.delete("/projects/{project_id}")
-async def delete_project(project_id: uuid.UUID):
-    """Soft-delete a project: sets deleted_at, removes disk assets.
+@router.delete("/scenes/{scene_id}")
+async def delete_scene(scene_id: uuid.UUID):
+    """Soft-delete a scene: sets deleted_at, removes disk assets.
 
-    Only terminal-status projects (complete, failed, stopped) can be deleted.
+    Only terminal-status scenes (complete, failed, stopped) can be deleted.
     DB records are preserved for cost tracking.
     """
     DELETABLE_STATUSES = {"complete", "failed", "stopped", "draft"}
 
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
+        scene = result.scalar_one_or_none()
 
-        if not project or project.deleted_at is not None:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not scene or scene.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
-        if project.status not in DELETABLE_STATUSES:
+        if scene.status not in DELETABLE_STATUSES:
             raise HTTPException(
                 status_code=409,
-                detail=f"Cannot delete project with status '{project.status}'. Stop it first.",
+                detail=f"Cannot delete scene with status '{scene.status}'. Stop it first.",
             )
 
-        project.deleted_at = sa_func.now()
+        scene.deleted_at = sa_func.now()
         await session.commit()
 
     # Remove disk assets (keyframes, clips, output) after commit
     try:
-        project_dir = FileManager().base_dir / str(project_id)
-        if project_dir.exists():
-            shutil.rmtree(project_dir)
-            logger.info(f"Removed disk assets for project {project_id}")
+        scene_dir = FileManager().base_dir / str(scene_id)
+        if scene_dir.exists():
+            shutil.rmtree(scene_dir)
+            logger.info(f"Removed disk assets for scene {scene_id}")
     except Exception:
-        logger.warning(f"Failed to remove disk assets for project {project_id}", exc_info=True)
+        logger.warning(f"Failed to remove disk assets for scene {scene_id}", exc_info=True)
 
-    return {"status": "deleted", "project_id": str(project_id)}
+    return {"status": "deleted", "scene_id": str(scene_id)}
 
 
 class _ExpansionShots(BaseModel):
@@ -1547,7 +1547,7 @@ class _EnhancedExpansionShots(BaseModel):
 
 
 async def _generate_expansion_shots(
-    project: Project,
+    scene: Scene,
     kept_shots: list[dict],
     num_new_shots: int,
     start_index: int,
@@ -1560,14 +1560,14 @@ async def _generate_expansion_shots(
     that continue the narrative from the kept shots.
 
     Args:
-        project: The new forked project (has prompt, style, etc.)
+        scene: The new forked scene (has prompt, style, etc.)
         kept_shots: storyboard_raw["shots"] entries for kept shots
         num_new_shots: How many new shots to generate
         start_index: shot_index for the first new shot
         asset_registry_block: When provided, enables manifest-aware generation
             with shot_manifest and audio_manifest in the output schema.
         text_adapter: Optional LLMAdapter instance. If None, falls back to
-            Vertex AI with the project's text_model or gemini-2.5-flash.
+            Vertex AI with the scene's text_model or gemini-2.5-flash.
 
     Returns:
         List of shot dicts ready for Shot record creation
@@ -1575,10 +1575,10 @@ async def _generate_expansion_shots(
     from vidpipe.services.llm import get_adapter
 
     if text_adapter is None:
-        model_id = project.text_model or "gemini-2.5-flash"
+        model_id = scene.text_model or "gemini-2.5-flash"
         text_adapter = get_adapter(model_id)
 
-    style_label = (project.style or "cinematic").replace("_", " ")
+    style_label = (scene.style or "cinematic").replace("_", " ")
 
     # Build context from kept shots
     kept_summary = json.dumps(kept_shots, indent=2) if kept_shots else "[]"
@@ -1613,10 +1613,10 @@ AUDIO MANIFEST INSTRUCTIONS:
     prompt = f"""You are a storyboard director. You have an existing partial storyboard and need to generate {num_new_shots} NEW continuation shot(s).
 
 VISUAL STYLE: {style_label}
-ASPECT RATIO: {project.aspect_ratio}
+ASPECT RATIO: {scene.aspect_ratio}
 {manifest_instructions}
 ORIGINAL SCRIPT:
-{project.prompt}
+{scene.prompt}
 
 EXISTING SHOTS (already in the storyboard — do NOT repeat these):
 {kept_summary}
@@ -1650,17 +1650,17 @@ Generate exactly {num_new_shots} new shot(s) that continue the narrative from wh
 async def _copy_assets_for_fork(
     session,
     source_manifest_id,
-    source_project_id,
-    new_project_id,
+    source_scene_id,
+    new_scene_id,
     asset_changes,  # Optional[AssetChanges]
 ) -> tuple[list, list[str]]:
-    """Copy parent manifest assets to forked project with inheritance tracking.
+    """Copy parent manifest assets to forked scene with inheritance tracking.
 
     Returns:
         (list_of_new_assets, list_of_modified_asset_tags)
     """
     # Load canonical (non-inherited) assets for this manifest to avoid
-    # cascading duplication when forking a project that was itself forked
+    # cascading duplication when forking a scene that was itself forked
     result = await session.execute(
         select(Asset).where(
             Asset.manifest_id == source_manifest_id,
@@ -1714,7 +1714,7 @@ async def _copy_assets_for_fork(
             # Inheritance tracking
             is_inherited=not is_modified,
             inherited_from_asset=asset.id,
-            inherited_from_project=source_project_id,
+            inherited_from_scene=source_scene_id,
         )
 
         # Apply modifications if present
@@ -1733,7 +1733,7 @@ async def _copy_assets_for_fork(
         session.add(new_asset)
 
     new_assets_result = await session.execute(
-        select(Asset).where(Asset.inherited_from_project == new_project_id)
+        select(Asset).where(Asset.inherited_from_scene == new_scene_id)
     )
 
     return new_assets, modified_asset_tags
@@ -1741,8 +1741,8 @@ async def _copy_assets_for_fork(
 
 async def _copy_shot_manifests(
     session,
-    source_project_id,
-    new_project_id,
+    source_scene_id,
+    new_scene_id,
     shot_boundary: int,
     deleted_set: set,
 ):
@@ -1755,7 +1755,7 @@ async def _copy_shot_manifests(
     # Load source shot manifests
     result = await session.execute(
         select(ShotManifestModel).where(
-            ShotManifestModel.project_id == source_project_id
+            ShotManifestModel.scene_id == source_scene_id
         )
     )
     source_sms = list(result.scalars().all())
@@ -1774,7 +1774,7 @@ async def _copy_shot_manifests(
         if new_idx < shot_boundary:
             # Full copy for shots below boundary
             new_sm = ShotManifestModel(
-                project_id=new_project_id,
+                scene_id=new_scene_id,
                 shot_index=new_idx,
                 manifest_json=sm.manifest_json,
                 composition_shot_type=sm.composition_shot_type,
@@ -1790,7 +1790,7 @@ async def _copy_shot_manifests(
         else:
             # Structural copy for shots at/above boundary — clear regen fields
             new_sm = ShotManifestModel(
-                project_id=new_project_id,
+                scene_id=new_scene_id,
                 shot_index=new_idx,
                 manifest_json=sm.manifest_json,
                 composition_shot_type=sm.composition_shot_type,
@@ -1808,8 +1808,8 @@ async def _copy_shot_manifests(
 
 async def _copy_shot_audio_manifests(
     session,
-    source_project_id,
-    new_project_id,
+    source_scene_id,
+    new_scene_id,
     deleted_set: set,
 ):
     """Copy shot audio manifests for all non-deleted source shots.
@@ -1819,7 +1819,7 @@ async def _copy_shot_audio_manifests(
     """
     result = await session.execute(
         select(ShotAudioManifestModel).where(
-            ShotAudioManifestModel.project_id == source_project_id
+            ShotAudioManifestModel.scene_id == source_scene_id
         )
     )
     source_sams = list(result.scalars().all())
@@ -1835,7 +1835,7 @@ async def _copy_shot_audio_manifests(
         new_idx = _old_to_new(sam.shot_index)
 
         new_sam = ShotAudioManifestModel(
-            project_id=new_project_id,
+            scene_id=new_scene_id,
             shot_index=new_idx,
             dialogue_json=sam.dialogue_json,
             sfx_json=sam.sfx_json,
@@ -1872,7 +1872,7 @@ def _compute_asset_invalidation_point(
 
 
 def _compute_invalidation(
-    source: Project,
+    source: Scene,
     overrides: dict,
     shot_edits: Optional[dict[int, dict[str, str]]],
     deleted_shots: Optional[list[int]] = None,
@@ -1946,23 +1946,23 @@ def _compute_invalidation(
     return "stitching", new_shot_count
 
 
-@router.post("/projects/{project_id}/fork", status_code=202, response_model=ForkResponse)
-async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_tasks: BackgroundTasks):
-    """Fork a project with optional edits and resume from the appropriate pipeline stage.
+@router.post("/scenes/{scene_id}/fork", status_code=202, response_model=ForkResponse)
+async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks: BackgroundTasks):
+    """Fork a scene with optional edits and resume from the appropriate pipeline stage.
 
-    Creates a new project that copies existing assets up to the edit point, then
+    Creates a new scene that copies existing assets up to the edit point, then
     resumes the pipeline from there. Copied assets are marked as 'inherited'.
     """
     async with async_session() as session:
-        # Load source project
-        result = await session.execute(select(Project).where(Project.id == project_id))
+        # Load source scene
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
         source = result.scalar_one_or_none()
         if not source:
-            raise HTTPException(status_code=404, detail="Project not found")
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         # Must be terminal
         if source.status not in ("complete", "failed", "stopped"):
-            raise HTTPException(status_code=409, detail=f"Can only fork terminal projects, got '{source.status}'")
+            raise HTTPException(status_code=409, detail=f"Can only fork terminal scenes, got '{source.status}'")
 
         # Collect overrides (only explicitly provided fields)
         overrides: dict = {}
@@ -2005,9 +2005,9 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
         if deleted_set and len(deleted_set) >= src_shot_count:
             raise HTTPException(status_code=422, detail="Cannot delete all shots; at least 1 must remain")
 
-        # Validate asset_changes requires a manifest on the source project
+        # Validate asset_changes requires a manifest on the source scene
         if request.asset_changes is not None and source.manifest_id is None:
-            raise HTTPException(status_code=422, detail="Cannot apply asset_changes to a project without a manifest")
+            raise HTTPException(status_code=422, detail="Cannot apply asset_changes to a scene without a manifest")
 
         # Compute invalidation point
         resume_from, shot_boundary = _compute_invalidation(
@@ -2037,7 +2037,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                     # Load source shot manifests for asset invalidation check
                     src_sm_result = await session.execute(
                         select(ShotManifestModel).where(
-                            ShotManifestModel.project_id == source.id
+                            ShotManifestModel.scene_id == source.id
                         )
                     )
                     src_shot_manifests = list(src_sm_result.scalars().all())
@@ -2066,8 +2066,8 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
             new_shot_count = max(1, new_shot_count - len(deleted_set))
             new_total = new_shot_count * (new_clip or 6)
 
-        # Create new project
-        new_project = Project(
+        # Create new scene
+        new_scene = Scene(
             prompt=overrides.get("prompt", source.prompt),
             style=overrides.get("style", source.style),
             aspect_ratio=ar,
@@ -2085,28 +2085,28 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
         )
 
         # Always copy storyboard data — inherited shots are always preserved
-        new_project.storyboard_raw = source.storyboard_raw
-        new_project.style_guide = source.style_guide
+        new_scene.storyboard_raw = source.storyboard_raw
+        new_scene.style_guide = source.style_guide
 
         # Phase 12: Inherit manifest_id and manifest_version from source
         if source.manifest_id is not None:
-            new_project.manifest_id = source.manifest_id
-            new_project.manifest_version = source.manifest_version
+            new_scene.manifest_id = source.manifest_id
+            new_scene.manifest_version = source.manifest_version
 
-        session.add(new_project)
+        session.add(new_scene)
         await session.commit()
-        await session.refresh(new_project)
+        await session.refresh(new_scene)
 
-        new_id = new_project.id
+        new_id = new_scene.id
         file_mgr = FileManager()
-        file_mgr.get_project_dir(new_id)  # ensure dirs exist
+        file_mgr.get_scene_dir(new_id)  # ensure dirs exist
 
         # Build set of shots whose keyframes should be cleared
         clear_kf_set = set(request.clear_keyframes) if request.clear_keyframes else set()
 
         # Load source shots
         src_shots_result = await session.execute(
-            select(Shot).where(Shot.project_id == source.id).order_by(Shot.shot_index)
+            select(Shot).where(Shot.scene_id == source.id).order_by(Shot.shot_index)
         )
         src_shots = src_shots_result.scalars().all()
 
@@ -2172,7 +2172,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                         new_shot_status = "pending"
 
                 new_shot = Shot(
-                    project_id=new_id,
+                    scene_id=new_id,
                     shot_index=new_idx,
                     shot_description=shot_desc,
                     start_frame_prompt=start_fp,
@@ -2192,7 +2192,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                     for kf in kf_result.scalars().all():
                         src_path = Path(kf.file_path)
                         if src_path.exists():
-                            dst_path = file_mgr.get_project_dir(new_id) / "keyframes" / f"shot_{new_idx}_{kf.position}.png"
+                            dst_path = file_mgr.get_scene_dir(new_id) / "keyframes" / f"shot_{new_idx}_{kf.position}.png"
                             shutil.copy2(str(src_path), str(dst_path))
                             new_kf = Keyframe(
                                 shot_id=new_shot.id,
@@ -2213,7 +2213,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                     if clip and clip.local_path:
                         src_clip_path = Path(clip.local_path)
                         if src_clip_path.exists():
-                            dst_clip_path = file_mgr.get_project_dir(new_id) / "clips" / f"shot_{new_idx}.mp4"
+                            dst_clip_path = file_mgr.get_scene_dir(new_id) / "clips" / f"shot_{new_idx}.mp4"
                             shutil.copy2(str(src_clip_path), str(dst_clip_path))
                             new_clip = VideoClip(
                                 shot_id=new_shot.id,
@@ -2231,8 +2231,8 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                 new_idx += 1
 
             # Update storyboard_raw: apply edits, prune deleted shots, renumber
-            if new_project.storyboard_raw:
-                sb = dict(new_project.storyboard_raw)
+            if new_scene.storyboard_raw:
+                sb = dict(new_scene.storyboard_raw)
                 if "shots" in sb:
                     # Apply shot edits first (on original indices)
                     if request.shot_edits:
@@ -2249,9 +2249,9 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                         # Renumber shot_index to match post-deletion DB indices
                         for new_idx_sb, shot_data in enumerate(sb["shots"]):
                             shot_data["shot_index"] = new_idx_sb
-                    new_project.storyboard_raw = sb
+                    new_scene.storyboard_raw = sb
 
-        # Phase 12: Copy manifest assets and shot manifests for forked project
+        # Phase 12: Copy manifest assets and shot manifests for forked scene
         if source.manifest_id is not None:
             # Copy assets with inheritance tracking
             _, modified_asset_tags = await _copy_assets_for_fork(
@@ -2288,7 +2288,7 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
                 # Collect existing face embeddings from inherited assets for cross-matching
                 inherited_result = await session.execute(
                     select(Asset).where(
-                        Asset.inherited_from_project == new_id,
+                        Asset.inherited_from_scene == new_id,
                         Asset.face_embedding.isnot(None),
                     )
                 )
@@ -2312,48 +2312,48 @@ async def fork_project(project_id: uuid.UUID, request: ForkRequest, background_t
     background_tasks.add_task(run_pipeline_background, new_id)
 
     return ForkResponse(
-        project_id=str(new_id),
-        forked_from=str(project_id),
+        scene_id=str(new_id),
+        forked_from=str(scene_id),
         status=resume_from,
-        status_url=f"/api/projects/{new_id}/status",
+        status_url=f"/api/scenes/{new_id}/status",
         copied_shots=copied_shots,
         resume_from=resume_from,
     )
 
 
-@router.patch("/projects/{project_id}/edit", response_model=EditProjectResponse)
-async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest):
-    """Edit project in-place with checkpoint (PipeSVN).
+@router.patch("/scenes/{scene_id}/edit", response_model=EditSceneResponse)
+async def edit_scene_in_place(scene_id: uuid.UUID, body: EditSceneRequest):
+    """Edit scene in-place with checkpoint (PipeSVN).
 
-    Only allowed on terminal-status projects. Uses optimistic concurrency
+    Only allowed on terminal-status scenes. Uses optimistic concurrency
     via expected_sha to prevent lost updates.
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         # Must be terminal
-        if project.status not in ("complete", "failed", "stopped", "staged", "draft"):
+        if scene.status not in ("complete", "failed", "stopped", "staged", "draft"):
             raise HTTPException(
                 status_code=409,
-                detail=f"Cannot edit project in status '{project.status}'"
+                detail=f"Cannot edit scene in status '{scene.status}'"
             )
 
         # Optimistic concurrency check
-        if body.expected_sha is not None and body.expected_sha != project.head_sha:
+        if body.expected_sha is not None and body.expected_sha != scene.head_sha:
             raise HTTPException(
                 status_code=409,
                 detail=f"Conflict: expected head_sha={body.expected_sha}, "
-                       f"actual={project.head_sha}. Another edit was committed."
+                       f"actual={scene.head_sha}. Another edit was committed."
             )
 
         changes = []
 
-        # Apply project-level field changes
+        # Apply scene-level field changes
         field_map = {
             "prompt": body.prompt,
             "title": body.title,
@@ -2369,31 +2369,31 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
         }
         for attr, value in field_map.items():
             if value is not None:
-                old_val = getattr(project, attr)
+                old_val = getattr(scene, attr)
                 if old_val != value:
-                    setattr(project, attr, value)
-                    changes.append({"type": "project_field", "field": attr, "old": str(old_val), "new": str(value)})
+                    setattr(scene, attr, value)
+                    changes.append({"type": "scene_field", "field": attr, "old": str(old_val), "new": str(value)})
 
         # Handle manifest_id change (requires UUID parsing + snapshot)
         if body.manifest_id is not None:
             manifest_uuid = uuid.UUID(body.manifest_id)
-            old_manifest = project.manifest_id
+            old_manifest = scene.manifest_id
             if old_manifest != manifest_uuid:
                 manifest = await manifest_service.get_manifest(session, manifest_uuid)
                 if not manifest:
                     raise HTTPException(status_code=404, detail=f"Manifest {body.manifest_id} not found")
-                project.manifest_id = manifest_uuid
-                project.manifest_version = manifest.version
-                await manifest_service.create_snapshot(session, manifest_uuid, project.id)
+                scene.manifest_id = manifest_uuid
+                scene.manifest_version = manifest.version
+                await manifest_service.create_snapshot(session, manifest_uuid, scene.id)
                 await manifest_service.increment_usage(session, manifest_uuid)
-                changes.append({"type": "project_field", "field": "manifest_id", "old": str(old_manifest), "new": str(manifest_uuid)})
+                changes.append({"type": "scene_field", "field": "manifest_id", "old": str(old_manifest), "new": str(manifest_uuid)})
 
         # Handle shot expansion (target_shot_count increase) — BEFORE shot edits
         # so that newly-created rows exist when shot_edits tries to find them.
         if body.target_shot_count is not None:
             existing_result = await session.execute(
                 select(sa_func.count(Shot.id)).where(
-                    Shot.project_id == project.id,
+                    Shot.scene_id == scene.id,
                     Shot.status != "removed",
                 )
             )
@@ -2402,14 +2402,14 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
                 # Get max shot_index
                 max_idx_result = await session.execute(
                     select(sa_func.max(Shot.shot_index)).where(
-                        Shot.project_id == project.id
+                        Shot.scene_id == scene.id
                     )
                 )
                 max_idx = max_idx_result.scalar() or 0
                 for i in range(body.target_shot_count - existing_count):
                     new_idx = max_idx + 1 + i
                     new_shot = Shot(
-                        project_id=project.id,
+                        scene_id=scene.id,
                         shot_index=new_idx,
                         shot_description="",
                         start_frame_prompt="",
@@ -2427,7 +2427,7 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
             for shot_idx, edits in body.shot_edits.items():
                 shot_result = await session.execute(
                     select(Shot).where(
-                        Shot.project_id == project.id,
+                        Shot.scene_id == scene.id,
                         Shot.shot_index == int(shot_idx),
                     )
                 )
@@ -2458,7 +2458,7 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
             for shot_idx in body.removed_shots:
                 shot_result = await session.execute(
                     select(Shot).where(
-                        Shot.project_id == project.id,
+                        Shot.scene_id == scene.id,
                         Shot.shot_index == shot_idx,
                     )
                 )
@@ -2469,10 +2469,10 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
 
         # Reorder shots
         if body.shot_order is not None:
-            # Fetch all active shots for this project
+            # Fetch all active shots for this scene
             shot_result = await session.execute(
                 select(Shot).where(
-                    Shot.project_id == project.id,
+                    Shot.scene_id == scene.id,
                     Shot.status != "removed",
                 )
             )
@@ -2494,19 +2494,19 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
                 active_shots[old_idx].shot_index = temp_idx
                 await session.execute(
                     update(ShotManifestModel).where(
-                        ShotManifestModel.project_id == project.id,
+                        ShotManifestModel.scene_id == scene.id,
                         ShotManifestModel.shot_index == old_idx,
                     ).values(shot_index=temp_idx)
                 )
                 await session.execute(
                     update(ShotAudioManifestModel).where(
-                        ShotAudioManifestModel.project_id == project.id,
+                        ShotAudioManifestModel.scene_id == scene.id,
                         ShotAudioManifestModel.shot_index == old_idx,
                     ).values(shot_index=temp_idx)
                 )
                 await session.execute(
                     update(AssetAppearance).where(
-                        AssetAppearance.project_id == project.id,
+                        AssetAppearance.scene_id == scene.id,
                         AssetAppearance.shot_index == old_idx,
                     ).values(shot_index=temp_idx)
                 )
@@ -2519,19 +2519,19 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
                 active_shots[old_idx].shot_index = new_idx
                 await session.execute(
                     update(ShotManifestModel).where(
-                        ShotManifestModel.project_id == project.id,
+                        ShotManifestModel.scene_id == scene.id,
                         ShotManifestModel.shot_index == temp_idx,
                     ).values(shot_index=new_idx)
                 )
                 await session.execute(
                     update(ShotAudioManifestModel).where(
-                        ShotAudioManifestModel.project_id == project.id,
+                        ShotAudioManifestModel.scene_id == scene.id,
                         ShotAudioManifestModel.shot_index == temp_idx,
                     ).values(shot_index=new_idx)
                 )
                 await session.execute(
                     update(AssetAppearance).where(
-                        AssetAppearance.project_id == project.id,
+                        AssetAppearance.scene_id == scene.id,
                         AssetAppearance.shot_index == temp_idx,
                     ).values(shot_index=new_idx)
                 )
@@ -2546,21 +2546,21 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
         from vidpipe.services.checkpoint_service import create_checkpoint
         message = body.commit_message or f"Edit: {len(changes)} change(s)"
         checkpoint = await create_checkpoint(
-            session, project, message, metadata={"changes": changes}
+            session, scene, message, metadata={"changes": changes}
         )
 
         await session.commit()
 
-        return EditProjectResponse(
-            project_id=str(project.id),
+        return EditSceneResponse(
+            scene_id=str(scene.id),
             head_sha=checkpoint.sha,
             message=message,
             changes_count=len(changes),
         )
 
 
-@router.get("/projects/{project_id}/download")
-async def download_video(project_id: uuid.UUID, dl: int = 0):
+@router.get("/scenes/{scene_id}/download")
+async def download_video(scene_id: uuid.UUID, dl: int = 0):
     """Download or stream final MP4 video file.
 
     Query params:
@@ -2568,34 +2568,34 @@ async def download_video(project_id: uuid.UUID, dl: int = 0):
       Default serves inline for <video> element streaming.
     - v=<sha>: ignored, used as client-side cache buster.
 
-    Returns 409 if project is not complete.
+    Returns 409 if scene is not complete.
     Returns 404 if output file does not exist.
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
-        # Check if project is complete
-        if project.status != "complete":
+        # Check if scene is complete
+        if scene.status != "complete":
             raise HTTPException(
                 status_code=409,
-                detail=f"Project not ready for download (status: {project.status})"
+                detail=f"Scene not ready for download (status: {scene.status})"
             )
 
         # Check if output file exists
-        if not project.output_path:
+        if not scene.output_path:
             raise HTTPException(status_code=404, detail="Output file path not set")
 
-        output_path = Path(project.output_path)
+        output_path = Path(scene.output_path)
         if not output_path.exists():
             raise HTTPException(status_code=404, detail="Output file not found on disk")
 
-        filename = f"video_{project_id}.mp4"
+        filename = f"video_{scene_id}.mp4"
         disposition = "attachment" if dl else "inline"
         return FileResponse(
             path=str(output_path),
@@ -2662,45 +2662,45 @@ async def get_clip_video(clip_id: uuid.UUID):
 
 @router.get("/metrics", response_model=MetricsResponse)
 async def get_metrics():
-    """Aggregate metrics across all projects.
+    """Aggregate metrics across all scenes.
 
-    Cost estimation is artifact-based: complete projects use theoretical full
-    cost; incomplete projects count only actually-generated keyframes and
+    Cost estimation is artifact-based: complete scenes use theoretical full
+    cost; incomplete scenes count only actually-generated keyframes and
     completed video clips.
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.deleted_at.is_(None))
+            select(Scene).where(Scene.deleted_at.is_(None))
         )
-        projects = result.scalars().all()
+        scenes = result.scalars().all()
 
-        # Build lookup of actual artifacts per project for cost accuracy.
-        # generated keyframes per project (only source='generated', not 'inherited')
+        # Build lookup of actual artifacts per scene for cost accuracy.
+        # generated keyframes per scene (only source='generated', not 'inherited')
         kf_q = await session.execute(
             select(
-                Shot.project_id,
+                Shot.scene_id,
                 sa_func.count(Keyframe.id),
             )
             .join(Shot, Keyframe.shot_id == Shot.id)
             .where(Keyframe.source == "generated")
-            .group_by(Shot.project_id)
+            .group_by(Shot.scene_id)
         )
         kf_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in kf_q}
 
-        # completed video clips per project (only source='generated')
+        # completed video clips per scene (only source='generated')
         vc_q = await session.execute(
             select(
-                Shot.project_id,
+                Shot.scene_id,
                 sa_func.count(VideoClip.id),
             )
             .join(Shot, VideoClip.shot_id == Shot.id)
             .where(VideoClip.status == "complete")
             .where(VideoClip.source == "generated")
-            .group_by(Shot.project_id)
+            .group_by(Shot.scene_id)
         )
         vc_counts: dict[uuid.UUID, int] = {row[0]: row[1] for row in vc_q}
 
-        # Billed Veo submissions per project: all clips with operation_name
+        # Billed Veo submissions per scene: all clips with operation_name
         # (Google charges even for failed/filtered operations)
         submission_expr = case(
             (VideoClip.veo_submission_count > 0, VideoClip.veo_submission_count),
@@ -2708,37 +2708,37 @@ async def get_metrics():
         )
         billed_q = await session.execute(
             select(
-                Shot.project_id,
+                Shot.scene_id,
                 sa_func.sum(submission_expr),
             )
             .join(Shot, VideoClip.shot_id == Shot.id)
             .where(VideoClip.operation_name.isnot(None))
             .where(VideoClip.source == "generated")
-            .group_by(Shot.project_id)
+            .group_by(Shot.scene_id)
         )
         billed_counts: dict[uuid.UUID, int] = {row[0]: int(row[1]) for row in billed_q}
 
-        # Safety regen image calls per project
+        # Safety regen image calls per scene
         regen_q = await session.execute(
             select(
-                Shot.project_id,
+                Shot.scene_id,
                 sa_func.sum(VideoClip.safety_regen_count),
             )
             .join(Shot, VideoClip.shot_id == Shot.id)
             .where(VideoClip.safety_regen_count > 0)
-            .group_by(Shot.project_id)
+            .group_by(Shot.scene_id)
         )
         regen_counts: dict[uuid.UUID, int] = {row[0]: int(row[1]) for row in regen_q}
 
-        # actual shot counts per project
+        # actual shot counts per scene
         sc_q = await session.execute(
             select(
-                Shot.project_id,
+                Shot.scene_id,
                 sa_func.count(Shot.id),
             )
-            .group_by(Shot.project_id)
+            .group_by(Shot.scene_id)
         )
-        shot_counts_per_project: dict[uuid.UUID, int] = {row[0]: row[1] for row in sc_q}
+        shot_counts_per_scene: dict[uuid.UUID, int] = {row[0]: row[1] for row in sc_q}
 
     status_counts: Counter[str] = Counter()
     style_counts: Counter[str] = Counter()
@@ -2752,7 +2752,7 @@ async def get_metrics():
     total_seconds = 0
     clip_durations: list[int] = []
 
-    for p in projects:
+    for p in scenes:
         status_counts[p.status] += 1
         style_counts[p.style] += 1
         aspect_ratio_counts[p.aspect_ratio] += 1
@@ -2763,14 +2763,14 @@ async def get_metrics():
         if p.video_model:
             video_model_counts[p.video_model] += 1
         audio_counts["enabled" if p.audio_enabled else "disabled"] += 1
-        sc = shot_counts_per_project.get(p.id, 0)
+        sc = shot_counts_per_scene.get(p.id, 0)
         if sc > 0:
             shot_count_counts[str(sc)] += 1
         if p.total_duration:
             total_seconds += p.total_duration
         if p.target_clip_duration:
             clip_durations.append(p.target_clip_duration)
-        total_cost += _estimate_project_cost(
+        total_cost += _estimate_scene_cost(
             p,
             generated_keyframes=kf_counts.get(p.id, 0),
             completed_clips=vc_counts.get(p.id, 0),
@@ -2783,7 +2783,7 @@ async def get_metrics():
     avg_clip = sum(clip_durations) / len(clip_durations) if clip_durations else None
 
     return MetricsResponse(
-        total_projects=len(projects),
+        total_scenes=len(scenes),
         status_counts=dict(status_counts),
         style_counts=dict(style_counts),
         aspect_ratio_counts=dict(aspect_ratio_counts),
@@ -2874,19 +2874,19 @@ async def create_manifest(request: CreateManifestRequest):
             raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.post("/manifests/from-project", status_code=201, response_model=ManifestDetailResponse)
-async def create_manifest_from_project(request: CreateManifestFromProjectRequest):
-    """Create a manifest pre-populated from a project's storyboard data."""
+@router.post("/manifests/from-scene", status_code=201, response_model=ManifestDetailResponse)
+async def create_manifest_from_scene(request: CreateManifestFromSceneRequest):
+    """Create a manifest pre-populated from a scene's storyboard data."""
     try:
-        project_id = uuid.UUID(request.project_id)
+        scene_id = uuid.UUID(request.scene_id)
     except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid project_id format")
+        raise HTTPException(status_code=422, detail="Invalid scene_id format")
 
     async with async_session() as session:
         try:
-            manifest, assets = await manifest_service.create_manifest_from_project(
+            manifest, assets = await manifest_service.create_manifest_from_scene(
                 session,
-                project_id=project_id,
+                scene_id=scene_id,
                 name=request.name,
             )
             await session.commit()
@@ -2996,7 +2996,7 @@ async def update_manifest(manifest_id: uuid.UUID, request: UpdateManifestRequest
 
 @router.delete("/manifests/{manifest_id}")
 async def delete_manifest(manifest_id: uuid.UUID):
-    """Soft delete manifest. Returns 409 if referenced by projects."""
+    """Soft delete manifest. Returns 409 if referenced by scenes."""
     async with async_session() as session:
         try:
             await manifest_service.delete_manifest(session, manifest_id)
@@ -3362,14 +3362,14 @@ async def reprocess_asset(asset_id: uuid.UUID):
 # Phase 11: Multi-Candidate Quality Mode Endpoints
 # ============================================================================
 
-@router.get("/projects/{project_id}/shots/{shot_idx}/candidates")
-async def list_candidates(project_id: str, shot_idx: int):
+@router.get("/scenes/{scene_id}/shots/{shot_idx}/candidates")
+async def list_candidates(scene_id: str, shot_idx: int):
     """List all generation candidates for a specific shot with scores."""
     async with async_session() as session:
         result = await session.execute(
             select(GenerationCandidate)
             .where(
-                GenerationCandidate.project_id == uuid.UUID(project_id),
+                GenerationCandidate.scene_id == uuid.UUID(scene_id),
                 GenerationCandidate.shot_index == shot_idx,
             )
             .order_by(GenerationCandidate.candidate_number)
@@ -3396,8 +3396,8 @@ async def list_candidates(project_id: str, shot_idx: int):
         ]
 
 
-@router.put("/projects/{project_id}/shots/{shot_idx}/candidates/{candidate_id}/select")
-async def select_candidate(project_id: str, shot_idx: int, candidate_id: str):
+@router.put("/scenes/{scene_id}/shots/{shot_idx}/candidates/{candidate_id}/select")
+async def select_candidate(scene_id: str, shot_idx: int, candidate_id: str):
     """Manually override auto-selection for a shot's candidate.
 
     CRITICAL: Updates BOTH GenerationCandidate.is_selected AND VideoClip.local_path.
@@ -3407,7 +3407,7 @@ async def select_candidate(project_id: str, shot_idx: int, candidate_id: str):
         # Load all candidates for this shot
         all_result = await session.execute(
             select(GenerationCandidate).where(
-                GenerationCandidate.project_id == uuid.UUID(project_id),
+                GenerationCandidate.scene_id == uuid.UUID(scene_id),
                 GenerationCandidate.shot_index == shot_idx,
             )
         )
@@ -3432,7 +3432,7 @@ async def select_candidate(project_id: str, shot_idx: int, candidate_id: str):
         # CRITICAL: Update VideoClip.local_path to point to selected candidate
         shot_result = await session.execute(
             select(Shot).where(
-                Shot.project_id == uuid.UUID(project_id),
+                Shot.scene_id == uuid.UUID(scene_id),
                 Shot.shot_index == shot_idx,
             )
         )
@@ -3693,20 +3693,20 @@ class CheckpointDiff(BaseModel):
     changes: list[dict]
 
 
-@router.get("/projects/{project_id}/checkpoints", response_model=list[CheckpointListItem])
-async def list_checkpoints(project_id: uuid.UUID):
-    """List all checkpoints for a project, newest first."""
+@router.get("/scenes/{scene_id}/checkpoints", response_model=list[CheckpointListItem])
+async def list_checkpoints(scene_id: uuid.UUID):
+    """List all checkpoints for a scene, newest first."""
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
         if not result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Project not found")
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         cp_result = await session.execute(
-            select(ProjectCheckpoint)
-            .where(ProjectCheckpoint.project_id == project_id)
-            .order_by(ProjectCheckpoint.created_at.desc())
+            select(SceneCheckpoint)
+            .where(SceneCheckpoint.scene_id == scene_id)
+            .order_by(SceneCheckpoint.created_at.desc())
         )
         checkpoints = cp_result.scalars().all()
 
@@ -3722,14 +3722,14 @@ async def list_checkpoints(project_id: uuid.UUID):
         ]
 
 
-@router.get("/projects/{project_id}/checkpoints/{sha}", response_model=CheckpointDetail)
-async def get_checkpoint(project_id: uuid.UUID, sha: str):
+@router.get("/scenes/{scene_id}/checkpoints/{sha}", response_model=CheckpointDetail)
+async def get_checkpoint(scene_id: uuid.UUID, sha: str):
     """Get checkpoint detail including snapshot."""
     async with async_session() as session:
         result = await session.execute(
-            select(ProjectCheckpoint).where(
-                ProjectCheckpoint.project_id == project_id,
-                ProjectCheckpoint.sha == sha,
+            select(SceneCheckpoint).where(
+                SceneCheckpoint.scene_id == scene_id,
+                SceneCheckpoint.sha == sha,
             )
         )
         cp = result.scalar_one_or_none()
@@ -3746,14 +3746,14 @@ async def get_checkpoint(project_id: uuid.UUID, sha: str):
         )
 
 
-@router.get("/projects/{project_id}/checkpoints/{sha}/diff", response_model=CheckpointDiff)
-async def get_checkpoint_diff(project_id: uuid.UUID, sha: str):
+@router.get("/scenes/{scene_id}/checkpoints/{sha}/diff", response_model=CheckpointDiff)
+async def get_checkpoint_diff(scene_id: uuid.UUID, sha: str):
     """Get structured diff for a checkpoint."""
     async with async_session() as session:
         result = await session.execute(
-            select(ProjectCheckpoint).where(
-                ProjectCheckpoint.project_id == project_id,
-                ProjectCheckpoint.sha == sha,
+            select(SceneCheckpoint).where(
+                SceneCheckpoint.scene_id == scene_id,
+                SceneCheckpoint.sha == sha,
             )
         )
         cp = result.scalar_one_or_none()
@@ -3766,9 +3766,9 @@ async def get_checkpoint_diff(project_id: uuid.UUID, sha: str):
         # Otherwise compute diff from parent
         if not changes and cp.parent_sha:
             parent_result = await session.execute(
-                select(ProjectCheckpoint).where(
-                    ProjectCheckpoint.project_id == project_id,
-                    ProjectCheckpoint.sha == cp.parent_sha,
+                select(SceneCheckpoint).where(
+                    SceneCheckpoint.scene_id == scene_id,
+                    SceneCheckpoint.sha == cp.parent_sha,
                 )
             )
             parent_cp = parent_result.scalar_one_or_none()
@@ -3783,32 +3783,32 @@ async def get_checkpoint_diff(project_id: uuid.UUID, sha: str):
         )
 
 
-@router.post("/projects/{project_id}/checkpoints")
-async def create_manual_checkpoint(project_id: uuid.UUID):
+@router.post("/scenes/{scene_id}/checkpoints")
+async def create_manual_checkpoint(scene_id: uuid.UUID):
     """Create a manual checkpoint of current state."""
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         from vidpipe.services.checkpoint_service import create_checkpoint
-        cp = await create_checkpoint(session, project, "Manual checkpoint")
+        cp = await create_checkpoint(session, scene, "Manual checkpoint")
         await session.commit()
 
         return {"sha": cp.sha, "message": cp.message}
 
 
-@router.delete("/projects/{project_id}/checkpoints/{sha}")
-async def delete_checkpoint(project_id: uuid.UUID, sha: str):
+@router.delete("/scenes/{scene_id}/checkpoints/{sha}")
+async def delete_checkpoint(scene_id: uuid.UUID, sha: str):
     """Delete a checkpoint. Splices the chain (updates child's parent_sha)."""
     async with async_session() as session:
         result = await session.execute(
-            select(ProjectCheckpoint).where(
-                ProjectCheckpoint.project_id == project_id,
-                ProjectCheckpoint.sha == sha,
+            select(SceneCheckpoint).where(
+                SceneCheckpoint.scene_id == scene_id,
+                SceneCheckpoint.sha == sha,
             )
         )
         cp = result.scalar_one_or_none()
@@ -3817,17 +3817,17 @@ async def delete_checkpoint(project_id: uuid.UUID, sha: str):
 
         # Don't allow deleting the head checkpoint
         proj_result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = proj_result.scalar_one_or_none()
-        if project and project.head_sha == sha:
+        scene = proj_result.scalar_one_or_none()
+        if scene and scene.head_sha == sha:
             raise HTTPException(status_code=400, detail="Cannot delete the current head checkpoint")
 
         # Splice: find child that points to this checkpoint, update its parent_sha
         child_result = await session.execute(
-            select(ProjectCheckpoint).where(
-                ProjectCheckpoint.project_id == project_id,
-                ProjectCheckpoint.parent_sha == sha,
+            select(SceneCheckpoint).where(
+                SceneCheckpoint.scene_id == scene_id,
+                SceneCheckpoint.parent_sha == sha,
             )
         )
         child = child_result.scalar_one_or_none()
@@ -3844,9 +3844,9 @@ async def delete_checkpoint(project_id: uuid.UUID, sha: str):
 # PipeSVN: Revert
 # ============================================================================
 
-@router.post("/projects/{project_id}/revert")
-async def revert_to_checkpoint(project_id: uuid.UUID, body: dict):
-    """Revert project state to a specific checkpoint.
+@router.post("/scenes/{scene_id}/revert")
+async def revert_to_checkpoint(scene_id: uuid.UUID, body: dict):
+    """Revert scene state to a specific checkpoint.
 
     Body: { "sha": "abc123..." }
     Creates a forward-commit checkpoint "Revert to {sha[:8]}".
@@ -3857,16 +3857,16 @@ async def revert_to_checkpoint(project_id: uuid.UUID, body: dict):
 
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         cp_result = await session.execute(
-            select(ProjectCheckpoint).where(
-                ProjectCheckpoint.project_id == project_id,
-                ProjectCheckpoint.sha == target_sha,
+            select(SceneCheckpoint).where(
+                SceneCheckpoint.scene_id == scene_id,
+                SceneCheckpoint.sha == target_sha,
             )
         )
         target_cp = cp_result.scalar_one_or_none()
@@ -3874,10 +3874,10 @@ async def revert_to_checkpoint(project_id: uuid.UUID, body: dict):
             raise HTTPException(status_code=404, detail="Checkpoint not found")
 
         from vidpipe.services.checkpoint_service import restore_from_snapshot, create_checkpoint
-        await restore_from_snapshot(session, project, target_cp.snapshot_data)
+        await restore_from_snapshot(session, scene, target_cp.snapshot_data)
 
         revert_cp = await create_checkpoint(
-            session, project,
+            session, scene,
             f"Revert to {target_sha[:8]}",
             metadata={"reverted_to": target_sha},
         )
@@ -3906,18 +3906,18 @@ class RegenerateShotRequest(BaseModel):
 class RegenerateTextRequest(BaseModel):
     field: str  # "shot_description" | "start_frame_prompt" | "end_frame_prompt" | "video_motion_prompt" | "transition_notes"
     extra_context: str = ""
-    text_model: Optional[str] = None  # override project's text_model (use current edit-mode selection)
+    text_model: Optional[str] = None  # override scene's text_model (use current edit-mode selection)
     shot_edits: Optional[dict[str, str]] = None
-    prompt: Optional[str] = None  # override project prompt (use current edit-mode value)
+    prompt: Optional[str] = None  # override scene prompt (use current edit-mode value)
 
 
 class _RegenTextResult(BaseModel):
     text: str
 
 
-@router.post("/projects/{project_id}/shots/{shot_idx}/regenerate")
+@router.post("/scenes/{scene_id}/shots/{shot_idx}/regenerate")
 async def regenerate_shot_assets(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     shot_idx: int,
     body: RegenerateShotRequest,
     background_tasks: BackgroundTasks,
@@ -3928,15 +3928,15 @@ async def regenerate_shot_assets(
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         shot_result = await session.execute(
             select(Shot).where(
-                Shot.project_id == project.id,
+                Shot.scene_id == scene.id,
                 Shot.shot_index == shot_idx,
             )
         )
@@ -3946,7 +3946,7 @@ async def regenerate_shot_assets(
 
     # Queue background task
     background_tasks.add_task(
-        _run_shot_regeneration, project_id, shot_idx, body.targets, body.prompt_overrides, body.skip_checkpoint,
+        _run_shot_regeneration, scene_id, shot_idx, body.targets, body.prompt_overrides, body.skip_checkpoint,
         video_model_override=body.video_model, image_model_override=body.image_model,
         shot_edits=body.shot_edits,
     )
@@ -3958,7 +3958,7 @@ async def regenerate_shot_assets(
             "status": "accepted",
             "targets": body.targets,
             "shot_index": shot_idx,
-            "head_sha": project.head_sha,
+            "head_sha": scene.head_sha,
         },
     )
 
@@ -4015,9 +4015,9 @@ _REGEN_FIELD_INSTRUCTIONS = {
 }
 
 
-@router.post("/projects/{project_id}/shots/{shot_idx}/regenerate-text")
+@router.post("/scenes/{scene_id}/shots/{shot_idx}/regenerate-text")
 async def regenerate_shot_text(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     shot_idx: int,
     body: RegenerateTextRequest,
 ):
@@ -4034,15 +4034,15 @@ async def regenerate_shot_text(
 
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         shot_result = await session.execute(
             select(Shot)
-            .where(Shot.project_id == project.id)
+            .where(Shot.scene_id == scene.id)
             .order_by(Shot.shot_index)
         )
         all_shots = list(shot_result.scalars().all())
@@ -4061,23 +4061,23 @@ async def regenerate_shot_text(
         user_settings = us_result.scalar_one_or_none()
 
     # Build system prompt
-    style = project.style or "cinematic"
+    style = scene.style or "cinematic"
     field_instructions = _REGEN_FIELD_INSTRUCTIONS[body.field].replace("{style}", style)
     system_prompt = (
         f"You are a storyboard director specializing in short-form video content.\n"
         f"Visual style: {style}\n"
-        f"Aspect ratio: {project.aspect_ratio or '16:9'}\n\n"
+        f"Aspect ratio: {scene.aspect_ratio or '16:9'}\n\n"
         f"TASK: Regenerate the '{body.field}' field for shot {shot_idx + 1}.\n\n"
         f"FORMAT INSTRUCTIONS:\n{field_instructions}\n\n"
         f"Return a JSON object with a single 'text' field containing the regenerated content."
     )
 
     # Build user prompt with context — prefer in-flight prompt from edit form
-    effective_prompt = body.prompt or project.prompt
+    effective_prompt = body.prompt or scene.prompt
     parts = []
-    parts.append(f"PROJECT CONCEPT: {effective_prompt}")
-    if project.style_guide:
-        sg = project.style_guide
+    parts.append(f"SCENE CONCEPT: {effective_prompt}")
+    if scene.style_guide:
+        sg = scene.style_guide
         if isinstance(sg, dict):
             sg_text = sg.get("description") or json.dumps(sg)
         else:
@@ -4085,8 +4085,8 @@ async def regenerate_shot_text(
         parts.append(f"STYLE GUIDE: {sg_text}")
 
     # Character bible from storyboard_raw
-    if project.storyboard_raw and isinstance(project.storyboard_raw, dict):
-        characters = project.storyboard_raw.get("characters")
+    if scene.storyboard_raw and isinstance(scene.storyboard_raw, dict):
+        characters = scene.storyboard_raw.get("characters")
         if characters:
             parts.append(f"CHARACTERS: {json.dumps(characters)}")
 
@@ -4113,9 +4113,9 @@ async def regenerate_shot_text(
 
     user_prompt = "\n".join(parts)
 
-    # Call LLM — prefer request override (edit-mode selection) over saved project model
+    # Call LLM — prefer request override (edit-mode selection) over saved scene model
     from vidpipe.services.llm import get_adapter
-    model_id = body.text_model or project.text_model or "gemini-2.5-flash"
+    model_id = body.text_model or scene.text_model or "gemini-2.5-flash"
     adapter = get_adapter(model_id, user_settings=user_settings)
 
     try:
@@ -4135,7 +4135,7 @@ class GenerateShotFieldsRequest(BaseModel):
     shot_index: int
     all_shot_edits: Optional[dict[int, dict[str, str]]] = None
     text_model: Optional[str] = None
-    prompt: Optional[str] = None  # override project prompt (use current edit-mode value)
+    prompt: Optional[str] = None  # override scene prompt (use current edit-mode value)
 
 
 class GenerateShotFieldsResponse(BaseModel):
@@ -4146,9 +4146,9 @@ class GenerateShotFieldsResponse(BaseModel):
     transition_notes: str
 
 
-@router.post("/projects/{project_id}/generate-shot-fields")
+@router.post("/scenes/{scene_id}/generate-shot-fields")
 async def generate_shot_fields(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     body: GenerateShotFieldsRequest,
 ):
     """Generate all 5 text fields for a new/empty shot via a single LLM call.
@@ -4158,15 +4158,15 @@ async def generate_shot_fields(
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         shot_result = await session.execute(
             select(Shot)
-            .where(Shot.project_id == project.id)
+            .where(Shot.scene_id == scene.id)
             .order_by(Shot.shot_index)
         )
         all_shots = list(shot_result.scalars().all())
@@ -4195,7 +4195,7 @@ async def generate_shot_fields(
     prev_idx = body.shot_index - 1
     next_idx = body.shot_index + 1
 
-    style = project.style or "cinematic"
+    style = scene.style or "cinematic"
 
     # Build system prompt
     field_blocks = []
@@ -4206,7 +4206,7 @@ async def generate_shot_fields(
     system_prompt = (
         f"You are a storyboard director specializing in short-form video content.\n"
         f"Visual style: {style}\n"
-        f"Aspect ratio: {project.aspect_ratio or '16:9'}\n\n"
+        f"Aspect ratio: {scene.aspect_ratio or '16:9'}\n\n"
         f"TASK: Generate ALL 5 text fields for a NEW shot at position {body.shot_index + 1}.\n\n"
         f"FIELD INSTRUCTIONS:\n{all_field_instructions}\n\n"
         f"Return a JSON object with exactly these 5 fields:\n"
@@ -4214,11 +4214,11 @@ async def generate_shot_fields(
     )
 
     # Build user prompt with context — prefer in-flight prompt from edit form
-    effective_prompt = body.prompt or project.prompt
+    effective_prompt = body.prompt or scene.prompt
     parts = []
-    parts.append(f"PROJECT CONCEPT: {effective_prompt}")
-    if project.style_guide:
-        sg = project.style_guide
+    parts.append(f"SCENE CONCEPT: {effective_prompt}")
+    if scene.style_guide:
+        sg = scene.style_guide
         if isinstance(sg, dict):
             sg_text = sg.get("description") or json.dumps(sg)
         else:
@@ -4226,8 +4226,8 @@ async def generate_shot_fields(
         parts.append(f"STYLE GUIDE: {sg_text}")
 
     # Character bible from storyboard_raw
-    if project.storyboard_raw and isinstance(project.storyboard_raw, dict):
-        characters = project.storyboard_raw.get("characters")
+    if scene.storyboard_raw and isinstance(scene.storyboard_raw, dict):
+        characters = scene.storyboard_raw.get("characters")
         if characters:
             parts.append(f"CHARACTERS: {json.dumps(characters)}")
 
@@ -4261,7 +4261,7 @@ async def generate_shot_fields(
 
     # Call LLM
     from vidpipe.services.llm import get_adapter
-    model_id = body.text_model or project.text_model or "gemini-2.5-flash"
+    model_id = body.text_model or scene.text_model or "gemini-2.5-flash"
     adapter = get_adapter(model_id, user_settings=user_settings)
 
     try:
@@ -4273,7 +4273,7 @@ async def generate_shot_fields(
         )
         return result.model_dump()
     except Exception as e:
-        logger.error("Generate shot fields failed for project %s shot %d: %s", project_id, body.shot_index, e)
+        logger.error("Generate shot fields failed for scene %s shot %d: %s", scene_id, body.shot_index, e)
         raise HTTPException(status_code=500, detail=f"Shot field generation failed: {e}")
 
 
@@ -4283,7 +4283,7 @@ class GenerateNewShotRequest(BaseModel):
     text_model: Optional[str] = None
     image_model: Optional[str] = None
     video_model: Optional[str] = None
-    prompt: Optional[str] = None  # override project prompt (use current edit-mode value)
+    prompt: Optional[str] = None  # override scene prompt (use current edit-mode value)
 
 
 class GenerateNewShotResponse(BaseModel):
@@ -4296,9 +4296,9 @@ class GenerateNewShotResponse(BaseModel):
     head_sha: Optional[str] = None
 
 
-@router.post("/projects/{project_id}/generate-new-shot")
+@router.post("/scenes/{scene_id}/generate-new-shot")
 async def generate_new_shot(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     body: GenerateNewShotRequest,
     background_tasks: BackgroundTasks,
 ):
@@ -4311,16 +4311,16 @@ async def generate_new_shot(
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         # Check no existing shot at requested index
         existing_result = await session.execute(
             select(Shot).where(
-                Shot.project_id == project.id,
+                Shot.scene_id == scene.id,
                 Shot.shot_index == body.shot_index,
             )
         )
@@ -4330,7 +4330,7 @@ async def generate_new_shot(
         # Load all shots for neighbor context
         shot_result = await session.execute(
             select(Shot)
-            .where(Shot.project_id == project.id)
+            .where(Shot.scene_id == scene.id)
             .order_by(Shot.shot_index)
         )
         all_shots = list(shot_result.scalars().all())
@@ -4357,7 +4357,7 @@ async def generate_new_shot(
         prev_idx = body.shot_index - 1
         next_idx = body.shot_index + 1
 
-        style = project.style or "cinematic"
+        style = scene.style or "cinematic"
 
         field_blocks = []
         for field_name, instructions in _REGEN_FIELD_INSTRUCTIONS.items():
@@ -4367,7 +4367,7 @@ async def generate_new_shot(
         system_prompt = (
             f"You are a storyboard director specializing in short-form video content.\n"
             f"Visual style: {style}\n"
-            f"Aspect ratio: {project.aspect_ratio or '16:9'}\n\n"
+            f"Aspect ratio: {scene.aspect_ratio or '16:9'}\n\n"
             f"TASK: Generate ALL 5 text fields for a NEW shot at position {body.shot_index + 1}.\n\n"
             f"FIELD INSTRUCTIONS:\n{all_field_instructions}\n\n"
             f"Return a JSON object with exactly these 5 fields:\n"
@@ -4375,19 +4375,19 @@ async def generate_new_shot(
         )
 
         # Prefer in-flight prompt from edit form over saved DB value
-        effective_prompt = body.prompt or project.prompt
+        effective_prompt = body.prompt or scene.prompt
         parts = []
-        parts.append(f"PROJECT CONCEPT: {effective_prompt}")
-        if project.style_guide:
-            sg = project.style_guide
+        parts.append(f"SCENE CONCEPT: {effective_prompt}")
+        if scene.style_guide:
+            sg = scene.style_guide
             if isinstance(sg, dict):
                 sg_text = sg.get("description") or json.dumps(sg)
             else:
                 sg_text = str(sg)
             parts.append(f"STYLE GUIDE: {sg_text}")
 
-        if project.storyboard_raw and isinstance(project.storyboard_raw, dict):
-            characters = project.storyboard_raw.get("characters")
+        if scene.storyboard_raw and isinstance(scene.storyboard_raw, dict):
+            characters = scene.storyboard_raw.get("characters")
             if characters:
                 parts.append(f"CHARACTERS: {json.dumps(characters)}")
 
@@ -4417,7 +4417,7 @@ async def generate_new_shot(
         user_prompt = "\n".join(parts)
 
         from vidpipe.services.llm import get_adapter
-        model_id = body.text_model or project.text_model or "gemini-2.5-flash"
+        model_id = body.text_model or scene.text_model or "gemini-2.5-flash"
         adapter = get_adapter(model_id, user_settings=user_settings)
 
         try:
@@ -4428,12 +4428,12 @@ async def generate_new_shot(
                 system_prompt=system_prompt,
             )
         except Exception as e:
-            logger.error("Generate new shot text failed for project %s shot %d: %s", project_id, body.shot_index, e)
+            logger.error("Generate new shot text failed for scene %s shot %d: %s", scene_id, body.shot_index, e)
             raise HTTPException(status_code=500, detail=f"Shot text generation failed: {e}")
 
         # --- Create Shot DB row ---
         new_shot = Shot(
-            project_id=project.id,
+            scene_id=scene.id,
             shot_index=body.shot_index,
             shot_description=text_result.shot_description,
             start_frame_prompt=text_result.start_frame_prompt,
@@ -4445,13 +4445,13 @@ async def generate_new_shot(
         session.add(new_shot)
 
         # Update target_shot_count if needed
-        project.target_shot_count = max(project.target_shot_count, body.shot_index + 1)
+        scene.target_shot_count = max(scene.target_shot_count, body.shot_index + 1)
 
         # Ensure baseline checkpoint exists
-        if not project.head_sha:
+        if not scene.head_sha:
             from vidpipe.services.checkpoint_service import create_checkpoint
             await create_checkpoint(
-                session, project,
+                session, scene,
                 "Auto-save: edit baseline",
                 metadata={"auto_baseline": True},
             )
@@ -4460,18 +4460,18 @@ async def generate_new_shot(
         # Create checkpoint for the new shot
         from vidpipe.services.checkpoint_service import create_checkpoint
         await create_checkpoint(
-            session, project,
+            session, scene,
             f"Generated new shot {body.shot_index + 1}",
             metadata={"generated_shot": body.shot_index},
         )
         await session.commit()
 
-        head_sha = project.head_sha
+        head_sha = scene.head_sha
 
     # --- Phase 2: Queue background asset generation ---
     background_tasks.add_task(
         _run_shot_regeneration,
-        project_id,
+        scene_id,
         body.shot_index,
         ["start_keyframe", "end_keyframe", "video_clip"],
         None,  # no prompt overrides
@@ -4496,7 +4496,7 @@ async def generate_new_shot(
 
 
 async def _run_shot_regeneration(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     shot_idx: int,
     targets: list[str],
     prompt_overrides: Optional[dict[str, str]],
@@ -4507,17 +4507,17 @@ async def _run_shot_regeneration(
 ):
     """Background task for shot regeneration."""
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(project_id, "shot_regen_started", shot_index=shot_idx, targets=targets)
-    logger.info("Regenerating shot %d for project %s: %s", shot_idx, project_id, targets)
+    event_bus.emit(scene_id, "shot_regen_started", shot_index=shot_idx, targets=targets)
+    logger.info("Regenerating shot %d for scene %s: %s", shot_idx, scene_id, targets)
 
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if not project:
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
             return
 
         shot_result = await session.execute(
-            select(Shot).where(Shot.project_id == project.id, Shot.shot_index == shot_idx)
+            select(Shot).where(Shot.scene_id == scene.id, Shot.shot_index == shot_idx)
         )
         shot = shot_result.scalar_one_or_none()
         if not shot:
@@ -4525,10 +4525,10 @@ async def _run_shot_regeneration(
 
         # When skip_checkpoint is set (edit mode), ensure a baseline checkpoint
         # exists so the user can revert on cancel.
-        if skip_checkpoint and not project.head_sha:
+        if skip_checkpoint and not scene.head_sha:
             from vidpipe.services.checkpoint_service import create_checkpoint
             await create_checkpoint(
-                session, project,
+                session, scene,
                 "Auto-save: edit baseline",
                 metadata={"auto_baseline": True},
             )
@@ -4545,7 +4545,7 @@ async def _run_shot_regeneration(
                 position = "start" if target == "start_keyframe" else "end"
                 try:
                     await _regenerate_keyframe(
-                        session, project, shot, position, file_mgr,
+                        session, scene, shot, position, file_mgr,
                         prompt_override=prompt_overrides.get(target) if prompt_overrides else None,
                         image_model_override=image_model_override,
                         shot_edits=shot_edits,
@@ -4556,7 +4556,7 @@ async def _run_shot_regeneration(
                     if position == "end":
                         next_shot_result = await session.execute(
                             select(Shot).where(
-                                Shot.project_id == project.id,
+                                Shot.scene_id == scene.id,
                                 Shot.shot_index == shot_idx + 1,
                             )
                         )
@@ -4574,7 +4574,7 @@ async def _run_shot_regeneration(
                                 from pathlib import Path
                                 end_bytes = Path(new_end_kf.file_path).read_bytes()
                                 inherited_path = file_mgr.save_keyframe_versioned(
-                                    project.id, shot_idx + 1, "start", end_bytes,
+                                    scene.id, shot_idx + 1, "start", end_bytes,
                                 )
                                 # Replace next shot's start keyframe
                                 old_next_start_result = await session.execute(
@@ -4607,7 +4607,7 @@ async def _run_shot_regeneration(
             elif target == "video_clip":
                 try:
                     await _regenerate_clip(
-                        session, project, shot, file_mgr,
+                        session, scene, shot, file_mgr,
                         prompt_override=prompt_overrides.get("video_clip") if prompt_overrides else None,
                         video_model_override=video_model_override,
                         shot_edits=shot_edits,
@@ -4621,16 +4621,16 @@ async def _run_shot_regeneration(
             if not skip_checkpoint:
                 from vidpipe.services.checkpoint_service import create_checkpoint
                 await create_checkpoint(
-                    session, project,
+                    session, scene,
                     f"Regenerated {', '.join(regenerated)} for shot {shot_idx + 1}",
                     metadata={"regenerated": regenerated, "shot_index": shot_idx},
                 )
             await session.commit()
-            event_bus.emit(project_id, "shot_regen_done", shot_index=shot_idx)
-            event_bus.emit(project_id, "refresh")
+            event_bus.emit(scene_id, "shot_regen_done", shot_index=shot_idx)
+            event_bus.emit(scene_id, "refresh")
 
 
-async def _regenerate_keyframe(session, project, shot, position, file_mgr, prompt_override=None, image_model_override=None, shot_edits=None):
+async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_override=None, image_model_override=None, shot_edits=None):
     """Regenerate a single keyframe following the same methodology as the pipeline.
 
     - Start KF shot 0: text-to-image with style/character enrichment + ref images
@@ -4641,16 +4641,16 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
     from vidpipe.config import settings as app_settings
     from vidpipe.db.models import ShotManifest as ShotManifestModel
 
-    image_model = image_model_override or project.image_model or app_settings.models.keyframe_image
+    image_model = image_model_override or scene.image_model or app_settings.models.keyframe_image
     # Guard: Imagen models no longer supported
     if image_model.startswith("imagen-"):
         image_model = app_settings.models.image_gen
 
     # Build character bible prefix from storyboard data
     character_prefix = ""
-    if project.storyboard_raw and "characters" in project.storyboard_raw:
+    if scene.storyboard_raw and "characters" in scene.storyboard_raw:
         char_lines = []
-        for ch in project.storyboard_raw["characters"]:
+        for ch in scene.storyboard_raw["characters"]:
             char_lines.append(
                 f"{ch.get('name', 'Character')}: {ch.get('physical_description', '')}. "
                 f"Wearing {ch.get('clothing_description', '')}."
@@ -4659,7 +4659,7 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
             character_prefix = "Characters: " + " ".join(char_lines) + " "
 
     # Build style prefix from style guide
-    style_guide = project.style_guide or {}
+    style_guide = scene.style_guide or {}
     style_prefix = ""
     if style_guide:
         parts = []
@@ -4673,20 +4673,20 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
     # Load shot manifest for rewritten prompt + reference images
     sm_result = await session.execute(
         select(ShotManifestModel).where(
-            ShotManifestModel.project_id == project.id,
+            ShotManifestModel.scene_id == scene.id,
             ShotManifestModel.shot_index == shot.shot_index,
         )
     )
     sm = sm_result.scalar_one_or_none()
     rewritten_prompt = sm.rewritten_keyframe_prompt if sm else None
 
-    # Resolve asset reference images (for manifest projects)
+    # Resolve asset reference images (for manifest scenes)
     ref_image_bytes_list: list[bytes] = []
-    if project.manifest_id and sm and sm.selected_reference_tags:
+    if scene.manifest_id and sm and sm.selected_reference_tags:
         try:
             from vidpipe.services import manifest_service
             from vidpipe.services.reference_selection import resolve_asset_image_bytes
-            all_assets = await manifest_service.load_manifest_assets(session, project.manifest_id)
+            all_assets = await manifest_service.load_manifest_assets(session, scene.manifest_id)
             asset_map = {a.manifest_tag: a for a in all_assets}
             for tag in sm.selected_reference_tags:
                 asset = asset_map.get(tag)
@@ -4732,11 +4732,11 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
             # Shot 0: text-to-image with style/character enrichment
             enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
             if is_comfyui:
-                image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=project.seed)
+                image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=scene.seed)
             else:
                 image_bytes = await _generate_image_from_text(
-                    image_client, enriched_prompt, project.aspect_ratio, image_model,
-                    seed=project.seed,
+                    image_client, enriched_prompt, scene.aspect_ratio, image_model,
+                    seed=scene.seed,
                     reference_images=ref_image_bytes_list or None,
                 )
         else:
@@ -4745,7 +4745,7 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
             # With prompt_override (extra direction), use conditioned generation instead.
             prev_shot_result = await session.execute(
                 select(Shot).where(
-                    Shot.project_id == project.id,
+                    Shot.scene_id == scene.id,
                     Shot.shot_index == shot.shot_index - 1,
                 )
             )
@@ -4765,7 +4765,7 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
 
                 if prompt_override:
                     # Extra direction provided — conditioned generation from prev end frame
-                    style_label = project.style.replace("_", " ")
+                    style_label = scene.style.replace("_", " ")
                     conditioning_prompt = (
                         f"Generate the NEXT keyframe continuing from the previous shot into this new shot. "
                         f"Style: {style_label}.\n\n"
@@ -4777,11 +4777,11 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
                         f"{character_prefix}"
                     )
                     if is_comfyui:
-                        image_bytes = await _generate_image_comfyui(comfy_client, conditioning_prompt, seed=project.seed)
+                        image_bytes = await _generate_image_comfyui(comfy_client, conditioning_prompt, seed=scene.seed)
                     else:
                         image_bytes = await _generate_image_conditioned(
                             image_client, prev_end_bytes, conditioning_prompt,
-                            project.aspect_ratio, image_model,
+                            scene.aspect_ratio, image_model,
                             reference_images=ref_image_bytes_list or None,
                         )
                 else:
@@ -4791,11 +4791,11 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
                 # Fallback: no previous end keyframe available, use text-to-image
                 enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
                 if is_comfyui:
-                    image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=project.seed)
+                    image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=scene.seed)
                 else:
                     image_bytes = await _generate_image_from_text(
-                        image_client, enriched_prompt, project.aspect_ratio, image_model,
-                        seed=project.seed,
+                        image_client, enriched_prompt, scene.aspect_ratio, image_model,
+                        seed=scene.seed,
                         reference_images=ref_image_bytes_list or None,
                     )
 
@@ -4820,10 +4820,10 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
             conditioning_prompt = prompt_override
         else:
             end_prompt = edited_end or shot.end_frame_prompt
-            style_label = project.style.replace("_", " ")
+            style_label = scene.style.replace("_", " ")
             conditioning_prompt = (
                 f"Generate the NEXT keyframe for this {style_label} shot, "
-                f"showing clear visual progression {project.target_clip_duration} seconds later.\n\n"
+                f"showing clear visual progression {scene.target_clip_duration} seconds later.\n\n"
                 f"TARGET END STATE (this is what the new image must depict):\n"
                 f"{end_prompt}\n\n"
                 f"The new image MUST show VISIBLE CHANGES from the reference image — "
@@ -4839,19 +4839,19 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
         if is_comfyui:
             image_bytes = await _generate_image_comfyui(
                 comfy_client, conditioning_prompt,
-                seed=project.seed + shot.shot_index + 1000,
+                seed=scene.seed + shot.shot_index + 1000,
             )
         else:
             image_bytes = await _generate_image_conditioned(
                 image_client, conditioning_bytes, conditioning_prompt,
-                project.aspect_ratio, image_model,
+                scene.aspect_ratio, image_model,
                 reference_images=ref_image_bytes_list or None,
             )
 
         prompt_used = prompt_override or edited_end or shot.end_frame_prompt
 
     # Save with versioned path
-    filepath = file_mgr.save_keyframe_versioned(project.id, shot.shot_index, position, image_bytes)
+    filepath = file_mgr.save_keyframe_versioned(scene.id, shot.shot_index, position, image_bytes)
 
     # Delete old keyframe for this position
     old_kf_result = await session.execute(
@@ -4875,7 +4875,7 @@ async def _regenerate_keyframe(session, project, shot, position, file_mgr, promp
     await session.flush()
 
 
-async def _regenerate_clip(session, project, shot, file_mgr, prompt_override=None, video_model_override=None, shot_edits=None):
+async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None, video_model_override=None, shot_edits=None):
     """Regenerate video clip for a shot."""
     from vidpipe.config import settings as app_settings
 
@@ -4890,7 +4890,7 @@ async def _regenerate_clip(session, project, shot, file_mgr, prompt_override=Non
         from vidpipe.db.models import ShotManifest as ShotManifestModel
         sm_result = await session.execute(
             select(ShotManifestModel).where(
-                ShotManifestModel.project_id == project.id,
+                ShotManifestModel.scene_id == scene.id,
                 ShotManifestModel.shot_index == shot.shot_index,
             )
         )
@@ -4913,7 +4913,7 @@ async def _regenerate_clip(session, project, shot, file_mgr, prompt_override=Non
     end_bytes = Path(end_kf.file_path).read_bytes() if end_kf else start_bytes
 
     # Submit video generation
-    video_model = video_model_override or project.video_model or app_settings.models.video_generator
+    video_model = video_model_override or scene.video_model or app_settings.models.video_generator
 
     from vidpipe.pipeline.video_gen import COMFYUI_VIDEO_MODELS
     from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
@@ -4936,19 +4936,19 @@ async def _regenerate_clip(session, project, shot, file_mgr, prompt_override=Non
         comfy_client = await get_comfyui_client(host=comfy_host, api_key=comfy_key)
         adapter = ComfyUIVideoAdapter(comfy_client)
 
-        # Load character reference images (if manifest project)
+        # Load character reference images (if manifest scene)
         char_ref_bytes: list[bytes] = []
-        if project.manifest_id:
+        if scene.manifest_id:
             from vidpipe.pipeline.video_gen import _load_char_ref_images
-            char_ref_bytes = await _load_char_ref_images(session, project)
+            char_ref_bytes = await _load_char_ref_images(session, scene)
 
         operation_id = await adapter.submit(
             video_prompt=video_prompt,
             start_frame_bytes=start_bytes,
             end_frame_bytes=end_bytes if end_kf else None,
             char_ref_bytes=char_ref_bytes,
-            aspect_ratio=project.aspect_ratio,
-            seed=project.seed or 0,
+            aspect_ratio=scene.aspect_ratio,
+            seed=scene.seed or 0,
             shot_index=shot.shot_index,
             video_model=video_model,
         )
@@ -4973,7 +4973,7 @@ async def _regenerate_clip(session, project, shot, file_mgr, prompt_override=Non
 
         operation = await _submit_video_job(
             client, video_model, video_prompt,
-            start_bytes, end_bytes, project,
+            start_bytes, end_bytes, scene,
         )
 
         for _ in range(max_polls):
@@ -4999,7 +4999,7 @@ async def _regenerate_clip(session, project, shot, file_mgr, prompt_override=Non
             raise ValueError("No generated videos in response")
 
     # Save with versioned path
-    filepath = file_mgr.save_clip_versioned(project.id, shot.shot_index, video_bytes)
+    filepath = file_mgr.save_clip_versioned(scene.id, shot.shot_index, video_bytes)
 
     # Delete old clip
     old_clip_result = await session.execute(
@@ -5023,10 +5023,10 @@ async def _regenerate_clip(session, project, shot, file_mgr, prompt_override=Non
 
 
 # ============================================================================
-# PipeSVN: Project-wide Regeneration
+# PipeSVN: Scene-wide Regeneration
 # ============================================================================
 
-class RegenerateProjectRequest(BaseModel):
+class RegenerateSceneRequest(BaseModel):
     scope: str  # "stale", "all", "stitch_only", "storyboard", "keyframes", "clips", "all_phases"
     shot_indices: Optional[list[int]] = None
     text_model: Optional[str] = None
@@ -5035,13 +5035,13 @@ class RegenerateProjectRequest(BaseModel):
     run_through: Optional[str] = None  # For "all_phases": how far to go
 
 
-@router.post("/projects/{project_id}/regenerate")
-async def regenerate_project(
-    project_id: uuid.UUID,
-    body: RegenerateProjectRequest,
+@router.post("/scenes/{scene_id}/regenerate")
+async def regenerate_scene(
+    scene_id: uuid.UUID,
+    body: RegenerateSceneRequest,
     background_tasks: BackgroundTasks,
 ):
-    """Project-wide regeneration with different scopes.
+    """Scene-wide regeneration with different scopes.
 
     Scopes:
     - stale: regenerate only stale assets
@@ -5050,28 +5050,28 @@ async def regenerate_project(
     """
     async with async_session() as session:
         result = await session.execute(
-            select(Project).where(Project.id == project_id)
+            select(Scene).where(Scene.id == scene_id)
         )
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
     if body.scope == "stitch_only":
-        background_tasks.add_task(_run_restitch, project_id)
+        background_tasks.add_task(_run_restitch, scene_id)
     elif body.scope == "storyboard":
-        effective_text_model = body.text_model or project.text_model
+        effective_text_model = body.text_model or scene.text_model
         if not effective_text_model:
             raise HTTPException(
                 status_code=422,
                 detail="Cannot regenerate storyboard: missing text_model",
             )
         background_tasks.add_task(
-            _run_storyboard_regeneration, project_id,
+            _run_storyboard_regeneration, scene_id,
             text_model_override=body.text_model,
         )
     elif body.scope == "keyframes":
-        effective_text_model = body.text_model or project.text_model
-        effective_image_model = body.image_model or project.image_model
+        effective_text_model = body.text_model or scene.text_model
+        effective_image_model = body.image_model or scene.image_model
         if not effective_text_model or not effective_image_model:
             missing = []
             if not effective_text_model:
@@ -5083,14 +5083,14 @@ async def regenerate_project(
                 detail=f"Cannot regenerate keyframes: missing {', '.join(missing)}",
             )
         background_tasks.add_task(
-            _run_keyframes_regeneration, project_id,
+            _run_keyframes_regeneration, scene_id,
             image_model_override=body.image_model,
             text_model_override=body.text_model,
         )
     elif body.scope == "clips":
-        effective_text_model = body.text_model or project.text_model
-        effective_image_model = body.image_model or project.image_model
-        effective_video_model = body.video_model or project.video_model
+        effective_text_model = body.text_model or scene.text_model
+        effective_image_model = body.image_model or scene.image_model
+        effective_video_model = body.video_model or scene.video_model
         missing = []
         if not effective_text_model:
             missing.append("text_model")
@@ -5104,13 +5104,13 @@ async def regenerate_project(
                 detail=f"Cannot regenerate clips: missing {', '.join(missing)}",
             )
         background_tasks.add_task(
-            _run_clips_regeneration, project_id,
+            _run_clips_regeneration, scene_id,
             video_model_override=body.video_model,
             text_model_override=body.text_model,
         )
     elif body.scope == "all_phases":
         # Validate models based on run_through
-        effective_text_model = body.text_model or project.text_model
+        effective_text_model = body.text_model or scene.text_model
         if not effective_text_model:
             raise HTTPException(
                 status_code=422,
@@ -5118,21 +5118,21 @@ async def regenerate_project(
             )
         run_through = body.run_through
         if run_through != "storyboard":
-            effective_image_model = body.image_model or project.image_model
+            effective_image_model = body.image_model or scene.image_model
             if not effective_image_model:
                 raise HTTPException(
                     status_code=422,
                     detail="Cannot regenerate all phases: missing image_model",
                 )
         if run_through not in ("storyboard", "keyframes"):
-            effective_video_model = body.video_model or project.video_model
+            effective_video_model = body.video_model or scene.video_model
             if not effective_video_model:
                 raise HTTPException(
                     status_code=422,
                     detail="Cannot regenerate all phases: missing video_model",
                 )
         background_tasks.add_task(
-            _run_all_phases_regeneration, project_id,
+            _run_all_phases_regeneration, scene_id,
             run_through=run_through,
             text_model_override=body.text_model,
             image_model_override=body.image_model,
@@ -5141,18 +5141,18 @@ async def regenerate_project(
     else:
         # "stale" or "all" — legacy full regen
         missing = []
-        if not project.text_model:
+        if not scene.text_model:
             missing.append("text_model")
-        if not project.image_model:
+        if not scene.image_model:
             missing.append("image_model")
-        if not project.video_model:
+        if not scene.video_model:
             missing.append("video_model")
         if missing:
             raise HTTPException(
                 status_code=422,
                 detail=f"Cannot regenerate: missing required model settings: {', '.join(missing)}",
             )
-        background_tasks.add_task(_run_project_regeneration, project_id, body.scope, body.shot_indices)
+        background_tasks.add_task(_run_scene_regeneration, scene_id, body.scope, body.shot_indices)
 
     from starlette.responses import JSONResponse
     return JSONResponse(
@@ -5165,13 +5165,13 @@ async def regenerate_project(
 # WebSocket: real-time pipeline progress
 # ---------------------------------------------------------------------------
 
-@router.websocket("/projects/{project_id}/ws")
-async def project_websocket(websocket: WebSocket, project_id: str):
+@router.websocket("/scenes/{scene_id}/ws")
+async def scene_websocket(websocket: WebSocket, scene_id: str):
     """Push pipeline progress events to the frontend in real time."""
     from vidpipe.services.event_bus import event_bus
 
     await websocket.accept()
-    queue = event_bus.subscribe(project_id)
+    queue = event_bus.subscribe(scene_id)
 
     async def _send_events():
         while True:
@@ -5193,32 +5193,32 @@ async def project_websocket(websocket: WebSocket, project_id: str):
     except (WebSocketDisconnect, Exception):
         pass
     finally:
-        event_bus.unsubscribe(project_id, queue)
+        event_bus.unsubscribe(scene_id, queue)
 
 
-async def _run_restitch(project_id: uuid.UUID, *, _emit_complete: bool = True):
+async def _run_restitch(scene_id: uuid.UUID, *, _emit_complete: bool = True):
     """Background task to re-stitch current clips."""
     from vidpipe.services.event_bus import event_bus
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if not project:
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
             return
 
         from vidpipe.pipeline.stitcher import stitch_videos
-        await stitch_videos(session, project)
-        await session.refresh(project)
+        await stitch_videos(session, scene)
+        await session.refresh(scene)
 
         from vidpipe.services.checkpoint_service import create_checkpoint
-        cp = await create_checkpoint(session, project, "Re-stitched video")
+        cp = await create_checkpoint(session, scene, "Re-stitched video")
         await session.commit()
-        event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Re-stitched video")
+        event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Re-stitched video")
         if _emit_complete:
-            event_bus.emit(project_id, "regen_complete", scope="stitch")
+            event_bus.emit(scene_id, "regen_complete", scope="stitch")
 
 
 async def _run_storyboard_regeneration(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     text_model_override: Optional[str] = None,
     *,
     _emit_complete: bool = True,
@@ -5227,17 +5227,17 @@ async def _run_storyboard_regeneration(
     from vidpipe.services.event_bus import event_bus
     try:
         async with async_session() as session:
-            result = await session.execute(select(Project).where(Project.id == project_id))
-            project = result.scalar_one_or_none()
-            if not project:
+            result = await session.execute(select(Scene).where(Scene.id == scene_id))
+            scene = result.scalar_one_or_none()
+            if not scene:
                 return
 
             # Persist text_model override so generate_storyboard picks it up
-            if text_model_override and text_model_override != project.text_model:
-                project.text_model = text_model_override
+            if text_model_override and text_model_override != scene.text_model:
+                scene.text_model = text_model_override
                 await session.flush()
 
-            saved_status = project.status
+            saved_status = scene.status
 
             # Load user settings so Ollama cloud credentials are available
             us_result = await session.execute(
@@ -5246,29 +5246,29 @@ async def _run_storyboard_regeneration(
             user_settings = us_result.scalar_one_or_none()
 
             from vidpipe.services.llm import get_adapter
-            text_adapter = get_adapter(project.text_model, user_settings=user_settings)
+            text_adapter = get_adapter(scene.text_model, user_settings=user_settings)
 
             from vidpipe.pipeline.storyboard import generate_storyboard
-            await generate_storyboard(session, project, text_adapter=text_adapter)
+            await generate_storyboard(session, scene, text_adapter=text_adapter)
 
             # generate_storyboard sets status to "keyframing" — restore original
-            project.status = saved_status
+            scene.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
-            cp = await create_checkpoint(session, project, "Regenerated storyboard text")
+            cp = await create_checkpoint(session, scene, "Regenerated storyboard text")
             await session.commit()
-            event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated storyboard text")
+            event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated storyboard text")
             if _emit_complete:
-                event_bus.emit(project_id, "regen_complete", scope="storyboard")
+                event_bus.emit(scene_id, "regen_complete", scope="storyboard")
     except Exception as e:
-        logger.error("Storyboard regeneration failed for %s: %s", project_id, e, exc_info=True)
-        event_bus.emit(project_id, "error", phase="storyboard", message=str(e))
+        logger.error("Storyboard regeneration failed for %s: %s", scene_id, e, exc_info=True)
+        event_bus.emit(scene_id, "error", phase="storyboard", message=str(e))
         if not _emit_complete:
             raise  # propagate to chained caller so subsequent phases are skipped
 
 
 async def _run_keyframes_regeneration(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     image_model_override: Optional[str] = None,
     text_model_override: Optional[str] = None,
     *,
@@ -5277,20 +5277,20 @@ async def _run_keyframes_regeneration(
     """Background task to regenerate stale/missing keyframes only."""
     try:
         async with async_session() as session:
-            result = await session.execute(select(Project).where(Project.id == project_id))
-            project = result.scalar_one_or_none()
-            if not project:
+            result = await session.execute(select(Scene).where(Scene.id == scene_id))
+            scene = result.scalar_one_or_none()
+            if not scene:
                 return
 
             # Persist model overrides
-            if image_model_override and image_model_override != project.image_model:
-                project.image_model = image_model_override
+            if image_model_override and image_model_override != scene.image_model:
+                scene.image_model = image_model_override
                 await session.flush()
-            if text_model_override and text_model_override != project.text_model:
-                project.text_model = text_model_override
+            if text_model_override and text_model_override != scene.text_model:
+                scene.text_model = text_model_override
                 await session.flush()
 
-            saved_status = project.status
+            saved_status = scene.status
 
             # Load user settings for adapter creation
             us_result = await session.execute(
@@ -5299,32 +5299,32 @@ async def _run_keyframes_regeneration(
             user_settings = us_result.scalar_one_or_none()
 
             from vidpipe.services.llm import get_adapter
-            text_adapter = get_adapter(project.text_model, user_settings=user_settings)
+            text_adapter = get_adapter(scene.text_model, user_settings=user_settings)
 
             # Gap-filling: generate_keyframes already skips shots with existing keyframes
             from vidpipe.pipeline.keyframes import generate_keyframes
-            await generate_keyframes(session, project, text_adapter=text_adapter)
+            await generate_keyframes(session, scene, text_adapter=text_adapter)
 
             # generate_keyframes sets status — restore original
-            project.status = saved_status
+            scene.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
-            cp = await create_checkpoint(session, project, "Regenerated stale keyframes")
+            cp = await create_checkpoint(session, scene, "Regenerated stale keyframes")
             await session.commit()
             from vidpipe.services.event_bus import event_bus
-            event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale keyframes")
+            event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale keyframes")
             if _emit_complete:
-                event_bus.emit(project_id, "regen_complete", scope="keyframes")
+                event_bus.emit(scene_id, "regen_complete", scope="keyframes")
     except Exception as e:
-        logger.error("Keyframes regeneration failed for %s: %s", project_id, e, exc_info=True)
+        logger.error("Keyframes regeneration failed for %s: %s", scene_id, e, exc_info=True)
         from vidpipe.services.event_bus import event_bus
-        event_bus.emit(project_id, "error", phase="keyframes", message=str(e))
+        event_bus.emit(scene_id, "error", phase="keyframes", message=str(e))
         if not _emit_complete:
             raise  # propagate to chained caller so subsequent phases are skipped
 
 
 async def _run_clips_regeneration(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     video_model_override: Optional[str] = None,
     text_model_override: Optional[str] = None,
     *,
@@ -5333,20 +5333,20 @@ async def _run_clips_regeneration(
     """Background task to regenerate stale/missing video clips only."""
     try:
         async with async_session() as session:
-            result = await session.execute(select(Project).where(Project.id == project_id))
-            project = result.scalar_one_or_none()
-            if not project:
+            result = await session.execute(select(Scene).where(Scene.id == scene_id))
+            scene = result.scalar_one_or_none()
+            if not scene:
                 return
 
             # Persist model overrides
-            if video_model_override and video_model_override != project.video_model:
-                project.video_model = video_model_override
+            if video_model_override and video_model_override != scene.video_model:
+                scene.video_model = video_model_override
                 await session.flush()
-            if text_model_override and text_model_override != project.text_model:
-                project.text_model = text_model_override
+            if text_model_override and text_model_override != scene.text_model:
+                scene.text_model = text_model_override
                 await session.flush()
 
-            saved_status = project.status
+            saved_status = scene.status
 
             # Load user settings for adapter creation
             us_result = await session.execute(
@@ -5355,15 +5355,15 @@ async def _run_clips_regeneration(
             user_settings = us_result.scalar_one_or_none()
 
             from vidpipe.services.llm import get_adapter
-            text_adapter = get_adapter(project.text_model, user_settings=user_settings)
+            text_adapter = get_adapter(scene.text_model, user_settings=user_settings)
             vision_adapter = None
-            if project.vision_model:
-                vision_adapter = get_adapter(project.vision_model, user_settings=user_settings)
+            if scene.vision_model:
+                vision_adapter = get_adapter(scene.vision_model, user_settings=user_settings)
 
             # Gap-filling: ensure shots without clips have the right status
             # for generate_videos to pick them up
             shots_result = await session.execute(
-                select(Shot).where(Shot.project_id == project.id).order_by(Shot.shot_index)
+                select(Shot).where(Shot.scene_id == scene.id).order_by(Shot.shot_index)
             )
             shots = shots_result.scalars().all()
 
@@ -5379,31 +5379,31 @@ async def _run_clips_regeneration(
 
             from vidpipe.pipeline.video_gen import generate_videos
             await generate_videos(
-                session, project,
+                session, scene,
                 text_adapter=text_adapter,
                 vision_adapter=vision_adapter,
             )
 
             # Restore original status
-            project.status = saved_status
+            scene.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
-            cp = await create_checkpoint(session, project, "Regenerated stale clips")
+            cp = await create_checkpoint(session, scene, "Regenerated stale clips")
             await session.commit()
             from vidpipe.services.event_bus import event_bus
-            event_bus.emit(project_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale clips")
+            event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale clips")
             if _emit_complete:
-                event_bus.emit(project_id, "regen_complete", scope="clips")
+                event_bus.emit(scene_id, "regen_complete", scope="clips")
     except Exception as e:
-        logger.error("Clips regeneration failed for %s: %s", project_id, e, exc_info=True)
+        logger.error("Clips regeneration failed for %s: %s", scene_id, e, exc_info=True)
         from vidpipe.services.event_bus import event_bus
-        event_bus.emit(project_id, "error", phase="clips", message=str(e))
+        event_bus.emit(scene_id, "error", phase="clips", message=str(e))
         if not _emit_complete:
             raise  # propagate to chained caller so subsequent phases are skipped
 
 
 async def _run_all_phases_regeneration(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     run_through: Optional[str] = None,
     text_model_override: Optional[str] = None,
     image_model_override: Optional[str] = None,
@@ -5414,62 +5414,62 @@ async def _run_all_phases_regeneration(
     try:
         # Always run storyboard (suppress per-phase regen_complete)
         await _run_storyboard_regeneration(
-            project_id, text_model_override=text_model_override,
+            scene_id, text_model_override=text_model_override,
             _emit_complete=False,
         )
 
         if run_through == "storyboard":
-            event_bus.emit(project_id, "regen_complete", scope="all_phases")
+            event_bus.emit(scene_id, "regen_complete", scope="all_phases")
             return
 
         # Keyframes
         await _run_keyframes_regeneration(
-            project_id,
+            scene_id,
             image_model_override=image_model_override,
             text_model_override=text_model_override,
             _emit_complete=False,
         )
 
         if run_through == "keyframes":
-            event_bus.emit(project_id, "regen_complete", scope="all_phases")
+            event_bus.emit(scene_id, "regen_complete", scope="all_phases")
             return
 
         # Clips
         await _run_clips_regeneration(
-            project_id,
+            scene_id,
             video_model_override=video_model_override,
             text_model_override=text_model_override,
             _emit_complete=False,
         )
 
         if run_through == "video":
-            event_bus.emit(project_id, "regen_complete", scope="all_phases")
+            event_bus.emit(scene_id, "regen_complete", scope="all_phases")
             return
 
         # Full pipeline — also restitch
-        await _run_restitch(project_id, _emit_complete=False)
-        event_bus.emit(project_id, "regen_complete", scope="all_phases")
+        await _run_restitch(scene_id, _emit_complete=False)
+        event_bus.emit(scene_id, "regen_complete", scope="all_phases")
     except Exception as e:
-        logger.error("All-phases regeneration failed for %s: %s", project_id, e, exc_info=True)
-        event_bus.emit(project_id, "error", message=str(e))
+        logger.error("All-phases regeneration failed for %s: %s", scene_id, e, exc_info=True)
+        event_bus.emit(scene_id, "error", message=str(e))
 
 
-async def _run_project_regeneration(
-    project_id: uuid.UUID,
+async def _run_scene_regeneration(
+    scene_id: uuid.UUID,
     scope: str,
     shot_indices: Optional[list[int]],
 ):
-    """Background task for project-wide regeneration."""
-    logger.info("Project regeneration %s for %s", scope, project_id)
+    """Background task for scene-wide regeneration."""
+    logger.info("Scene regeneration %s for %s", scope, scene_id)
 
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if not project:
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
             return
 
         shots_result = await session.execute(
-            select(Shot).where(Shot.project_id == project.id).order_by(Shot.shot_index)
+            select(Shot).where(Shot.scene_id == scene.id).order_by(Shot.shot_index)
         )
         shots = shots_result.scalars().all()
 
@@ -5488,7 +5488,7 @@ async def _run_project_regeneration(
             # Load shot manifest
             sm_result = await session.execute(
                 select(ShotManifestModel).where(
-                    ShotManifestModel.project_id == project.id,
+                    ShotManifestModel.scene_id == scene.id,
                     ShotManifestModel.shot_index == shot.shot_index,
                 )
             )
@@ -5519,9 +5519,9 @@ async def _run_project_regeneration(
                 try:
                     if target in ("start_keyframe", "end_keyframe"):
                         position = "start" if target == "start_keyframe" else "end"
-                        await _regenerate_keyframe(session, project, shot, position, file_mgr)
+                        await _regenerate_keyframe(session, scene, shot, position, file_mgr)
                     elif target == "video_clip":
-                        await _regenerate_clip(session, project, shot, file_mgr)
+                        await _regenerate_clip(session, scene, shot, file_mgr)
                     regenerated_count += 1
                 except Exception as e:
                     logger.error("Regeneration failed for shot %d %s: %s", shot.shot_index, target, e)
@@ -5530,13 +5530,13 @@ async def _run_project_regeneration(
             # Auto-stitch after regeneration so the final video stays current
             try:
                 from vidpipe.pipeline.stitcher import stitch_videos
-                await stitch_videos(session, project)
-                await session.refresh(project)
+                await stitch_videos(session, scene)
+                await session.refresh(scene)
             except Exception as e:
                 logger.error("Auto-stitch after regeneration failed: %s", e)
 
             await create_checkpoint(
-                session, project,
+                session, scene,
                 f"Regenerated {regenerated_count} asset(s) ({scope})",
             )
             await session.commit()
@@ -5546,9 +5546,9 @@ async def _run_project_regeneration(
 # PipeSVN: Asset Upload/Replace
 # ============================================================================
 
-@router.put("/projects/{project_id}/shots/{shot_idx}/keyframes/{position}")
+@router.put("/scenes/{scene_id}/shots/{shot_idx}/keyframes/{position}")
 async def upload_keyframe(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     shot_idx: int,
     position: str,
     file: UploadFile = File(...),
@@ -5558,13 +5558,13 @@ async def upload_keyframe(
         raise HTTPException(status_code=400, detail="Position must be 'start' or 'end'")
 
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         shot_result = await session.execute(
-            select(Shot).where(Shot.project_id == project.id, Shot.shot_index == shot_idx)
+            select(Shot).where(Shot.scene_id == scene.id, Shot.shot_index == shot_idx)
         )
         shot = shot_result.scalar_one_or_none()
         if not shot:
@@ -5575,7 +5575,7 @@ async def upload_keyframe(
 
         from vidpipe.services.file_manager import FileManager
         file_mgr = FileManager()
-        filepath = file_mgr.save_keyframe_versioned(project.id, shot_idx, position, data)
+        filepath = file_mgr.save_keyframe_versioned(scene.id, shot_idx, position, data)
 
         # Delete old keyframe
         old_kf_result = await session.execute(
@@ -5599,7 +5599,7 @@ async def upload_keyframe(
 
         from vidpipe.services.checkpoint_service import create_checkpoint
         await create_checkpoint(
-            session, project,
+            session, scene,
             f"Uploaded {position} keyframe for shot {shot_idx + 1}",
         )
         await session.commit()
@@ -5607,21 +5607,21 @@ async def upload_keyframe(
         return {"status": "uploaded", "file_path": str(filepath), "keyframe_id": str(kf.id)}
 
 
-@router.put("/projects/{project_id}/shots/{shot_idx}/clip")
+@router.put("/scenes/{scene_id}/shots/{shot_idx}/clip")
 async def upload_clip(
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     shot_idx: int,
     file: UploadFile = File(...),
 ):
     """Upload a video clip to replace the generated one."""
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         shot_result = await session.execute(
-            select(Shot).where(Shot.project_id == project.id, Shot.shot_index == shot_idx)
+            select(Shot).where(Shot.scene_id == scene.id, Shot.shot_index == shot_idx)
         )
         shot = shot_result.scalar_one_or_none()
         if not shot:
@@ -5631,7 +5631,7 @@ async def upload_clip(
 
         from vidpipe.services.file_manager import FileManager
         file_mgr = FileManager()
-        filepath = file_mgr.save_clip_versioned(project.id, shot_idx, data)
+        filepath = file_mgr.save_clip_versioned(scene.id, shot_idx, data)
 
         # Delete old clip
         old_clip_result = await session.execute(
@@ -5653,7 +5653,7 @@ async def upload_clip(
 
         from vidpipe.services.checkpoint_service import create_checkpoint
         await create_checkpoint(
-            session, project,
+            session, scene,
             f"Uploaded clip for shot {shot_idx + 1}",
         )
         await session.commit()
@@ -5661,17 +5661,17 @@ async def upload_clip(
         return {"status": "uploaded", "file_path": str(filepath), "clip_id": str(clip.id)}
 
 
-@router.delete("/projects/{project_id}/shots/{shot_idx}/clip")
-async def delete_clip(project_id: uuid.UUID, shot_idx: int):
+@router.delete("/scenes/{scene_id}/shots/{shot_idx}/clip")
+async def delete_clip(scene_id: uuid.UUID, shot_idx: int):
     """Delete a shot's video clip (file remains on disk)."""
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         shot_result = await session.execute(
-            select(Shot).where(Shot.project_id == project.id, Shot.shot_index == shot_idx)
+            select(Shot).where(Shot.scene_id == scene.id, Shot.shot_index == shot_idx)
         )
         shot = shot_result.scalar_one_or_none()
         if not shot:
@@ -5688,7 +5688,7 @@ async def delete_clip(project_id: uuid.UUID, shot_idx: int):
 
         from vidpipe.services.checkpoint_service import create_checkpoint
         await create_checkpoint(
-            session, project,
+            session, scene,
             f"Removed clip for shot {shot_idx + 1}",
         )
         await session.commit()
@@ -5696,20 +5696,20 @@ async def delete_clip(project_id: uuid.UUID, shot_idx: int):
         return {"status": "deleted", "shot_index": shot_idx}
 
 
-@router.delete("/projects/{project_id}/shots/{shot_idx}/keyframes/{position}")
-async def delete_keyframe(project_id: uuid.UUID, shot_idx: int, position: str):
+@router.delete("/scenes/{scene_id}/shots/{shot_idx}/keyframes/{position}")
+async def delete_keyframe(scene_id: uuid.UUID, shot_idx: int, position: str):
     """Delete a shot's keyframe (file remains on disk)."""
     if position not in ("start", "end"):
         raise HTTPException(status_code=400, detail="Position must be 'start' or 'end'")
 
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
 
         shot_result = await session.execute(
-            select(Shot).where(Shot.project_id == project.id, Shot.shot_index == shot_idx)
+            select(Shot).where(Shot.scene_id == scene.id, Shot.shot_index == shot_idx)
         )
         shot = shot_result.scalar_one_or_none()
         if not shot:
@@ -5726,9 +5726,168 @@ async def delete_keyframe(project_id: uuid.UUID, shot_idx: int, position: str):
 
         from vidpipe.services.checkpoint_service import create_checkpoint
         await create_checkpoint(
-            session, project,
+            session, scene,
             f"Removed {position} keyframe for shot {shot_idx + 1}",
         )
         await session.commit()
 
         return {"status": "deleted", "shot_index": shot_idx, "position": position}
+
+
+# ---------------------------------------------------------------------------
+# Productions
+# ---------------------------------------------------------------------------
+
+class ProductionCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    tags: Optional[list] = None
+
+class ProductionUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[list] = None
+
+class ProductionResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    tags: Optional[list] = None
+    scene_count: int = 0
+    created_at: str
+    updated_at: str
+
+@router.post("/productions", response_model=ProductionResponse)
+async def create_production(body: ProductionCreate):
+    from vidpipe.db.models import Production
+    async with async_session() as session:
+        prod = Production(name=body.name, description=body.description, tags=body.tags)
+        session.add(prod)
+        await session.commit()
+        await session.refresh(prod)
+        return ProductionResponse(
+            id=str(prod.id),
+            name=prod.name,
+            description=prod.description,
+            tags=prod.tags,
+            scene_count=0,
+            created_at=prod.created_at.isoformat(),
+            updated_at=prod.updated_at.isoformat(),
+        )
+
+@router.get("/productions")
+async def list_productions():
+    from vidpipe.db.models import Production
+    async with async_session() as session:
+        result = await session.execute(select(Production).order_by(Production.updated_at.desc()))
+        prods = result.scalars().all()
+        items = []
+        for p in prods:
+            count_result = await session.execute(
+                select(sa_func.count()).select_from(Scene).where(Scene.production_id == p.id, Scene.deleted_at.is_(None))
+            )
+            count = count_result.scalar() or 0
+            items.append(ProductionResponse(
+                id=str(p.id),
+                name=p.name,
+                description=p.description,
+                tags=p.tags,
+                scene_count=count,
+                created_at=p.created_at.isoformat(),
+                updated_at=p.updated_at.isoformat(),
+            ))
+        return items
+
+@router.get("/productions/{production_id}", response_model=ProductionResponse)
+async def get_production(production_id: uuid.UUID):
+    from vidpipe.db.models import Production
+    async with async_session() as session:
+        result = await session.execute(select(Production).where(Production.id == production_id))
+        prod = result.scalar_one_or_none()
+        if not prod:
+            raise HTTPException(status_code=404, detail="Production not found")
+        count_result = await session.execute(
+            select(sa_func.count()).select_from(Scene).where(Scene.production_id == prod.id, Scene.deleted_at.is_(None))
+        )
+        count = count_result.scalar() or 0
+        return ProductionResponse(
+            id=str(prod.id),
+            name=prod.name,
+            description=prod.description,
+            tags=prod.tags,
+            scene_count=count,
+            created_at=prod.created_at.isoformat(),
+            updated_at=prod.updated_at.isoformat(),
+        )
+
+@router.put("/productions/{production_id}", response_model=ProductionResponse)
+async def update_production(production_id: uuid.UUID, body: ProductionUpdate):
+    from vidpipe.db.models import Production
+    async with async_session() as session:
+        result = await session.execute(select(Production).where(Production.id == production_id))
+        prod = result.scalar_one_or_none()
+        if not prod:
+            raise HTTPException(status_code=404, detail="Production not found")
+        if body.name is not None:
+            prod.name = body.name
+        if body.description is not None:
+            prod.description = body.description
+        if body.tags is not None:
+            prod.tags = body.tags
+        await session.commit()
+        await session.refresh(prod)
+        count_result = await session.execute(
+            select(sa_func.count()).select_from(Scene).where(Scene.production_id == prod.id, Scene.deleted_at.is_(None))
+        )
+        count = count_result.scalar() or 0
+        return ProductionResponse(
+            id=str(prod.id),
+            name=prod.name,
+            description=prod.description,
+            tags=prod.tags,
+            scene_count=count,
+            created_at=prod.created_at.isoformat(),
+            updated_at=prod.updated_at.isoformat(),
+        )
+
+@router.delete("/productions/{production_id}")
+async def delete_production(production_id: uuid.UUID):
+    from vidpipe.db.models import Production
+    async with async_session() as session:
+        result = await session.execute(select(Production).where(Production.id == production_id))
+        prod = result.scalar_one_or_none()
+        if not prod:
+            raise HTTPException(status_code=404, detail="Production not found")
+        # Unlink scenes from this production
+        await session.execute(
+            update(Scene).where(Scene.production_id == production_id).values(production_id=None)
+        )
+        await session.delete(prod)
+        await session.commit()
+        return {"status": "deleted", "production_id": str(production_id)}
+
+@router.post("/productions/{production_id}/scenes/{scene_id}")
+async def add_scene_to_production(production_id: uuid.UUID, scene_id: uuid.UUID):
+    from vidpipe.db.models import Production
+    async with async_session() as session:
+        prod = (await session.execute(select(Production).where(Production.id == production_id))).scalar_one_or_none()
+        if not prod:
+            raise HTTPException(status_code=404, detail="Production not found")
+        scene = (await session.execute(select(Scene).where(Scene.id == scene_id))).scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found")
+        scene.production_id = prod.id
+        await session.commit()
+        return {"status": "added", "production_id": str(production_id), "scene_id": str(scene_id)}
+
+@router.delete("/productions/{production_id}/scenes/{scene_id}")
+async def remove_scene_from_production(production_id: uuid.UUID, scene_id: uuid.UUID):
+    async with async_session() as session:
+        scene = (await session.execute(
+            select(Scene).where(Scene.id == scene_id, Scene.production_id == production_id)
+        )).scalar_one_or_none()
+        if not scene:
+            raise HTTPException(status_code=404, detail="Scene not found in this production")
+        scene.production_id = None
+        await session.commit()
+        return {"status": "removed", "production_id": str(production_id), "scene_id": str(scene_id)}

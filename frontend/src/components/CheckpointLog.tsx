@@ -4,7 +4,7 @@ import { listCheckpoints, getCheckpointDiff, revertToCheckpoint, deleteCheckpoin
 import type { CheckpointListItem, CheckpointDiff } from "../api/types.ts";
 
 interface CheckpointLogProps {
-  projectId: string;
+  sceneId: string;
   headSha: string | null | undefined;
   onReverted: () => void;
 }
@@ -20,7 +20,7 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-export function CheckpointLog({ projectId, headSha, onReverted }: CheckpointLogProps) {
+export function CheckpointLog({ sceneId, headSha, onReverted }: CheckpointLogProps) {
   const [checkpoints, setCheckpoints] = useState<CheckpointListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSha, setExpandedSha] = useState<string | null>(null);
@@ -31,11 +31,11 @@ export function CheckpointLog({ projectId, headSha, onReverted }: CheckpointLogP
 
   useEffect(() => {
     setLoading(true);
-    listCheckpoints(projectId)
+    listCheckpoints(sceneId)
       .then(setCheckpoints)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [projectId, headSha]);
+  }, [sceneId, headSha]);
 
   async function handleExpand(sha: string) {
     if (expandedSha === sha) {
@@ -46,7 +46,7 @@ export function CheckpointLog({ projectId, headSha, onReverted }: CheckpointLogP
     setExpandedSha(sha);
     setDiffLoading(true);
     try {
-      const d = await getCheckpointDiff(projectId, sha);
+      const d = await getCheckpointDiff(sceneId, sha);
       setDiff(d);
     } catch {
       setDiff(null);
@@ -59,7 +59,7 @@ export function CheckpointLog({ projectId, headSha, onReverted }: CheckpointLogP
     setReverting(sha);
     setError(null);
     try {
-      await revertToCheckpoint(projectId, sha);
+      await revertToCheckpoint(sceneId, sha);
       onReverted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Revert failed");
@@ -70,7 +70,7 @@ export function CheckpointLog({ projectId, headSha, onReverted }: CheckpointLogP
 
   async function handleDelete(sha: string) {
     try {
-      await deleteCheckpoint(projectId, sha);
+      await deleteCheckpoint(sceneId, sha);
       setCheckpoints((prev) => prev.filter((cp) => cp.sha !== sha));
       if (expandedSha === sha) {
         setExpandedSha(null);
@@ -137,7 +137,7 @@ export function CheckpointLog({ projectId, headSha, onReverted }: CheckpointLogP
                     <div className="space-y-1">
                       {diff.changes.map((change, ci) => (
                         <div key={ci} className="text-[11px] text-gray-400">
-                          {change.type === "project_field" && (
+                          {change.type === "scene_field" && (
                             <span>
                               Changed <span className="text-gray-300">{change.field}</span>
                               {change.old && <span className="text-red-400"> {change.old}</span>}

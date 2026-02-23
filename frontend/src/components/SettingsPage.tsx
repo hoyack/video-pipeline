@@ -222,7 +222,7 @@ export function SettingsPage() {
         <div className="flex items-center justify-between">
           <div>
             <span className="text-sm font-medium text-gray-300">Show Cost Estimates</span>
-            <p className="text-xs text-gray-500">Display estimated costs on projects, forms, and dashboard</p>
+            <p className="text-xs text-gray-500">Display estimated costs on scenes, forms, and dashboard</p>
           </div>
           <button
             type="button"

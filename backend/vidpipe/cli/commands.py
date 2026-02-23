@@ -1,10 +1,10 @@
 """CLI commands for vidpipe using Typer and Rich.
 
 Implements all 5 CLI commands:
-- generate: Create and run new video generation project
-- resume: Resume a failed project
-- status: Show detailed project information
-- list: List all projects in a table
+- generate: Create and run new video generation scene
+- resume: Resume a failed scene
+- status: Show detailed scene information
+- list: List all scenes in a table
 - stitch: Re-stitch video with configurable crossfade
 """
 
@@ -23,7 +23,7 @@ from sqlalchemy import select, func
 
 from vidpipe import validate_dependencies
 from vidpipe.db import init_database, async_session
-from vidpipe.db.models import Project, Shot, Keyframe, VideoClip, PipelineRun
+from vidpipe.db.models import Scene, Shot, Keyframe, VideoClip, PipelineRun
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.pipeline.stitcher import stitch_videos
@@ -87,7 +87,7 @@ def generate(
 ):
     """Generate a new video from a text prompt.
 
-    Creates a new project and runs the full pipeline: storyboard generation,
+    Creates a new scene and runs the full pipeline: storyboard generation,
     keyframe generation, video clip generation, and stitching.
     """
     # Fail-fast dependency validation
@@ -157,9 +157,9 @@ async def _generate_async(
 
     shot_count = math.ceil(total_duration / clip_duration)
 
-    # Create project
+    # Create scene
     async with async_session() as session:
-        project = Project(
+        scene = Scene(
             prompt=prompt,
             style=style,
             aspect_ratio=aspect_ratio,
@@ -173,11 +173,11 @@ async def _generate_async(
             seed=random.randint(0, 2**32 - 1),
             status="pending",
         )
-        session.add(project)
+        session.add(scene)
         await session.commit()
-        await session.refresh(project)
+        await session.refresh(scene)
 
-        console.print(f"[green]Created project:[/green] {project.id}")
+        console.print(f"[green]Created scene:[/green] {scene.id}")
         console.print()
 
         # Progress callback for status updates
@@ -195,33 +195,33 @@ async def _generate_async(
                     status.update(f"[bold green]{msg}")
                     progress_callback(msg)
 
-                await run_pipeline(session, project.id, progress_callback=callback_wrapper)
+                await run_pipeline(session, scene.id, progress_callback=callback_wrapper)
 
-            # Success - refresh project to get output path
-            await session.refresh(project)
+            # Success - refresh scene to get output path
+            await session.refresh(scene)
             console.print(f"[green]\u2713[/green] Video generation complete!")
-            console.print(f"[green]Output:[/green] {project.output_path}")
+            console.print(f"[green]Output:[/green] {scene.output_path}")
 
         except KeyboardInterrupt:
             console.print()
-            console.print("[yellow]Pipeline interrupted. You can resume this project later with:[/yellow]")
-            console.print(f"  python -m vidpipe resume {project.id}")
+            console.print("[yellow]Pipeline interrupted. You can resume this scene later with:[/yellow]")
+            console.print(f"  python -m vidpipe resume {scene.id}")
             raise typer.Exit(code=130)
 
         except Exception as e:
             console.print()
             console.print(f"[red]\u2717 Pipeline failed:[/red] {str(e)}")
-            console.print(f"[yellow]You can retry with:[/yellow] python -m vidpipe resume {project.id}")
+            console.print(f"[yellow]You can retry with:[/yellow] python -m vidpipe resume {scene.id}")
             raise typer.Exit(code=1)
 
 
 @app.command()
 def resume(
-    project_id: str = typer.Argument(..., help="Project UUID to resume"),
+    scene_id: str = typer.Argument(..., help="Scene UUID to resume"),
 ):
-    """Resume a failed or interrupted project.
+    """Resume a failed or interrupted scene.
 
-    Loads the project from the database and resumes from the last incomplete step.
+    Loads the scene from the database and resumes from the last incomplete step.
     """
     # Fail-fast dependency validation
     try:
@@ -230,43 +230,43 @@ def resume(
         console.print(f"[red]Error:[/red] {str(e)}")
         raise typer.Exit(code=1)
 
-    asyncio.run(_resume_async(project_id))
+    asyncio.run(_resume_async(scene_id))
 
 
-async def _resume_async(project_id_str: str):
+async def _resume_async(scene_id_str: str):
     """Async implementation of resume command."""
     # Parse UUID
     try:
-        project_uuid = uuid.UUID(project_id_str)
+        scene_uuid = uuid.UUID(scene_id_str)
     except ValueError:
-        console.print(f"[red]Error:[/red] Invalid project UUID: {project_id_str}")
+        console.print(f"[red]Error:[/red] Invalid scene UUID: {scene_id_str}")
         raise typer.Exit(code=1)
 
     # Initialize database
     await init_database()
 
-    # Load project
+    # Load scene
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_uuid))
-        project = result.scalar_one_or_none()
+        result = await session.execute(select(Scene).where(Scene.id == scene_uuid))
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            console.print(f"[red]Error:[/red] Project not found: {project_uuid}")
+        if not scene:
+            console.print(f"[red]Error:[/red] Scene not found: {scene_uuid}")
             raise typer.Exit(code=1)
 
         # Check if already complete
-        if project.status == "complete":
-            console.print(f"[green]Project already complete![/green]")
-            console.print(f"[green]Output:[/green] {project.output_path}")
+        if scene.status == "complete":
+            console.print(f"[green]Scene already complete![/green]")
+            console.print(f"[green]Output:[/green] {scene.output_path}")
             return
 
         # Check if resumable
-        if not can_resume(project.status):
-            console.print(f"[red]Error:[/red] Project status '{project.status}' cannot be resumed")
+        if not can_resume(scene.status):
+            console.print(f"[red]Error:[/red] Scene status '{scene.status}' cannot be resumed")
             raise typer.Exit(code=1)
 
-        console.print(f"[yellow]Resuming project:[/yellow] {project.id}")
-        console.print(f"[yellow]Current status:[/yellow] {project.status}")
+        console.print(f"[yellow]Resuming scene:[/yellow] {scene.id}")
+        console.print(f"[yellow]Current status:[/yellow] {scene.status}")
         console.print()
 
         # Run pipeline with progress display
@@ -275,107 +275,107 @@ async def _resume_async(project_id_str: str):
                 def callback_wrapper(msg: str):
                     status.update(f"[bold green]{msg}")
 
-                await run_pipeline(session, project.id, progress_callback=callback_wrapper)
+                await run_pipeline(session, scene.id, progress_callback=callback_wrapper)
 
             # Success
-            await session.refresh(project)
+            await session.refresh(scene)
             console.print(f"[green]\u2713[/green] Pipeline resumed and completed!")
-            console.print(f"[green]Output:[/green] {project.output_path}")
+            console.print(f"[green]Output:[/green] {scene.output_path}")
 
         except KeyboardInterrupt:
             console.print()
             console.print("[yellow]Pipeline interrupted. You can resume again with:[/yellow]")
-            console.print(f"  python -m vidpipe resume {project.id}")
+            console.print(f"  python -m vidpipe resume {scene.id}")
             raise typer.Exit(code=130)
 
         except Exception as e:
             console.print()
             console.print(f"[red]\u2717 Pipeline failed:[/red] {str(e)}")
-            console.print(f"[yellow]You can retry with:[/yellow] python -m vidpipe resume {project.id}")
+            console.print(f"[yellow]You can retry with:[/yellow] python -m vidpipe resume {scene.id}")
             raise typer.Exit(code=1)
 
 
 @app.command()
 def status(
-    project_id: str = typer.Argument(..., help="Project UUID"),
+    scene_id: str = typer.Argument(..., help="Scene UUID"),
 ):
-    """Show detailed project status and information."""
-    asyncio.run(_status_async(project_id))
+    """Show detailed scene status and information."""
+    asyncio.run(_status_async(scene_id))
 
 
-async def _status_async(project_id_str: str):
+async def _status_async(scene_id_str: str):
     """Async implementation of status command."""
     # Parse UUID
     try:
-        project_uuid = uuid.UUID(project_id_str)
+        scene_uuid = uuid.UUID(scene_id_str)
     except ValueError:
-        console.print(f"[red]Error:[/red] Invalid project UUID: {project_id_str}")
+        console.print(f"[red]Error:[/red] Invalid scene UUID: {scene_id_str}")
         raise typer.Exit(code=1)
 
     # Initialize database
     await init_database()
 
-    # Load project
+    # Load scene
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_uuid))
-        project = result.scalar_one_or_none()
+        result = await session.execute(select(Scene).where(Scene.id == scene_uuid))
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            console.print(f"[red]Error:[/red] Project not found: {project_uuid}")
+        if not scene:
+            console.print(f"[red]Error:[/red] Scene not found: {scene_uuid}")
             raise typer.Exit(code=1)
 
         # Query shot count
         shot_count_result = await session.execute(
-            select(func.count(Shot.id)).where(Shot.project_id == project.id)
+            select(func.count(Shot.id)).where(Shot.scene_id == scene.id)
         )
         shot_count = shot_count_result.scalar()
 
         # Query latest pipeline run
         run_result = await session.execute(
             select(PipelineRun)
-            .where(PipelineRun.project_id == project.id)
+            .where(PipelineRun.scene_id == scene.id)
             .order_by(PipelineRun.started_at.desc())
             .limit(1)
         )
         latest_run = run_result.scalar_one_or_none()
 
         # Color-code status
-        status_color = _get_status_color(project.status)
-        status_display = f"[{status_color}]{project.status}[/{status_color}]"
+        status_color = _get_status_color(scene.status)
+        status_display = f"[{status_color}]{scene.status}[/{status_color}]"
 
         # Truncate prompt for display
-        prompt_display = project.prompt if len(project.prompt) <= 80 else project.prompt[:77] + "..."
+        prompt_display = scene.prompt if len(scene.prompt) <= 80 else scene.prompt[:77] + "..."
 
         # Build info text
         info_lines = [
-            f"[bold]ID:[/bold] {project.id}",
+            f"[bold]ID:[/bold] {scene.id}",
             f"[bold]Prompt:[/bold] {prompt_display}",
             f"[bold]Status:[/bold] {status_display}",
-            f"[bold]Style:[/bold] {project.style}",
-            f"[bold]Aspect Ratio:[/bold] {project.aspect_ratio}",
-            f"[bold]Clip Duration:[/bold] {project.target_clip_duration}s",
+            f"[bold]Style:[/bold] {scene.style}",
+            f"[bold]Aspect Ratio:[/bold] {scene.aspect_ratio}",
+            f"[bold]Clip Duration:[/bold] {scene.target_clip_duration}s",
             f"[bold]Shots:[/bold] {shot_count}",
-            f"[bold]Created:[/bold] {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"[bold]Updated:[/bold] {project.updated_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"[bold]Created:[/bold] {scene.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"[bold]Updated:[/bold] {scene.updated_at.strftime('%Y-%m-%d %H:%M:%S')}",
         ]
 
         # Add model info if available
-        if project.total_duration:
-            info_lines.append(f"[bold]Total Duration:[/bold] {project.total_duration}s")
-        if project.text_model:
-            info_lines.append(f"[bold]Text Model:[/bold] {project.text_model}")
-        if project.image_model:
-            info_lines.append(f"[bold]Image Model:[/bold] {project.image_model}")
-        if project.video_model:
-            info_lines.append(f"[bold]Video Model:[/bold] {project.video_model}")
+        if scene.total_duration:
+            info_lines.append(f"[bold]Total Duration:[/bold] {scene.total_duration}s")
+        if scene.text_model:
+            info_lines.append(f"[bold]Text Model:[/bold] {scene.text_model}")
+        if scene.image_model:
+            info_lines.append(f"[bold]Image Model:[/bold] {scene.image_model}")
+        if scene.video_model:
+            info_lines.append(f"[bold]Video Model:[/bold] {scene.video_model}")
 
         # Add output path if complete
-        if project.status == "complete" and project.output_path:
-            info_lines.append(f"[bold]Output:[/bold] [green]{project.output_path}[/green]")
+        if scene.status == "complete" and scene.output_path:
+            info_lines.append(f"[bold]Output:[/bold] [green]{scene.output_path}[/green]")
 
         # Add error message if failed
-        if project.status == "failed" and project.error_message:
-            info_lines.append(f"[bold]Error:[/bold] [red]{project.error_message}[/red]")
+        if scene.status == "failed" and scene.error_message:
+            info_lines.append(f"[bold]Error:[/bold] [red]{scene.error_message}[/red]")
 
         # Add latest run duration if available
         if latest_run and latest_run.total_duration_seconds:
@@ -391,15 +391,15 @@ async def _status_async(project_id_str: str):
         # Display panel
         panel = Panel(
             "\n".join(info_lines),
-            title="[bold]Project Status[/bold]",
+            title="[bold]Scene Status[/bold]",
             border_style="blue",
         )
         console.print(panel)
 
 
 @app.command(name="list")
-def list_projects():
-    """List all video generation projects."""
+def list_scenes():
+    """List all video generation scenes."""
     asyncio.run(_list_async())
 
 
@@ -408,15 +408,15 @@ async def _list_async():
     # Initialize database
     await init_database()
 
-    # Query all projects
+    # Query all scenes
     async with async_session() as session:
         result = await session.execute(
-            select(Project).order_by(Project.created_at.desc())
+            select(Scene).order_by(Scene.created_at.desc())
         )
-        projects = result.scalars().all()
+        scenes = result.scalars().all()
 
-        if not projects:
-            console.print("[yellow]No projects found[/yellow]")
+        if not scenes:
+            console.print("[yellow]No scenes found[/yellow]")
             return
 
         # Create table
@@ -426,19 +426,19 @@ async def _list_async():
         table.add_column("Status")
         table.add_column("Created")
 
-        for project in projects:
+        for scene in scenes:
             # Truncate ID to first 8 chars + "..."
-            id_display = str(project.id)[:8] + "..."
+            id_display = str(scene.id)[:8] + "..."
 
             # Truncate prompt to 50 chars
-            prompt_display = project.prompt if len(project.prompt) <= 50 else project.prompt[:47] + "..."
+            prompt_display = scene.prompt if len(scene.prompt) <= 50 else scene.prompt[:47] + "..."
 
             # Color-code status
-            status_color = _get_status_color(project.status)
-            status_display = f"[{status_color}]{project.status}[/{status_color}]"
+            status_color = _get_status_color(scene.status)
+            status_display = f"[{status_color}]{scene.status}[/{status_color}]"
 
             # Format created date
-            created_display = project.created_at.strftime("%Y-%m-%d %H:%M")
+            created_display = scene.created_at.strftime("%Y-%m-%d %H:%M")
 
             table.add_row(id_display, prompt_display, status_display, created_display)
 
@@ -447,10 +447,10 @@ async def _list_async():
 
 @app.command()
 def stitch(
-    project_id: str = typer.Argument(..., help="Project UUID to re-stitch"),
+    scene_id: str = typer.Argument(..., help="Scene UUID to re-stitch"),
     crossfade: float = typer.Option(0.0, "--crossfade", "-c", help="Crossfade duration in seconds"),
 ):
-    """Re-stitch a completed project with configurable crossfade.
+    """Re-stitch a completed scene with configurable crossfade.
 
     Useful for trying different crossfade durations without regenerating video clips.
     """
@@ -461,45 +461,45 @@ def stitch(
         console.print(f"[red]Error:[/red] {str(e)}")
         raise typer.Exit(code=1)
 
-    asyncio.run(_stitch_async(project_id, crossfade))
+    asyncio.run(_stitch_async(scene_id, crossfade))
 
 
-async def _stitch_async(project_id_str: str, crossfade: float):
+async def _stitch_async(scene_id_str: str, crossfade: float):
     """Async implementation of stitch command."""
     # Parse UUID
     try:
-        project_uuid = uuid.UUID(project_id_str)
+        scene_uuid = uuid.UUID(scene_id_str)
     except ValueError:
-        console.print(f"[red]Error:[/red] Invalid project UUID: {project_id_str}")
+        console.print(f"[red]Error:[/red] Invalid scene UUID: {scene_id_str}")
         raise typer.Exit(code=1)
 
     # Initialize database
     await init_database()
 
-    # Load project
+    # Load scene
     async with async_session() as session:
-        result = await session.execute(select(Project).where(Project.id == project_uuid))
-        project = result.scalar_one_or_none()
+        result = await session.execute(select(Scene).where(Scene.id == scene_uuid))
+        scene = result.scalar_one_or_none()
 
-        if not project:
-            console.print(f"[red]Error:[/red] Project not found: {project_uuid}")
+        if not scene:
+            console.print(f"[red]Error:[/red] Scene not found: {scene_uuid}")
             raise typer.Exit(code=1)
 
         # Check for completed clips
         clip_count_result = await session.execute(
             select(func.count(VideoClip.id))
             .join(Shot, Shot.id == VideoClip.shot_id)
-            .where(Shot.project_id == project.id)
+            .where(Shot.scene_id == scene.id)
             .where(VideoClip.status == "completed")
         )
         clip_count = clip_count_result.scalar()
 
         if clip_count == 0:
-            console.print(f"[red]Error:[/red] No completed video clips found for project {project_uuid}")
-            console.print("[yellow]Project must have completed video generation before stitching.[/yellow]")
+            console.print(f"[red]Error:[/red] No completed video clips found for scene {scene_uuid}")
+            console.print("[yellow]Scene must have completed video generation before stitching.[/yellow]")
             raise typer.Exit(code=1)
 
-        console.print(f"[yellow]Re-stitching project:[/yellow] {project.id}")
+        console.print(f"[yellow]Re-stitching scene:[/yellow] {scene.id}")
         console.print(f"[yellow]Clips:[/yellow] {clip_count}")
         console.print(f"[yellow]Crossfade:[/yellow] {crossfade}s")
         console.print()
@@ -510,12 +510,12 @@ async def _stitch_async(project_id_str: str, crossfade: float):
 
         try:
             with console.status("[bold green]Stitching video..."):
-                await stitch_videos(session, project)
+                await stitch_videos(session, scene)
 
             # Success
-            await session.refresh(project)
+            await session.refresh(scene)
             console.print(f"[green]\u2713[/green] Stitching complete!")
-            console.print(f"[green]Output:[/green] {project.output_path}")
+            console.print(f"[green]Output:[/green] {scene.output_path}")
 
         except Exception as e:
             console.print()
@@ -528,7 +528,7 @@ async def _stitch_async(project_id_str: str, crossfade: float):
 
 
 def _get_status_color(status: str) -> str:
-    """Get Rich color for a project status.
+    """Get Rich color for a scene status.
 
     Color coding:
     - complete: green

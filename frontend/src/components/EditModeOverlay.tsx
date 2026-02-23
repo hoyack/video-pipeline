@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import clsx from "clsx";
-import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewShot, getDownloadUrl, deleteProject, stopProject } from "../api/client.ts";
+import { editScene, getEnabledModels, regenerateScene, revertToCheckpoint, createCheckpoint, generateNewShot, getDownloadUrl, deleteScene, stopScene } from "../api/client.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
-import type { ProjectDetail, ShotDetail, ShotEditPayload, EditProjectRequest, EnabledModelsResponse, ShotReference } from "../api/types.ts";
+import type { SceneDetail, ShotDetail, ShotEditPayload, EditSceneRequest, EnabledModelsResponse, ShotReference } from "../api/types.ts";
 import { usePolling } from "../hooks/usePolling.ts";
 import {
   STYLE_OPTIONS,
@@ -20,14 +20,14 @@ import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinat
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
 import { ManifestSelector } from "./ManifestSelector.tsx";
 import { RegenProgressBar } from "./RegenProgressBar.tsx";
-import { useProjectWebSocket } from "../hooks/useProjectWebSocket.ts";
+import { useSceneWebSocket } from "../hooks/useSceneWebSocket.ts";
 import type { WsEvent } from "../api/wsTypes.ts";
 
-/** Schema for project export/import */
-interface ProjectSchema {
+/** Schema for scene export/import */
+interface SceneSchema {
   version: 1;
   exported_at: string;
-  project: {
+  scene: {
     title?: string | null;
     prompt: string;
     style: string;
@@ -60,7 +60,7 @@ interface ProjectSchema {
 }
 
 interface EditModeOverlayProps {
-  detail: ProjectDetail;
+  detail: SceneDetail;
   onCommitted: () => void;
   onCancel: () => void;
   /** Refresh detail data without exiting edit mode */
@@ -69,7 +69,7 @@ interface EditModeOverlayProps {
 
 export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: EditModeOverlayProps) {
   const { showCost } = useShowCost();
-  // Project-level state
+  // Scene-level state
   const [title, setTitle] = useState(detail.title ?? "");
   const [prompt, setPrompt] = useState(detail.prompt);
   const [style, setStyle] = useState(detail.style ?? "");
@@ -212,8 +212,8 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
   // Always keep WS connected in Edit Mode — avoids race conditions where
   // toggling enabled creates/destroys the connection before it establishes.
-  const { connected: wsConnected } = useProjectWebSocket({
-    projectId: detail.project_id,
+  const { connected: wsConnected } = useSceneWebSocket({
+    sceneId: detail.scene_id,
     enabled: true,
     onEvent: handleWsEvent,
   });
@@ -275,7 +275,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     if (changed) setRemovedShots(newRemoved);
   }, [shotCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function buildSchema(): ProjectSchema {
+  function buildSchema(): SceneSchema {
     // Merge current edits with shot data to get effective values
     function effective(shot: ShotDetail, field: string, original: string | null | undefined): string {
       return shotEdits[shot.shot_index]?.[field] ?? original ?? "";
@@ -284,7 +284,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     return {
       version: 1,
       exported_at: new Date().toISOString(),
-      project: {
+      scene: {
         title: title || null,
         prompt,
         style,
@@ -328,7 +328,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    const slug = (detail.title ?? detail.prompt ?? "project").slice(0, 40).replace(/[^a-zA-Z0-9]+/g, "-").replace(/-+$/, "");
+    const slug = (detail.title ?? detail.prompt ?? "scene").slice(0, 40).replace(/[^a-zA-Z0-9]+/g, "-").replace(/-+$/, "");
     a.download = `${slug}-schema.json`;
     a.click();
     URL.revokeObjectURL(url);
@@ -338,14 +338,14 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const schema = JSON.parse(e.target?.result as string) as ProjectSchema;
-        if (!schema.version || !schema.project) {
-          setError("Invalid schema file: missing version or project data");
+        const schema = JSON.parse(e.target?.result as string) as SceneSchema;
+        if (!schema.version || !schema.scene) {
+          setError("Invalid schema file: missing version or scene data");
           return;
         }
 
-        // Apply project-level settings
-        const p = schema.project;
+        // Apply scene-level settings
+        const p = schema.scene;
         if (p.prompt != null) setPrompt(p.prompt);
         if (p.style != null) setStyle(p.style);
         if (p.aspect_ratio != null) setAspectRatio(p.aspect_ratio);
@@ -414,9 +414,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             });
           }
 
-          setImportMessage(`Imported: project settings + ${appliedCount} shot field edit${appliedCount !== 1 ? "s" : ""} across ${schema.shots.length} shot${schema.shots.length !== 1 ? "s" : ""}`);
+          setImportMessage(`Imported: scene settings + ${appliedCount} shot field edit${appliedCount !== 1 ? "s" : ""} across ${schema.shots.length} shot${schema.shots.length !== 1 ? "s" : ""}`);
         } else {
-          setImportMessage("Imported: project settings (no shot data in schema)");
+          setImportMessage("Imported: scene settings (no shot data in schema)");
         }
 
         setError(null);
@@ -441,7 +441,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   }, []);
 
   const handleGenerateShot = useCallback(async (shotIndex: number) => {
-    const resp = await generateNewShot(detail.project_id, {
+    const resp = await generateNewShot(detail.scene_id, {
       shot_index: shotIndex,
       all_shot_edits: Object.keys(shotEdits).length > 0 ? shotEdits : undefined,
       text_model: textModel,
@@ -461,13 +461,13 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     setGeneratingShotIndices((prev) => new Set(prev).add(shotIndex));
     // Refresh to pick up the new DB shot
     onRefresh?.();
-  }, [detail.project_id, shotEdits, textModel, imageModel, videoModel, prompt, handleRegenStarted, onRefresh]);
+  }, [detail.scene_id, shotEdits, textModel, imageModel, videoModel, prompt, handleRegenStarted, onRefresh]);
 
   async function handleCancel() {
-    if (regenDone.current && baselineSha.current && detail.project_id) {
+    if (regenDone.current && baselineSha.current && detail.scene_id) {
       setCancelling(true);
       try {
-        await revertToCheckpoint(detail.project_id, baselineSha.current);
+        await revertToCheckpoint(detail.scene_id, baselineSha.current);
         onRefresh?.();
       } catch (err) {
         console.error("Failed to revert on cancel:", err);
@@ -612,8 +612,8 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     setExpandedShots(new Set());
   }
 
-  function buildEditRequest(): EditProjectRequest {
-    const req: EditProjectRequest = {};
+  function buildEditRequest(): EditSceneRequest {
+    const req: EditSceneRequest = {};
 
     if (title !== (detail.title ?? "")) req.title = title || undefined;
     if (prompt !== detail.prompt) req.prompt = prompt;
@@ -704,10 +704,10 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       const { expected_sha: _e, commit_message: _c, ...fieldChanges } = req;
       if (Object.keys(fieldChanges).length > 0) {
         // Text/field edits present — use the edit endpoint
-        await editProject(detail.project_id, req);
+        await editScene(detail.scene_id, req);
       } else {
         // Regen-only changes — create a checkpoint of current state
-        await createCheckpoint(detail.project_id);
+        await createCheckpoint(detail.scene_id);
       }
       onCommitted();
     } catch (err: unknown) {
@@ -732,7 +732,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       const req = buildEditRequest();
       const { expected_sha: _e, commit_message: _c, ...fieldChanges } = req;
       if (Object.keys(fieldChanges).length > 0) {
-        const editResp = await editProject(detail.project_id, req);
+        const editResp = await editScene(detail.scene_id, req);
         currentSha = editResp.head_sha;
         setShotEdits({});  // Clear — edits now persisted in DB
         onRefresh?.();
@@ -743,7 +743,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       // events as soon as the backend starts the background pipeline.
       setBgOpPending(scope);
       handleRegenStarted(currentSha);
-      await regenerateProject(detail.project_id, {
+      await regenerateScene(detail.scene_id, {
         scope,
         ...(textModel ? { text_model: textModel } : {}),
         ...(imageModel ? { image_model: imageModel } : {}),
@@ -766,7 +766,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     try {
       bgOpBaselineSha.current = detail.head_sha ?? null;
       setBgOpPending("stitch");
-      await regenerateProject(detail.project_id, { scope: "stitch_only" });
+      await regenerateScene(detail.scene_id, { scope: "stitch_only" });
       setStitchMessage("Re-stitching started — video will update when complete.");
     } catch (err) {
       setBgOpPending(null);
@@ -778,7 +778,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
   async function handleStopPipeline() {
     try {
-      await stopProject(detail.project_id);
+      await stopScene(detail.scene_id);
       setBgOpPending(null);
       bgOpBaselineSha.current = null;
       setWsProgress({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
@@ -884,7 +884,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Untitled Project"
+            placeholder="Untitled Scene"
             className={clsx(
               "w-full bg-transparent text-lg font-bold focus:outline-none border-b pb-1 transition-colors",
               title !== (detail.title ?? "")
@@ -893,8 +893,8 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             )}
           />
           <div className="flex items-center gap-1.5 mt-1">
-            <code className="text-xs text-gray-500 font-mono">{detail.project_id}</code>
-            <CopyButton text={detail.project_id} />
+            <code className="text-xs text-gray-500 font-mono">{detail.scene_id}</code>
+            <CopyButton text={detail.scene_id} />
           </div>
           {staleCount > 0 && (
             <p className="mt-1 text-xs text-amber-400">
@@ -907,7 +907,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             type="button"
             onClick={handleExportSchema}
             className="flex items-center gap-1.5 rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-400 hover:border-gray-600 hover:text-gray-300 transition-colors"
-            title="Export project schema as JSON"
+            title="Export scene schema as JSON"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -918,7 +918,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             type="button"
             onClick={() => importFileRef.current?.click()}
             className="flex items-center gap-1.5 rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-400 hover:border-gray-600 hover:text-gray-300 transition-colors"
-            title="Import project schema from JSON"
+            title="Import scene schema from JSON"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -987,7 +987,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           <div className="px-4 pb-4">
             {detail.status === "complete" ? (
               <video
-                src={`${getDownloadUrl(detail.project_id)}?v=${detail.head_sha ?? ""}`}
+                src={`${getDownloadUrl(detail.scene_id)}?v=${detail.head_sha ?? ""}`}
                 className="w-full rounded-lg border border-gray-700"
                 controls
                 preload="metadata"
@@ -1055,7 +1055,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             />
             {promptEditorOpen && (
               <MarkdownEditorModal
-                label="Project Prompt"
+                label="Scene Prompt"
                 value={prompt}
                 onChange={setPrompt}
                 onClose={() => setPromptEditorOpen(false)}
@@ -1184,7 +1184,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                             onRemove={handleRemoveShot}
                             onRestore={handleRestoreShot}
                             canRemove={activeShots.length + syntheticCount > 1}
-                            projectId={detail.project_id}
+                            sceneId={detail.scene_id}
                             onAssetChanged={handleAssetChanged}
                             onRegenStarted={handleRegenStarted}
                             textModel={textModel}
@@ -1588,9 +1588,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </button>
         <button
           onClick={async () => {
-            if (!confirm("Delete this project? This cannot be undone.")) return;
+            if (!confirm("Delete this scene? This cannot be undone.")) return;
             try {
-              await deleteProject(detail.project_id);
+              await deleteScene(detail.scene_id);
               onCancel();
             } catch (err) {
               setError(err instanceof Error ? err.message : "Delete failed");

@@ -440,7 +440,7 @@ class CVAnalysisService:
     async def track_appearances(
         self,
         session: AsyncSession,
-        project_id: uuid.UUID,
+        scene_id: uuid.UUID,
         shot_index: int,
         result: CVAnalysisResult,
     ) -> None:
@@ -452,7 +452,7 @@ class CVAnalysisService:
 
         Args:
             session: Active database session (caller manages commit)
-            project_id: Project UUID for the appearance record
+            scene_id: Scene UUID for the appearance record
             shot_index: Shot index for the appearance record
             result: CVAnalysisResult containing face_matches to persist
         """
@@ -465,7 +465,7 @@ class CVAnalysisService:
 
             appearance = AssetAppearance(
                 asset_id=face_match.matched_asset_id,
-                project_id=project_id,
+                scene_id=scene_id,
                 shot_index=shot_index,
                 frame_index=face_match.frame_index,
                 bbox=face_match.bbox,

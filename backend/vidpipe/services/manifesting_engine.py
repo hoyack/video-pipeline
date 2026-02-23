@@ -100,7 +100,7 @@ class ManifestingEngine:
         # Draw title
         draw.text(
             (20, 20),
-            "PROJECT REFERENCE SHEET",
+            "SCENE REFERENCE SHEET",
             fill="black",
             font=title_font,
         )
@@ -568,7 +568,7 @@ class ManifestingEngine:
         since the manifest is already READY from the parent.
 
         Args:
-            manifest_id: Manifest UUID (shared with parent project)
+            manifest_id: Manifest UUID (shared with parent scene)
             new_uploads: List of NewUpload Pydantic models (image_data base64, name, asset_type, ...)
             existing_face_embeddings: [(asset_id, embedding_bytes)] from inherited assets
                                       used for cross-matching against new face crops

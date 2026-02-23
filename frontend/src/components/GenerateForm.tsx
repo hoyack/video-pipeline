@@ -21,7 +21,7 @@ import {
 } from "../lib/constants.ts";
 
 interface GenerateFormProps {
-  onGenerated: (projectId: string) => void;
+  onGenerated: (sceneId: string) => void;
 }
 
 export function GenerateForm({ onGenerated }: GenerateFormProps) {
@@ -202,7 +202,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         vision_model: visionModel || undefined,
         run_through: runThrough,
       });
-      onGenerated(res.project_id);
+      onGenerated(res.scene_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");
     } finally {
@@ -223,7 +223,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Untitled Project"
+          placeholder="Untitled Scene"
           className="w-full bg-transparent text-2xl font-bold text-white placeholder-gray-600 border-none outline-none focus:outline-none"
         />
         <p className="text-sm text-gray-400">
@@ -323,7 +323,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         </div>
         {runThrough && (
           <p className="mt-1 text-xs text-gray-500">
-            Pipeline will pause after {runThrough === "storyboard" ? "storyboarding" : runThrough === "keyframes" ? "keyframe generation" : "video generation"}. Continue from Project Detail.
+            Pipeline will pause after {runThrough === "storyboard" ? "storyboarding" : runThrough === "keyframes" ? "keyframe generation" : "video generation"}. Continue from Scene Detail.
           </p>
         )}
       </div>

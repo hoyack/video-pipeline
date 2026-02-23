@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, retry_if_exception_type
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Shot
+from vidpipe.db.models import Scene, Shot
 from vidpipe.db.models import ShotManifest as ShotManifestModel
 from vidpipe.db.models import ShotAudioManifest as ShotAudioManifestModel
 from vidpipe.schemas.storyboard import StoryboardOutput
@@ -275,17 +275,17 @@ GOAL: Ensure all shots maintain visual coherence in {style} style while telling 
 
 async def generate_storyboard(
     session: AsyncSession,
-    project: Project,
+    scene: Scene,
     text_adapter: Optional[LLMAdapter] = None,
 ) -> None:
-    """Generate storyboard from project prompt using LLM structured output.
+    """Generate storyboard from scene prompt using LLM structured output.
 
-    Transforms project.prompt into structured storyboard with:
-    - StyleGuide stored in project.style_guide
+    Transforms scene.prompt into structured storyboard with:
+    - StyleGuide stored in scene.style_guide
     - Shot records created in database
-    - Project status updated to "keyframing"
+    - Scene status updated to "keyframing"
 
-    Supports gap-filling mode (VGED-06): if shots already exist (draft projects),
+    Supports gap-filling mode (VGED-06): if shots already exist (draft scenes),
     only generates text for shots with empty shot_description. User-provided
     shot text is preserved and passed as context to the LLM for narrative continuity.
 
@@ -294,8 +294,8 @@ async def generate_storyboard(
 
     Args:
         session: AsyncSession for database operations
-        project: Project instance with prompt to transform
-        text_adapter: Optional LLMAdapter. If None, one is created from project.text_model.
+        scene: Scene instance with prompt to transform
+        text_adapter: Optional LLMAdapter. If None, one is created from scene.text_model.
 
     Raises:
         json.JSONDecodeError: If JSON parsing fails after retries
@@ -303,17 +303,17 @@ async def generate_storyboard(
     """
     from sqlalchemy import select as sa_select
 
-    model_id = project.text_model or settings.models.storyboard_llm
+    model_id = scene.text_model or settings.models.storyboard_llm
     adapter = text_adapter or get_adapter(model_id)
 
-    style_label = project.style.replace("_", " ")
+    style_label = scene.style.replace("_", " ")
 
     # ----------------------------------------------------------------
-    # Gap-filling: Check for existing shots (draft projects, VGED-06)
+    # Gap-filling: Check for existing shots (draft scenes, VGED-06)
     # ----------------------------------------------------------------
     existing_shots_result = await session.execute(
         sa_select(Shot)
-        .where(Shot.project_id == project.id)
+        .where(Shot.scene_id == scene.id)
         .order_by(Shot.shot_index)
     )
     existing_shots = list(existing_shots_result.scalars().all())
@@ -329,24 +329,24 @@ async def generate_storyboard(
     if existing_shots and not empty_shots:
         # All shots already have text — skip storyboard generation entirely
         logger.info(
-            "Project %s: all %d shots have text, skipping storyboard generation",
-            project.id, len(existing_shots),
+            "Scene %s: all %d shots have text, skipping storyboard generation",
+            scene.id, len(existing_shots),
         )
-        project.status = "keyframing"
+        scene.status = "keyframing"
         await session.commit()
         return
 
     # Determine if manifest-aware mode
-    use_manifests = project.manifest_id is not None
+    use_manifests = scene.manifest_id is not None
 
     if use_manifests:
         # Load asset registry for LLM context
-        assets = await load_manifest_assets(session, project.manifest_id)
+        assets = await load_manifest_assets(session, scene.manifest_id)
         asset_registry_block = format_asset_registry(assets)
         asset_tags_set = {a.manifest_tag for a in assets}
         logger.info(
-            "Project %s: manifest-aware storyboard with %d assets",
-            project.id, len(assets)
+            "Scene %s: manifest-aware storyboard with %d assets",
+            scene.id, len(assets)
         )
     else:
         asset_registry_block = ""
@@ -381,22 +381,22 @@ async def generate_storyboard(
     if use_manifests:
         system_prompt = ENHANCED_STORYBOARD_PROMPT.format(
             style=style_label,
-            aspect_ratio=project.aspect_ratio,
+            aspect_ratio=scene.aspect_ratio,
             asset_registry_block=asset_registry_block,
         ).replace(
             "- Break the script into 3-5 distinct visual shots",
-            f"- Break the script into exactly {project.target_shot_count} distinct visual shots",
+            f"- Break the script into exactly {scene.target_shot_count} distinct visual shots",
         )
     else:
         system_prompt = STORYBOARD_SYSTEM_PROMPT.format(
             style=style_label,
-            aspect_ratio=project.aspect_ratio,
+            aspect_ratio=scene.aspect_ratio,
         ).replace(
             "- Break the script into 3-5 distinct visual shots",
-            f"- Break the script into exactly {project.target_shot_count} distinct visual shots",
+            f"- Break the script into exactly {scene.target_shot_count} distinct visual shots",
         )
 
-    full_prompt = f"{system_prompt}{filled_context}\n\nScript: {project.prompt}"
+    full_prompt = f"{system_prompt}{filled_context}\n\nScript: {scene.prompt}"
 
     # Set generation_status on empty shots before generating
     for s in empty_shots:
@@ -405,7 +405,7 @@ async def generate_storyboard(
         await session.commit()
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(project.id, "phase_started", phase="storyboard", total_shots=project.target_shot_count)
+    event_bus.emit(scene.id, "phase_started", phase="storyboard", total_shots=scene.target_shot_count)
 
     # Retry strategy: up to 3 attempts, reduce temperature on each retry
     attempt = 0
@@ -438,15 +438,15 @@ async def generate_storyboard(
     # Execute with retry logic
     storyboard = await generate_with_retry()
 
-    # Update project with storyboard data
-    project.style_guide = storyboard.style_guide.model_dump()
-    project.storyboard_raw = storyboard.model_dump()
+    # Update scene with storyboard data
+    scene.style_guide = storyboard.style_guide.model_dump()
+    scene.storyboard_raw = storyboard.model_dump()
 
     # ----------------------------------------------------------------
     # Persist shots: update existing rows (draft) or create new ones
     # ----------------------------------------------------------------
     if existing_shots:
-        # Draft project: Shot rows already exist — update only empty shots
+        # Draft scene: Shot rows already exist — update only empty shots
         existing_by_index = {s.shot_index: s for s in existing_shots}
         for shot_data in storyboard.shots:
             existing = existing_by_index.get(shot_data.shot_index)
@@ -462,7 +462,7 @@ async def generate_storyboard(
             else:
                 # Shot index from LLM not in existing rows — create new
                 shot = Shot(
-                    project_id=project.id,
+                    scene_id=scene.id,
                     shot_index=shot_data.shot_index,
                     shot_description=shot_data.shot_description,
                     start_frame_prompt=shot_data.start_frame_prompt,
@@ -482,10 +482,10 @@ async def generate_storyboard(
             if s.shot_index not in processed_indices and s.generation_status == "generating_text":
                 s.generation_status = None
     else:
-        # Non-draft project: no existing shots — create all from scratch
+        # Non-draft scene: no existing shots — create all from scratch
         for shot_data in storyboard.shots:
             shot = Shot(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=shot_data.shot_index,
                 shot_description=shot_data.shot_description,
                 start_frame_prompt=shot_data.start_frame_prompt,
@@ -534,14 +534,14 @@ async def generate_storyboard(
                 tag = placement_d.get("asset_tag", "")
                 if tag not in asset_tags_set:
                     logger.warning(
-                        "Project %s shot %d: unrecognized asset tag '%s' "
+                        "Scene %s shot %d: unrecognized asset tag '%s' "
                         "(not in registry, may be declared as new asset)",
-                        project.id, shot_data.shot_index, tag
+                        scene.id, shot_data.shot_index, tag
                     )
 
             # Persist shot manifest (using remapped dict)
             shot_manifest = ShotManifestModel(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=shot_data.shot_index,
                 manifest_json=manifest_dict,
                 composition_shot_type=shot_data.shot_manifest.composition.shot_type,
@@ -553,7 +553,7 @@ async def generate_storyboard(
 
             # Persist audio manifest (with remapped speaker_tags)
             audio_manifest = ShotAudioManifestModel(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=shot_data.shot_index,
                 dialogue_json=audio_dialogue,
                 sfx_json=[s.model_dump() for s in audio.sfx],
@@ -567,12 +567,12 @@ async def generate_storyboard(
             session.add(audio_manifest)
 
         logger.info(
-            "Project %s: persisted %d shot manifests and audio manifests",
-            project.id, len(storyboard.shots)
+            "Scene %s: persisted %d shot manifests and audio manifests",
+            scene.id, len(storyboard.shots)
         )
 
-    # Update project status to indicate storyboard completion
-    project.status = "keyframing"
+    # Update scene status to indicate storyboard completion
+    scene.status = "keyframing"
 
     # Commit all changes BEFORE emitting events so that frontend refreshes
     # see the committed data (generation_status cleared, text fields populated).
@@ -580,6 +580,6 @@ async def generate_storyboard(
 
     # Now emit events — any frontend refresh will see the committed state
     for shot_data in storyboard.shots:
-        event_bus.emit(project.id, "shot_text_ready", shot_index=shot_data.shot_index)
-    event_bus.emit(project.id, "phase_completed", phase="storyboard")
-    event_bus.emit(project.id, "refresh")
+        event_bus.emit(scene.id, "shot_text_ready", shot_index=shot_data.shot_index)
+    event_bus.emit(scene.id, "phase_completed", phase="storyboard")
+    event_bus.emit(scene.id, "refresh")

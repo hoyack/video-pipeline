@@ -1,9 +1,9 @@
 """PipeSVN checkpoint service — snapshot, SHA computation, and checkpoint management.
 
 Provides:
-- build_snapshot(): Serialize full project state to a JSON-serializable dict
+- build_snapshot(): Serialize full scene state to a JSON-serializable dict
 - compute_checkpoint_sha(): Deterministic SHA-1 from snapshot data
-- create_checkpoint(): Build snapshot + SHA, create ProjectCheckpoint row, update head_sha
+- create_checkpoint(): Build snapshot + SHA, create SceneCheckpoint row, update head_sha
 - extract_file_paths_from_snapshot(): Walk snapshot extracting all file paths
 """
 
@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vidpipe.db.models import (
     Asset,
     Keyframe,
-    Project,
-    ProjectCheckpoint,
+    Scene,
+    SceneCheckpoint,
     Shot,
     ShotAudioManifest,
     ShotManifest,
@@ -48,12 +48,12 @@ def _hash_file(path: str) -> Optional[str]:
         return None
 
 
-async def build_snapshot(session: AsyncSession, project: Project) -> dict:
-    """Query all project artifacts and serialize to a JSON-serializable dict.
+async def build_snapshot(session: AsyncSession, scene: Scene) -> dict:
+    """Query all scene artifacts and serialize to a JSON-serializable dict.
 
     Structure:
     {
-        "project": { ... project fields ... },
+        "scene": { ... scene fields ... },
         "shots": [
             {
                 "shot_index": 0,
@@ -68,46 +68,46 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
         "assets": [ ... ] | null,
     }
     """
-    # Project fields
-    project_data = {
-        "id": str(project.id),
-        "prompt": project.prompt,
-        "title": project.title,
-        "style": project.style,
-        "aspect_ratio": project.aspect_ratio,
-        "target_clip_duration": project.target_clip_duration,
-        "target_shot_count": project.target_shot_count,
-        "total_duration": project.total_duration,
-        "text_model": project.text_model,
-        "image_model": project.image_model,
-        "video_model": project.video_model,
-        "audio_enabled": project.audio_enabled,
-        "seed": project.seed,
-        "manifest_id": str(project.manifest_id) if project.manifest_id else None,
-        "quality_mode": project.quality_mode,
-        "candidate_count": project.candidate_count,
-        "vision_model": project.vision_model,
-        "output_path": project.output_path,
-        "status": project.status,
+    # Scene fields
+    scene_data = {
+        "id": str(scene.id),
+        "prompt": scene.prompt,
+        "title": scene.title,
+        "style": scene.style,
+        "aspect_ratio": scene.aspect_ratio,
+        "target_clip_duration": scene.target_clip_duration,
+        "target_shot_count": scene.target_shot_count,
+        "total_duration": scene.total_duration,
+        "text_model": scene.text_model,
+        "image_model": scene.image_model,
+        "video_model": scene.video_model,
+        "audio_enabled": scene.audio_enabled,
+        "seed": scene.seed,
+        "manifest_id": str(scene.manifest_id) if scene.manifest_id else None,
+        "quality_mode": scene.quality_mode,
+        "candidate_count": scene.candidate_count,
+        "vision_model": scene.vision_model,
+        "output_path": scene.output_path,
+        "status": scene.status,
     }
 
     # Load shots ordered by index
     shots_result = await session.execute(
         select(Shot)
-        .where(Shot.project_id == project.id)
+        .where(Shot.scene_id == scene.id)
         .order_by(Shot.shot_index)
     )
     shots = shots_result.scalars().all()
 
     # Load shot manifests
     sm_result = await session.execute(
-        select(ShotManifest).where(ShotManifest.project_id == project.id)
+        select(ShotManifest).where(ShotManifest.scene_id == scene.id)
     )
     manifests_by_idx = {sm.shot_index: sm for sm in sm_result.scalars().all()}
 
     # Load audio manifests
     am_result = await session.execute(
-        select(ShotAudioManifest).where(ShotAudioManifest.project_id == project.id)
+        select(ShotAudioManifest).where(ShotAudioManifest.scene_id == scene.id)
     )
     audio_by_idx = {am.shot_index: am for am in am_result.scalars().all()}
 
@@ -190,11 +190,11 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
             "audio_manifest": am_data,
         })
 
-    # Assets (if manifest project)
+    # Assets (if manifest scene)
     assets_data = None
-    if project.manifest_id:
+    if scene.manifest_id:
         assets_result = await session.execute(
-            select(Asset).where(Asset.manifest_id == project.manifest_id)
+            select(Asset).where(Asset.manifest_id == scene.manifest_id)
         )
         assets = assets_result.scalars().all()
         assets_data = []
@@ -209,7 +209,7 @@ async def build_snapshot(session: AsyncSession, project: Project) -> dict:
             })
 
     return {
-        "project": project_data,
+        "scene": scene_data,
         "shots": shot_list,
         "assets": assets_data,
     }
@@ -223,36 +223,36 @@ def compute_checkpoint_sha(snapshot_data: dict) -> str:
 
 async def create_checkpoint(
     session: AsyncSession,
-    project: Project,
+    scene: Scene,
     message: str,
     metadata: Optional[dict] = None,
-) -> "ProjectCheckpoint":
-    """Build snapshot, compute SHA, create checkpoint row, update project.head_sha.
+) -> "SceneCheckpoint":
+    """Build snapshot, compute SHA, create checkpoint row, update scene.head_sha.
 
     Does NOT commit — caller is responsible for committing the session.
     """
-    snapshot = await build_snapshot(session, project)
+    snapshot = await build_snapshot(session, scene)
     sha = compute_checkpoint_sha(snapshot)
 
-    parent_sha = project.head_sha  # None for first checkpoint
+    parent_sha = scene.head_sha  # None for first checkpoint
 
     # Skip if snapshot is unchanged (same SHA as current head)
     if sha == parent_sha:
         logger.info(
-            "Checkpoint skipped for project %s — snapshot unchanged (sha=%s): %s",
-            project.id, sha[:8], message,
+            "Checkpoint skipped for scene %s — snapshot unchanged (sha=%s): %s",
+            scene.id, sha[:8], message,
         )
         # Return existing checkpoint so callers don't break
         existing = await session.execute(
-            select(ProjectCheckpoint).where(
-                ProjectCheckpoint.project_id == project.id,
-                ProjectCheckpoint.sha == sha,
+            select(SceneCheckpoint).where(
+                SceneCheckpoint.scene_id == scene.id,
+                SceneCheckpoint.sha == sha,
             )
         )
         return existing.scalar_one()
 
-    checkpoint = ProjectCheckpoint(
-        project_id=project.id,
+    checkpoint = SceneCheckpoint(
+        scene_id=scene.id,
         sha=sha,
         parent_sha=parent_sha,
         snapshot_data=snapshot,
@@ -261,12 +261,12 @@ async def create_checkpoint(
     )
     session.add(checkpoint)
 
-    project.head_sha = sha
+    scene.head_sha = sha
     await session.flush()
 
     logger.info(
-        "Checkpoint %s created for project %s (parent=%s): %s",
-        sha[:8], project.id, parent_sha[:8] if parent_sha else "None", message,
+        "Checkpoint %s created for scene %s (parent=%s): %s",
+        sha[:8], scene.id, parent_sha[:8] if parent_sha else "None", message,
     )
     return checkpoint
 
@@ -327,16 +327,17 @@ def compute_clip_staleness(
 
 
 async def restore_from_snapshot(
-    session: AsyncSession, project: Project, snapshot: dict
+    session: AsyncSession, scene: Scene, snapshot: dict
 ) -> None:
-    """Restore project state from a snapshot, creating a forward-commit checkpoint.
+    """Restore scene state from a snapshot, creating a forward-commit checkpoint.
 
-    Restores Project fields, upserts/deletes Shot/Keyframe/VideoClip rows.
+    Restores Scene fields, upserts/deletes Shot/Keyframe/VideoClip rows.
     Does NOT commit — caller is responsible.
     """
-    proj_data = snapshot.get("project", {})
+    # Backward compat: accept both "scene" and legacy "project" keys
+    proj_data = snapshot.get("scene") or snapshot.get("project") or {}
 
-    # Restore project-level fields
+    # Restore scene-level fields
     restorable_fields = [
         "prompt", "title", "style", "aspect_ratio", "target_clip_duration",
         "target_shot_count", "total_duration", "text_model", "image_model",
@@ -345,11 +346,11 @@ async def restore_from_snapshot(
     ]
     for field in restorable_fields:
         if field in proj_data:
-            setattr(project, field, proj_data[field])
+            setattr(scene, field, proj_data[field])
 
     # Delete existing shots (cascades handled below manually)
     existing_shots = await session.execute(
-        select(Shot).where(Shot.project_id == project.id)
+        select(Shot).where(Shot.scene_id == scene.id)
     )
     for shot in existing_shots.scalars().all():
         # Delete keyframes
@@ -363,10 +364,10 @@ async def restore_from_snapshot(
         await session.delete(shot)
 
     # Delete shot manifests and audio manifests
-    sms = await session.execute(select(ShotManifest).where(ShotManifest.project_id == project.id))
+    sms = await session.execute(select(ShotManifest).where(ShotManifest.scene_id == scene.id))
     for sm in sms.scalars().all():
         await session.delete(sm)
-    ams = await session.execute(select(ShotAudioManifest).where(ShotAudioManifest.project_id == project.id))
+    ams = await session.execute(select(ShotAudioManifest).where(ShotAudioManifest.scene_id == scene.id))
     for am in ams.scalars().all():
         await session.delete(am)
 
@@ -376,7 +377,7 @@ async def restore_from_snapshot(
     for shot_data in snapshot.get("shots", []):
         shot = Shot(
             id=uuid.UUID(shot_data["shot_id"]) if shot_data.get("shot_id") else uuid.uuid4(),
-            project_id=project.id,
+            scene_id=scene.id,
             shot_index=shot_data["shot_index"],
             shot_description=shot_data.get("shot_description", ""),
             start_frame_prompt=shot_data.get("start_frame_prompt", ""),
@@ -420,7 +421,7 @@ async def restore_from_snapshot(
         sm_data = shot_data.get("shot_manifest")
         if sm_data:
             sm = ShotManifest(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=shot_data["shot_index"],
                 manifest_json=sm_data.get("manifest_json", {}),
                 composition_shot_type=sm_data.get("composition_shot_type"),
@@ -436,7 +437,7 @@ async def restore_from_snapshot(
         am_data = shot_data.get("audio_manifest")
         if am_data:
             am = ShotAudioManifest(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=shot_data["shot_index"],
                 dialogue_json=am_data.get("dialogue_json"),
                 sfx_json=am_data.get("sfx_json"),
@@ -448,16 +449,16 @@ async def restore_from_snapshot(
             session.add(am)
 
     await session.flush()
-    logger.info("Restored project %s from snapshot", project.id)
+    logger.info("Restored scene %s from snapshot", scene.id)
 
 
 def compute_diff(old_snapshot: dict, new_snapshot: dict) -> list[dict]:
     """Compute structured diff between two snapshots."""
     changes: list[dict] = []
 
-    # Compare project fields
-    old_proj = old_snapshot.get("project", {})
-    new_proj = new_snapshot.get("project", {})
+    # Compare scene fields (backward compat: accept both "scene" and "project" keys)
+    old_proj = old_snapshot.get("scene") or old_snapshot.get("project") or {}
+    new_proj = new_snapshot.get("scene") or new_snapshot.get("project") or {}
     for key in set(old_proj.keys()) | set(new_proj.keys()):
         if key == "id":
             continue
@@ -465,7 +466,7 @@ def compute_diff(old_snapshot: dict, new_snapshot: dict) -> list[dict]:
         new_val = new_proj.get(key)
         if old_val != new_val:
             changes.append({
-                "type": "project_field",
+                "type": "scene_field",
                 "field": key,
                 "old": str(old_val) if old_val is not None else None,
                 "new": str(new_val) if new_val is not None else None,
@@ -499,8 +500,8 @@ def extract_file_paths_from_snapshot(snapshot: dict) -> set[str]:
     """Walk snapshot extracting all file_path / local_path values."""
     paths: set[str] = set()
 
-    # Project output
-    proj = snapshot.get("project", {})
+    # Scene output (backward compat: accept both "scene" and "project" keys)
+    proj = snapshot.get("scene") or snapshot.get("project") or {}
     if proj.get("output_path"):
         paths.add(proj["output_path"])
 

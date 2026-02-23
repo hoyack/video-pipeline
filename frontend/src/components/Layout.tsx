@@ -6,16 +6,21 @@ interface LayoutProps {
 }
 
 const NAV_ITEMS: { href: string; label: string; match: (path: string) => boolean }[] = [
+  { href: "/dashboard", label: "Dashboard", match: (path) => path === "/dashboard" },
+  {
+    href: "/productions",
+    label: "Productions",
+    match: (path) => path.startsWith("/productions"),
+  },
   {
     href: "/",
-    label: "Projects",
+    label: "Scenes",
     match: (path) =>
       path === "/" ||
       path === "/generate" ||
-      path.startsWith("/projects/"),
+      path.startsWith("/scenes/"),
   },
   { href: "/manifests", label: "Manifests", match: (path) => path.startsWith("/manifests") },
-  { href: "/dashboard", label: "Dashboard", match: (path) => path === "/dashboard" },
   { href: "/settings", label: "Settings", match: (path) => path === "/settings" },
 ];
 

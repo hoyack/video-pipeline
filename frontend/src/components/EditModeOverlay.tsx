@@ -104,6 +104,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [stitchMessage, setStitchMessage] = useState<string | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(!detail.prompt);
   const [manifestExpanded, setManifestExpanded] = useState(!detail.manifest_id);
+  const [scenesExpanded, setScenesExpanded] = useState(true);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -957,6 +958,48 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </div>
       )}
 
+      {/* Final Video */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-medium text-gray-400">Final Video</h3>
+          <div className="flex items-center gap-2">
+            {detail.status === "complete" && (
+              <a
+                href={`${getDownloadUrl(detail.project_id)}?dl=1`}
+                className="rounded px-2.5 py-1 text-[11px] font-medium text-green-300 bg-green-900/50 hover:bg-green-800/50 transition-colors"
+              >
+                Download
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={handleRestitch}
+              disabled={stitching || regenScope !== null || bgOpPending !== null}
+              className={clsx(
+                "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+                stitching
+                  ? "bg-gray-800 text-gray-500"
+                  : "bg-green-900/50 text-green-300 hover:bg-green-800/50",
+              )}
+            >
+              {stitching ? "Stitching..." : detail.status === "complete" ? "Re-stitch" : "Stitch"}
+            </button>
+          </div>
+        </div>
+        {detail.status === "complete" ? (
+          <video
+            src={`${getDownloadUrl(detail.project_id)}?v=${detail.head_sha ?? ""}`}
+            className="w-full rounded-lg border border-gray-700"
+            controls
+            preload="metadata"
+          />
+        ) : (
+          <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-950 text-xs text-gray-600">
+            No final video yet — stitch when all scenes have clips
+          </div>
+        )}
+      </div>
+
       {/* Prompt — collapsible */}
       <div className="rounded-lg border border-gray-800 bg-gray-900/50">
         <button
@@ -1021,48 +1064,6 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         )}
       </div>
 
-      {/* Final Video */}
-      <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-medium text-gray-400">Final Video</h3>
-          <div className="flex items-center gap-2">
-            {detail.status === "complete" && (
-              <a
-                href={`${getDownloadUrl(detail.project_id)}?dl=1`}
-                className="rounded px-2.5 py-1 text-[11px] font-medium text-green-300 bg-green-900/50 hover:bg-green-800/50 transition-colors"
-              >
-                Download
-              </a>
-            )}
-            <button
-              type="button"
-              onClick={handleRestitch}
-              disabled={stitching || regenScope !== null || bgOpPending !== null}
-              className={clsx(
-                "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-                stitching
-                  ? "bg-gray-800 text-gray-500"
-                  : "bg-green-900/50 text-green-300 hover:bg-green-800/50",
-              )}
-            >
-              {stitching ? "Stitching..." : detail.status === "complete" ? "Re-stitch" : "Stitch"}
-            </button>
-          </div>
-        </div>
-        {detail.status === "complete" ? (
-          <video
-            src={`${getDownloadUrl(detail.project_id)}?v=${detail.head_sha ?? ""}`}
-            className="w-full rounded-lg border border-gray-700"
-            controls
-            preload="metadata"
-          />
-        ) : (
-          <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-950 text-xs text-gray-600">
-            No final video yet — stitch when all scenes have clips
-          </div>
-        )}
-      </div>
-
       {/* Asset Manifest — collapsible */}
       <div className="rounded-lg border border-gray-800 bg-gray-900/50">
         <button
@@ -1100,205 +1101,112 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         )}
       </div>
 
-      {/* Scene Count */}
-      <div>
-        <label htmlFor="edit-sceneCount" className="mb-2 block text-sm font-medium text-gray-300">
-          Scenes: {sceneCount}
-          {clipDuration
-            ? <span className="text-gray-500"> · {sceneCount * clipDuration}s total</span>
-            : <span className="text-gray-500"> · select a scene length</span>
-          }
-          {activeScenes.length !== sceneCount && <span className="text-gray-500"> · {activeScenes.length} active</span>}
-          {syntheticCount > 0 && <span className="text-gray-500">, {syntheticCount} new</span>}
-          {removedScenes.size > 0 && <span className="text-gray-500">, {removedScenes.size} removed</span>}
-        </label>
-        <input
-          id="edit-sceneCount"
-          type="range"
-          min={1}
-          max={50}
-          step={1}
-          value={sceneCount}
-          onChange={(e) => {
-            const count = Number(e.target.value);
-            setSceneCount(count);
-            setTotalDuration(count * clipDuration);
-          }}
-          className="dark-slider w-full"
-          style={sliderFill(sceneCount, 1, 50)}
-        />
-        <div className="mt-1 flex justify-between text-xs text-gray-600">
-          <span>1</span>
-          <span>50</span>
-        </div>
-      </div>
-
-      {/* Scene Edits */}
-      {allScenes.length > 0 && (
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-gray-400">
-              Scenes ({detail.scenes.length}{syntheticCount > 0 ? ` + ${syntheticCount} new` : ""})
-              {removedScenes.size > 0 && (
-                <span className="ml-1 text-red-400">
-                  ({removedScenes.size} removed)
-                </span>
-              )}
-            </h3>
-            <button
-              type="button"
-              onClick={expandedScenes.size > 0 ? collapseAllScenes : expandAllScenes}
-              className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              {expandedScenes.size > 0 ? "Collapse All" : "Expand All"}
-            </button>
+      {/* Scenes — collapsible */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50">
+        <button
+          type="button"
+          onClick={() => setScenesExpanded(!scenesExpanded)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Scenes</h3>
+            <span className="text-xs text-gray-500 truncate">
+              {sceneCount} scene{sceneCount !== 1 ? "s" : ""}
+              {clipDuration ? ` · ${sceneCount * clipDuration}s total` : ""}
+              {syntheticCount > 0 ? ` · ${syntheticCount} new` : ""}
+              {removedScenes.size > 0 ? ` · ${removedScenes.size} removed` : ""}
+            </span>
           </div>
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={sceneOrder} strategy={verticalListSortingStrategy}>
-              <div className="grid gap-3">
-                {sceneOrder.map((sceneIdx, position) => {
-                  const scene = scenesByIndex.get(sceneIdx);
-                  if (!scene) return null;
-                  return (
-                    <SortableSceneCard
-                      id={sceneIdx}
-                      key={sceneIdx}
-                      scene={scene}
-                      displayIndex={position + 1}
-                      edits={sceneEdits[scene.scene_index] || {}}
-                      onChange={handleSceneChange}
-                      removed={removedScenes.has(scene.scene_index)}
-                      onRemove={handleRemoveScene}
-                      onRestore={handleRestoreScene}
-                      canRemove={activeScenes.length + syntheticCount > 1}
-                      projectId={detail.project_id}
-                      onAssetChanged={handleAssetChanged}
-                      onRegenStarted={handleRegenStarted}
-                      textModel={textModel}
-                      videoModel={videoModel}
-                      imageModel={imageModel}
-                      allSceneEdits={sceneEdits}
-                      prompt={prompt}
-                      onGenerateScene={handleGenerateScene}
-                      isGeneratingAssets={generatingSceneIndices.has(scene.scene_index)}
-                      wsConnected={wsConnected}
-                      expanded={expandedScenes.has(scene.scene_index)}
-                      onToggleExpand={() => toggleScene(scene.scene_index)}
-                    />
-                  );
-                })}
+          <svg
+            className={clsx(
+              "h-4 w-4 text-gray-500 transition-transform shrink-0",
+              scenesExpanded && "rotate-180",
+            )}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {scenesExpanded && (
+          <div className="px-4 pb-4 space-y-4">
+            {/* Scene Count Slider */}
+            <div>
+              <input
+                id="edit-sceneCount"
+                type="range"
+                min={1}
+                max={50}
+                step={1}
+                value={sceneCount}
+                onChange={(e) => {
+                  const count = Number(e.target.value);
+                  setSceneCount(count);
+                  setTotalDuration(count * clipDuration);
+                }}
+                className="dark-slider w-full"
+                style={sliderFill(sceneCount, 1, 50)}
+              />
+              <div className="mt-1 flex justify-between text-xs text-gray-600">
+                <span>1</span>
+                <span>50</span>
               </div>
-            </SortableContext>
-          </DndContext>
-        </div>
-      )}
-
-      {/* Generate toolbar */}
-      {(() => {
-        const busy = regenScope !== null || bgOpPending !== null;
-
-        const storyboardDisabled = busy || !textModel;
-        const keyframesDisabled = busy || !textModel || !imageModel;
-        const clipsDisabled = busy || !textModel || !imageModel || !videoModel;
-        const videoDisabled = busy || !videoModel;
-        const allPhasesDisabled = busy || !textModel || !imageModel || !videoModel;
-
-        const phaseButtons: Array<{
-          scope: "storyboard" | "keyframes" | "clips" | "stitch_only";
-          label: string;
-          disabled: boolean;
-          activeClass: string;
-        }> = [
-          {
-            scope: "storyboard", label: "Storyboard", disabled: storyboardDisabled,
-            activeClass: "border-violet-600 bg-violet-900/50 text-violet-300 hover:bg-violet-800/50",
-          },
-          {
-            scope: "keyframes", label: "Keyframes", disabled: keyframesDisabled,
-            activeClass: "border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50",
-          },
-          {
-            scope: "clips", label: "Clips", disabled: clipsDisabled,
-            activeClass: "border-teal-600 bg-teal-900/50 text-teal-300 hover:bg-teal-800/50",
-          },
-          {
-            scope: "stitch_only", label: "Video", disabled: videoDisabled,
-            activeClass: "border-green-600 bg-green-900/50 text-green-300 hover:bg-green-800/50",
-          },
-        ];
-
-        const allPhasesActive = regenScope === "all_phases" || bgOpPending === "all_phases";
-
-        return (
-          <div className="space-y-3">
-            <span className="text-xs font-medium text-gray-400">Generate:</span>
-            <div className="grid grid-cols-4 gap-3">
-              {phaseButtons.map(({ scope, label, disabled, activeClass }) => {
-                const isActive = regenScope === scope || bgOpPending === scope;
-                return (
-                  <button
-                    key={scope}
-                    type="button"
-                    onClick={isActive ? handleStopPipeline : () => handleRegenerate(scope)}
-                    disabled={disabled && !isActive}
-                    className={clsx(
-                      "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
-                      isActive
-                        ? "border-red-600 bg-red-900/50 text-red-300 hover:bg-red-800/50"
-                        : disabled
-                          ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
-                          : activeClass,
-                    )}
-                  >
-                    {isActive ? "Cancel" : label}
-                  </button>
-                );
-              })}
             </div>
-            <button
-              type="button"
-              onClick={allPhasesActive ? handleStopPipeline : () => handleRegenerate("all_phases")}
-              disabled={allPhasesDisabled && !allPhasesActive}
-              className={clsx(
-                "w-full rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
-                allPhasesActive
-                  ? "border-red-600 bg-red-900/50 text-red-300 hover:bg-red-800/50"
-                  : allPhasesDisabled
-                    ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
-                    : "border-indigo-600 bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50",
-              )}
-            >
-              {allPhasesActive ? "Cancel" : "All Phases"}
-            </button>
+
+            {/* Scene List */}
+            {allScenes.length > 0 && (
+              <div>
+                <div className="mb-3 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={expandedScenes.size > 0 ? collapseAllScenes : expandAllScenes}
+                    className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    {expandedScenes.size > 0 ? "Collapse All" : "Expand All"}
+                  </button>
+                </div>
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={sceneOrder} strategy={verticalListSortingStrategy}>
+                    <div className="grid gap-3">
+                      {sceneOrder.map((sceneIdx, position) => {
+                        const scene = scenesByIndex.get(sceneIdx);
+                        if (!scene) return null;
+                        return (
+                          <SortableSceneCard
+                            id={sceneIdx}
+                            key={sceneIdx}
+                            scene={scene}
+                            displayIndex={position + 1}
+                            edits={sceneEdits[scene.scene_index] || {}}
+                            onChange={handleSceneChange}
+                            removed={removedScenes.has(scene.scene_index)}
+                            onRemove={handleRemoveScene}
+                            onRestore={handleRestoreScene}
+                            canRemove={activeScenes.length + syntheticCount > 1}
+                            projectId={detail.project_id}
+                            onAssetChanged={handleAssetChanged}
+                            onRegenStarted={handleRegenStarted}
+                            textModel={textModel}
+                            videoModel={videoModel}
+                            imageModel={imageModel}
+                            allSceneEdits={sceneEdits}
+                            prompt={prompt}
+                            onGenerateScene={handleGenerateScene}
+                            isGeneratingAssets={generatingSceneIndices.has(scene.scene_index)}
+                            wsConnected={wsConnected}
+                            expanded={expandedScenes.has(scene.scene_index)}
+                            onToggleExpand={() => toggleScene(scene.scene_index)}
+                          />
+                        );
+                      })}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              </div>
+            )}
           </div>
-        );
-      })()}
-
-      {/* WebSocket progress bar — shown during background operations */}
-      {bgOpPending && (
-        <RegenProgressBar
-          scope={bgOpPending}
-          phase={wsProgress.phase}
-          totalScenes={wsProgress.totalScenes}
-          completedScenes={wsProgress.completedScenes}
-          currentSceneIndex={wsProgress.currentSceneIndex}
-          currentStatus={wsProgress.currentStatus}
-          wsConnected={wsConnected}
-          completedPhases={wsProgress.completedPhases}
-        />
-      )}
-
-      {/* Cost Estimate */}
-      {showCost && <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
-        <div>
-          Estimated cost: ~${costEstimate.toFixed(2)}
-        </div>
-        <div className="mt-1 text-xs text-gray-500">
-          {sceneCount} scene{sceneCount !== 1 ? "s" : ""}
-          &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img
-          &middot; ${videoCostPerSecond.toFixed(2)}/s video{enableAudio ? " (with audio)" : ""}
-        </div>
-      </div>}
+        )}
+      </div>
 
       {/* Models & Settings — collapsible */}
       <div className="rounded-lg border border-gray-800 bg-gray-900/50">
@@ -1533,6 +1441,113 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           </div>
         )}
       </div>
+
+      {/* Generate toolbar */}
+      {(() => {
+        const busy = regenScope !== null || bgOpPending !== null;
+
+        const storyboardDisabled = busy || !textModel;
+        const keyframesDisabled = busy || !textModel || !imageModel;
+        const clipsDisabled = busy || !textModel || !imageModel || !videoModel;
+        const videoDisabled = busy || !videoModel;
+        const allPhasesDisabled = busy || !textModel || !imageModel || !videoModel;
+
+        const phaseButtons: Array<{
+          scope: "storyboard" | "keyframes" | "clips" | "stitch_only";
+          label: string;
+          disabled: boolean;
+          activeClass: string;
+        }> = [
+          {
+            scope: "storyboard", label: "Storyboard", disabled: storyboardDisabled,
+            activeClass: "border-violet-600 bg-violet-900/50 text-violet-300 hover:bg-violet-800/50",
+          },
+          {
+            scope: "keyframes", label: "Keyframes", disabled: keyframesDisabled,
+            activeClass: "border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50",
+          },
+          {
+            scope: "clips", label: "Clips", disabled: clipsDisabled,
+            activeClass: "border-teal-600 bg-teal-900/50 text-teal-300 hover:bg-teal-800/50",
+          },
+          {
+            scope: "stitch_only", label: "Video", disabled: videoDisabled,
+            activeClass: "border-green-600 bg-green-900/50 text-green-300 hover:bg-green-800/50",
+          },
+        ];
+
+        const allPhasesActive = regenScope === "all_phases" || bgOpPending === "all_phases";
+
+        return (
+          <div className="space-y-3">
+            <span className="text-xs font-medium text-gray-400">Generate:</span>
+            <div className="grid grid-cols-4 gap-3">
+              {phaseButtons.map(({ scope, label, disabled, activeClass }) => {
+                const isActive = regenScope === scope || bgOpPending === scope;
+                return (
+                  <button
+                    key={scope}
+                    type="button"
+                    onClick={isActive ? handleStopPipeline : () => handleRegenerate(scope)}
+                    disabled={disabled && !isActive}
+                    className={clsx(
+                      "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
+                      isActive
+                        ? "border-red-600 bg-red-900/50 text-red-300 hover:bg-red-800/50"
+                        : disabled
+                          ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
+                          : activeClass,
+                    )}
+                  >
+                    {isActive ? "Cancel" : label}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={allPhasesActive ? handleStopPipeline : () => handleRegenerate("all_phases")}
+              disabled={allPhasesDisabled && !allPhasesActive}
+              className={clsx(
+                "w-full rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
+                allPhasesActive
+                  ? "border-red-600 bg-red-900/50 text-red-300 hover:bg-red-800/50"
+                  : allPhasesDisabled
+                    ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
+                    : "border-indigo-600 bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50",
+              )}
+            >
+              {allPhasesActive ? "Cancel" : "All Phases"}
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* WebSocket progress bar — shown during background operations */}
+      {bgOpPending && (
+        <RegenProgressBar
+          scope={bgOpPending}
+          phase={wsProgress.phase}
+          totalScenes={wsProgress.totalScenes}
+          completedScenes={wsProgress.completedScenes}
+          currentSceneIndex={wsProgress.currentSceneIndex}
+          currentStatus={wsProgress.currentStatus}
+          wsConnected={wsConnected}
+          completedPhases={wsProgress.completedPhases}
+        />
+      )}
+
+      {/* Cost Estimate */}
+      {showCost && <div className="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-300">
+        <div>
+          Estimated cost: ~${costEstimate.toFixed(2)}
+        </div>
+        <div className="mt-1 text-xs text-gray-500">
+          {sceneCount} scene{sceneCount !== 1 ? "s" : ""}
+          &middot; ${(IMAGE_MODELS.find((m) => m.id === imageModel)?.costPerImage ?? 0).toFixed(2)}/img
+          &middot; ${videoCostPerSecond.toFixed(2)}/s video{enableAudio ? " (with audio)" : ""}
+        </div>
+      </div>}
 
       {/* Commit message */}
       <div>

@@ -22,7 +22,7 @@ interface ShotEditorCardProps {
   removed: boolean;
   onRestore: (shotIndex: number) => void;
   canRemove: boolean;
-  projectId?: string;
+  sceneId?: string;
   onAssetChanged?: () => void;
   /** Called when a regen fires — passes the pre-regen head_sha for revert-on-cancel */
   onRegenStarted?: (headSha: string | null) => void;
@@ -32,9 +32,9 @@ interface ShotEditorCardProps {
   videoModel?: string;
   /** Current image model selection from edit mode (used for keyframe regen) */
   imageModel?: string;
-  /** All shot edits across the project — for generate-shot-fields neighbor context */
+  /** All shot edits across the scene — for generate-shot-fields neighbor context */
   allShotEdits?: Record<number, Record<string, string>>;
-  /** Current project prompt from edit form (may differ from saved DB value) */
+  /** Current scene prompt from edit form (may differ from saved DB value) */
   prompt?: string;
   /** Called to generate a complete new shot (text + assets) from an empty slot */
   onGenerateShot?: (shotIndex: number) => Promise<void>;
@@ -224,7 +224,7 @@ export function ShotEditorCard({
   removed,
   onRestore,
   canRemove,
-  projectId,
+  sceneId,
   onAssetChanged,
   onRegenStarted,
   textModel,
@@ -314,7 +314,7 @@ export function ShotEditorCard({
   }, [pollingTarget, shot.start_keyframe_url, shot.end_keyframe_url, shot.clip_url]);
 
   async function handleRegenerate(target: string) {
-    if (!projectId) return;
+    if (!sceneId) return;
     setRegenerating(target);
     setRegenQueued(null);
     setActionError(null);
@@ -339,7 +339,7 @@ export function ShotEditorCard({
       baselineUrl.current = getUrlForTarget(target) ?? null;
       pollCount.current = 0;
 
-      const resp = await regenerateShot(projectId, idx, {
+      const resp = await regenerateShot(sceneId, idx, {
         targets: [target],
         skip_checkpoint: true,
         ...(promptOverrides && { prompt_overrides: promptOverrides }),
@@ -365,10 +365,10 @@ export function ShotEditorCard({
   }
 
   async function handleUploadKeyframe(position: string, file: File) {
-    if (!projectId) return;
+    if (!sceneId) return;
     setActionError(null);
     try {
-      await uploadKeyframe(projectId, idx, position, file);
+      await uploadKeyframe(sceneId, idx, position, file);
       onAssetChanged?.();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Upload failed");
@@ -376,10 +376,10 @@ export function ShotEditorCard({
   }
 
   async function handleUploadClip(file: File) {
-    if (!projectId) return;
+    if (!sceneId) return;
     setActionError(null);
     try {
-      await uploadClip(projectId, idx, file);
+      await uploadClip(sceneId, idx, file);
       onAssetChanged?.();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Upload failed");
@@ -387,10 +387,10 @@ export function ShotEditorCard({
   }
 
   async function handleDeleteKeyframe(position: string) {
-    if (!projectId) return;
+    if (!sceneId) return;
     setActionError(null);
     try {
-      await deleteShotKeyframe(projectId, idx, position);
+      await deleteShotKeyframe(sceneId, idx, position);
       onAssetChanged?.();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Delete failed");
@@ -398,10 +398,10 @@ export function ShotEditorCard({
   }
 
   async function handleDeleteClip() {
-    if (!projectId) return;
+    if (!sceneId) return;
     setActionError(null);
     try {
-      await deleteShotClip(projectId, idx);
+      await deleteShotClip(sceneId, idx);
       onAssetChanged?.();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Delete failed");
@@ -409,11 +409,11 @@ export function ShotEditorCard({
   }
 
   async function handleTextRegen(field: string) {
-    if (!projectId) return;
+    if (!sceneId) return;
     setRegenTextFields((prev) => new Set(prev).add(field));
     setActionError(null);
     try {
-      const resp = await regenerateShotText(projectId, idx, {
+      const resp = await regenerateShotText(sceneId, idx, {
         field,
         extra_context: textExtraContext[field]?.trim() || undefined,
         text_model: textModel,
@@ -545,7 +545,7 @@ export function ShotEditorCard({
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          {isNewShot && projectId && onGenerateShot && (
+          {isNewShot && sceneId && onGenerateShot && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); handleGenerateFullShot(); }}
@@ -651,7 +651,7 @@ export function ShotEditorCard({
               </div>
             )}
           </div>
-          {projectId && (
+          {sceneId && (
             <div className="mt-1">
               <div className="flex gap-1">
                 <button
@@ -740,7 +740,7 @@ export function ShotEditorCard({
               </div>
             )}
           </div>
-          {projectId && (
+          {sceneId && (
             <div className="mt-1">
               <div className="flex gap-1">
                 <button
@@ -841,7 +841,7 @@ export function ShotEditorCard({
           <span className="text-[11px] text-amber-400">Video clip is stale — prompt has changed</span>
         </div>
       )}
-      {projectId && (
+      {sceneId && (
         <div className="mb-2">
           <div className="flex gap-1">
             <button
@@ -904,7 +904,7 @@ export function ShotEditorCard({
         originalValue={getOriginal("shot_description", shot.description)}
         onChange={(v) => onChange(idx, "shot_description", v)}
         onClear={() => onChange(idx, "shot_description", "")}
-        onRegen={projectId && textModel ? () => handleTextRegen("shot_description") : undefined}
+        onRegen={sceneId && textModel ? () => handleTextRegen("shot_description") : undefined}
         regenerating={regenTextFields.has("shot_description") || genStatus === "generating_text"}
         showContext={showTextContextFor === "shot_description"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "shot_description" ? null : "shot_description")}
@@ -919,7 +919,7 @@ export function ShotEditorCard({
         onChange={(v) => onChange(idx, "start_frame_prompt", v)}
         onClear={() => onChange(idx, "start_frame_prompt", "")}
         staleness={shot.start_keyframe_staleness}
-        onRegen={projectId && textModel ? () => handleTextRegen("start_frame_prompt") : undefined}
+        onRegen={sceneId && textModel ? () => handleTextRegen("start_frame_prompt") : undefined}
         regenerating={regenTextFields.has("start_frame_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "start_frame_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "start_frame_prompt" ? null : "start_frame_prompt")}
@@ -934,7 +934,7 @@ export function ShotEditorCard({
         onChange={(v) => onChange(idx, "end_frame_prompt", v)}
         onClear={() => onChange(idx, "end_frame_prompt", "")}
         staleness={shot.end_keyframe_staleness}
-        onRegen={projectId && textModel ? () => handleTextRegen("end_frame_prompt") : undefined}
+        onRegen={sceneId && textModel ? () => handleTextRegen("end_frame_prompt") : undefined}
         regenerating={regenTextFields.has("end_frame_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "end_frame_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "end_frame_prompt" ? null : "end_frame_prompt")}
@@ -949,7 +949,7 @@ export function ShotEditorCard({
         onChange={(v) => onChange(idx, "video_motion_prompt", v)}
         onClear={() => onChange(idx, "video_motion_prompt", "")}
         staleness={shot.clip_staleness}
-        onRegen={projectId && textModel ? () => handleTextRegen("video_motion_prompt") : undefined}
+        onRegen={sceneId && textModel ? () => handleTextRegen("video_motion_prompt") : undefined}
         regenerating={regenTextFields.has("video_motion_prompt") || genStatus === "generating_text"}
         showContext={showTextContextFor === "video_motion_prompt"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "video_motion_prompt" ? null : "video_motion_prompt")}
@@ -963,7 +963,7 @@ export function ShotEditorCard({
         originalValue={getOriginal("transition_notes", shot.transition_notes)}
         onChange={(v) => onChange(idx, "transition_notes", v)}
         onClear={() => onChange(idx, "transition_notes", "")}
-        onRegen={projectId && textModel ? () => handleTextRegen("transition_notes") : undefined}
+        onRegen={sceneId && textModel ? () => handleTextRegen("transition_notes") : undefined}
         regenerating={regenTextFields.has("transition_notes") || genStatus === "generating_text"}
         showContext={showTextContextFor === "transition_notes"}
         onToggleContext={() => setShowTextContextFor((prev) => prev === "transition_notes" ? null : "transition_notes")}
@@ -1080,7 +1080,7 @@ export function ShotEditorCard({
             value={getValue(editorField, fieldOriginalMap[editorField])}
             onChange={(v) => onChange(idx, editorField, v)}
             onClose={() => setEditorField(null)}
-            onRegen={projectId && textModel ? () => handleTextRegen(editorField) : undefined}
+            onRegen={sceneId && textModel ? () => handleTextRegen(editorField) : undefined}
             regenerating={regenTextFields.has(editorField)}
             extraContext={textExtraContext[editorField] ?? ""}
             onExtraContextChange={(v) => setTextExtraContext(prev => ({ ...prev, [editorField]: v }))}

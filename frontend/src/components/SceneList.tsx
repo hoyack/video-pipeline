@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { listProjects, deleteProject } from "../api/client.ts";
-import type { ProjectListItem } from "../api/types.ts";
+import { listScenes, deleteScene } from "../api/client.ts";
+import type { SceneListItem } from "../api/types.ts";
 import { estimateCost, TERMINAL_STATUSES } from "../lib/constants.ts";
 import { StatusBadge } from "./StatusBadge.tsx";
-import { ProjectCard } from "./ProjectCard.tsx";
+import { SceneCard } from "./SceneCard.tsx";
 import { useShowCost } from "../hooks/useShowCost.tsx";
 
 type ViewMode = "list" | "cards";
 
-const STORAGE_KEY = "vidpipe_projects_view";
+const STORAGE_KEY = "vidpipe_scenes_view";
 
 function getInitialViewMode(): ViewMode {
   try {
@@ -18,7 +18,7 @@ function getInitialViewMode(): ViewMode {
   return "list";
 }
 
-function formatCost(item: ProjectListItem): string | null {
+function formatCost(item: SceneListItem): string | null {
   if (!item.total_duration || !item.clip_duration || !item.text_model || !item.image_model || !item.video_model) {
     return null;
   }
@@ -33,16 +33,16 @@ function formatCost(item: ProjectListItem): string | null {
   return `$${cost.toFixed(2)}`;
 }
 
-interface ProjectListProps {
-  onSelectProject: (projectId: string) => void;
-  onNewProject: () => void;
+interface SceneListProps {
+  onSelectScene: (sceneId: string) => void;
+  onNewScene: () => void;
   onNewDraft?: () => void;
 }
 
-export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: ProjectListProps) {
+export function SceneList({ onSelectScene, onNewScene, onNewDraft }: SceneListProps) {
   const { showCost } = useShowCost();
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
-  const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [scenes, setScenes] = useState<SceneListItem[]>([]);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(12);
   const [total, setTotal] = useState(0);
@@ -54,28 +54,28 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
 
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
-  const fetchProjects = useCallback(async () => {
+  const fetchScenes = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await listProjects({
+      const data = await listScenes({
         page,
         per_page: perPage,
         view: viewMode === "cards" ? "cards" : undefined,
         status: statusFilter || undefined,
       });
-      setProjects(data.items);
+      setScenes(data.items);
       setTotal(data.total);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load projects");
+      setError(err instanceof Error ? err.message : "Failed to load scenes");
     } finally {
       setLoading(false);
     }
   }, [page, perPage, viewMode, statusFilter]);
 
   useEffect(() => {
-    fetchProjects();
-  }, [fetchProjects]);
+    fetchScenes();
+  }, [fetchScenes]);
 
   // Persist view mode
   useEffect(() => {
@@ -94,16 +94,16 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
   };
 
   // Delete flow
-  const handleDelete = async (projectId: string) => {
+  const handleDelete = async (sceneId: string) => {
     setDeleteError(null);
     try {
-      await deleteProject(projectId);
+      await deleteScene(sceneId);
       // Optimistically remove from list
-      setProjects((prev) => prev.filter((p) => p.project_id !== projectId));
+      setScenes((prev) => prev.filter((p) => p.scene_id !== sceneId));
       setTotal((prev) => prev - 1);
       setDeleteConfirm(null);
       // If we deleted the last item on this page, go back
-      if (projects.length === 1 && page > 1) {
+      if (scenes.length === 1 && page > 1) {
         setPage((p) => p - 1);
       }
     } catch (err) {
@@ -123,16 +123,16 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
     </svg>
   );
 
-  if (loading && projects.length === 0) {
-    return <p className="text-center text-sm text-gray-500">Loading projects...</p>;
+  if (loading && scenes.length === 0) {
+    return <p className="text-center text-sm text-gray-500">Loading scenes...</p>;
   }
 
-  if (error && projects.length === 0) {
+  if (error && scenes.length === 0) {
     return (
       <div className="text-center">
         <p className="text-sm text-red-400">{error}</p>
         <button
-          onClick={fetchProjects}
+          onClick={fetchScenes}
           className="mt-2 text-sm text-blue-400 hover:text-blue-300"
         >
           Retry
@@ -144,7 +144,7 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
   if (total === 0 && !loading && !statusFilter) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">No projects yet.</p>
+        <p className="text-gray-500">No scenes yet.</p>
         <p className="mt-1 text-sm text-gray-600">
           Create one from the Generate tab.
         </p>
@@ -158,9 +158,9 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
       <div className="mb-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-white">Projects</h1>
+            <h1 className="text-2xl font-bold text-white">Scenes</h1>
             <button
-              onClick={onNewProject}
+              onClick={onNewScene}
               className="rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
             >
               + New
@@ -239,7 +239,7 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
       {/* No results with filter active */}
       {total === 0 && !loading && statusFilter && (
         <div className="text-center py-12">
-          <p className="text-gray-500">No projects with status "{statusFilter}".</p>
+          <p className="text-gray-500">No scenes with status "{statusFilter}".</p>
           <button
             onClick={() => handleStatusFilterChange("")}
             className="mt-2 text-sm text-blue-400 hover:text-blue-300"
@@ -257,12 +257,12 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
       {/* Cards view */}
       {viewMode === "cards" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {projects.map((p) => (
-            <ProjectCard
-              key={p.project_id}
-              project={p}
-              onClick={() => onSelectProject(p.project_id)}
-              onDelete={() => setDeleteConfirm(p.project_id)}
+          {scenes.map((p) => (
+            <SceneCard
+              key={p.scene_id}
+              scene={p}
+              onClick={() => onSelectScene(p.scene_id)}
+              onDelete={() => setDeleteConfirm(p.scene_id)}
             />
           ))}
         </div>
@@ -290,13 +290,13 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
               </tr>
             </thead>
             <tbody>
-              {projects.map((p) => {
+              {scenes.map((p) => {
                 const cost = formatCost(p);
                 const canDelete = TERMINAL_STATUSES.has(p.status);
                 return (
                   <tr
-                    key={p.project_id}
-                    onClick={() => onSelectProject(p.project_id)}
+                    key={p.scene_id}
+                    onClick={() => onSelectScene(p.scene_id)}
                     className="group cursor-pointer border-b border-gray-800/50 hover:bg-gray-900/80 transition-colors"
                   >
                     <td className="px-4 py-2.5 text-gray-200 max-w-md truncate">
@@ -316,10 +316,10 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setDeleteConfirm(p.project_id);
+                            setDeleteConfirm(p.scene_id);
                           }}
                           className="text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-                          title="Delete project"
+                          title="Delete scene"
                         >
                           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
@@ -376,10 +376,10 @@ export function ProjectList({ onSelectProject, onNewProject, onNewDraft }: Proje
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-white">Delete project?</h3>
+            <h3 className="text-lg font-semibold text-white">Delete scene?</h3>
             <p className="mt-2 text-sm text-gray-400">
               This will permanently remove all generated keyframes, video clips, and output
-              files. The project record will be kept for cost tracking.
+              files. The scene record will be kept for cost tracking.
             </p>
             {deleteError && (
               <p className="mt-2 text-sm text-red-400">{deleteError}</p>

@@ -18,7 +18,7 @@ from typing import Callable, Dict, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Project, PipelineRun, Shot, Keyframe, VideoClip, AssetAppearance, ShotManifest as ShotManifestModel, ShotAudioManifest as ShotAudioManifestModel
+from vidpipe.db.models import Scene, PipelineRun, Shot, Keyframe, VideoClip, AssetAppearance, ShotManifest as ShotManifestModel, ShotAudioManifest as ShotAudioManifestModel
 from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
 from vidpipe.orchestrator.state import get_resume_step
 from vidpipe.pipeline.storyboard import generate_storyboard
@@ -46,26 +46,26 @@ class PipelineStaged(Exception):
 
 
 async def _generate_expansion_if_needed(
-    session: AsyncSession, project: Project, text_adapter=None,
+    session: AsyncSession, scene: Scene, text_adapter=None,
 ) -> None:
     """Generate storyboard entries for expansion shots if needed.
 
-    After a fork with delete-then-expand, the project may have fewer Shot
+    After a fork with delete-then-expand, the scene may have fewer Shot
     records than target_shot_count. This generates the missing shots using
     the existing storyboard as context, creating Shot records and updating
     storyboard_raw before keyframing begins.
 
-    For manifest-aware projects (manifest_id set), generates enhanced shots
+    For manifest-aware scenes (manifest_id set), generates enhanced shots
     with shot_manifest and audio_manifest, creating ShotManifest and
     ShotAudioManifest rows for the new shots.
     """
-    target = project.target_shot_count or 0
+    target = scene.target_shot_count or 0
     if target <= 0:
         return
 
     # Count existing shots
     result = await session.execute(
-        select(func.count(Shot.id)).where(Shot.project_id == project.id)
+        select(func.count(Shot.id)).where(Shot.scene_id == scene.id)
     )
     existing_count = result.scalar() or 0
 
@@ -74,33 +74,33 @@ async def _generate_expansion_if_needed(
 
     num_new = target - existing_count
     logger.info(
-        f"Project {project.id}: expanding storyboard — "
+        f"Scene {scene.id}: expanding storyboard — "
         f"{existing_count} shots exist, {target} needed, generating {num_new}"
     )
 
     from vidpipe.api.routes import _generate_expansion_shots
 
     kept_sb_shots = []
-    if project.storyboard_raw and "shots" in project.storyboard_raw:
-        kept_sb_shots = project.storyboard_raw["shots"]
+    if scene.storyboard_raw and "shots" in scene.storyboard_raw:
+        kept_sb_shots = scene.storyboard_raw["shots"]
 
-    # For manifest-aware projects, load assets and use enhanced schema
+    # For manifest-aware scenes, load assets and use enhanced schema
     asset_registry_block = None
-    if project.manifest_id:
+    if scene.manifest_id:
         from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry
-        assets = await load_manifest_assets(session, project.manifest_id)
+        assets = await load_manifest_assets(session, scene.manifest_id)
         if assets:
             asset_registry_block = format_asset_registry(assets)
 
     new_shot_data = await _generate_expansion_shots(
-        project, kept_sb_shots, num_new, start_index=existing_count,
+        scene, kept_sb_shots, num_new, start_index=existing_count,
         asset_registry_block=asset_registry_block,
         text_adapter=text_adapter,
     )
 
     for sd in new_shot_data:
         shot = Shot(
-            project_id=project.id,
+            scene_id=scene.id,
             shot_index=sd.get("shot_index", existing_count),
             shot_description=sd.get("shot_description", ""),
             start_frame_prompt=sd.get("start_frame_prompt", ""),
@@ -117,7 +117,7 @@ async def _generate_expansion_if_needed(
             placements = sm_data.get("placements", [])
             composition = sm_data.get("composition", {})
             shot_manifest = ShotManifestModel(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=sd.get("shot_index", existing_count),
                 manifest_json=sm_data,
                 composition_shot_type=composition.get("shot_type"),
@@ -132,7 +132,7 @@ async def _generate_expansion_if_needed(
         if am_data:
             dialogue_lines = am_data.get("dialogue_lines", [])
             audio_manifest = ShotAudioManifestModel(
-                project_id=project.id,
+                scene_id=scene.id,
                 shot_index=sd.get("shot_index", existing_count),
                 dialogue_json=dialogue_lines,
                 sfx_json=am_data.get("sfx", []),
@@ -146,39 +146,39 @@ async def _generate_expansion_if_needed(
             session.add(audio_manifest)
 
     # Update storyboard_raw with the new shots
-    if project.storyboard_raw:
-        sb = dict(project.storyboard_raw)
+    if scene.storyboard_raw:
+        sb = dict(scene.storyboard_raw)
         sb.setdefault("shots", []).extend(new_shot_data)
-        project.storyboard_raw = sb
+        scene.storyboard_raw = sb
 
     await session.commit()
-    logger.info(f"Project {project.id}: expansion complete, {num_new} shots added")
+    logger.info(f"Scene {scene.id}: expansion complete, {num_new} shots added")
 
 
 async def _check_stage_boundary(
-    session: AsyncSession, project: Project,
+    session: AsyncSession, scene: Scene,
 ) -> bool:
     """Check if pipeline should pause at the current stage boundary.
 
     Returns True (and sets status to 'staged') if run_through is set
     and the pipeline has reached that boundary.
     """
-    if project.run_through is None:
+    if scene.run_through is None:
         return False
-    boundary_status = _STAGE_BOUNDARY.get(project.run_through)
-    if boundary_status and project.status == boundary_status:
-        project.status = "staged"
+    boundary_status = _STAGE_BOUNDARY.get(scene.run_through)
+    if boundary_status and scene.status == boundary_status:
+        scene.status = "staged"
         await session.commit()
         logger.info(
-            f"Project {project.id}: staged at {project.run_through} boundary"
+            f"Scene {scene.id}: staged at {scene.run_through} boundary"
         )
         return True
     return False
 
 
-async def _check_stopped(session: AsyncSession, project_id: uuid.UUID) -> None:
-    """Re-read project status from DB; raise PipelineStopped if stopped."""
-    result = await session.execute(select(Project.status).where(Project.id == project_id))
+async def _check_stopped(session: AsyncSession, scene_id: uuid.UUID) -> None:
+    """Re-read scene status from DB; raise PipelineStopped if stopped."""
+    result = await session.execute(select(Scene.status).where(Scene.id == scene_id))
     status = result.scalar_one()
     if status == "stopped":
         raise PipelineStopped("Pipeline stopped by user")
@@ -186,7 +186,7 @@ async def _check_stopped(session: AsyncSession, project_id: uuid.UUID) -> None:
 
 async def run_pipeline(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     progress_callback: Optional[Callable[[str], None]] = None,
 ) -> None:
     """Execute full video generation pipeline with idempotent resume capability.
@@ -194,33 +194,33 @@ async def run_pipeline(
     Runs all 4 pipeline steps (storyboard, keyframes, video_gen, stitcher) with
     state machine transitions, failure recovery, and PipelineRun metadata tracking.
 
-    Phase 6: If project.manifest_id is set, manifesting is skipped
+    Phase 6: If scene.manifest_id is set, manifesting is skipped
     (assets already processed via ManifestSnapshot). When a manifesting
-    pipeline step is added (Phase 7+), check project.manifest_id here
+    pipeline step is added (Phase 7+), check scene.manifest_id here
     and skip the manifesting step if present.
 
     Args:
         session: Async database session for all operations
-        project_id: UUID of project to execute
+        scene_id: UUID of scene to execute
         progress_callback: Optional callback for status updates (e.g., CLI progress display)
 
     Raises:
-        ValueError: If project not found
+        ValueError: If scene not found
         Exception: Re-raises any unhandled pipeline step failure after persisting error state
 
     Side effects:
         - Creates PipelineRun record with timing metadata
-        - Updates project.status through state machine transitions
-        - Persists project.error_message on failure
+        - Updates scene.status through state machine transitions
+        - Persists scene.error_message on failure
         - Calls progress_callback with step descriptions if provided
     """
-    # Load project from database
-    result = await session.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise ValueError(f"Project {project_id} not found")
+    # Load scene from database
+    result = await session.execute(select(Scene).where(Scene.id == scene_id))
+    scene = result.scalar_one_or_none()
+    if not scene:
+        raise ValueError(f"Scene {scene_id} not found")
 
-    logger.info(f"Starting pipeline for project {project_id}, current status: {project.status}")
+    logger.info(f"Starting pipeline for scene {scene_id}, current status: {scene.status}")
 
     # Load UserSettings for adapter creation
     from vidpipe.config import settings as app_settings
@@ -229,14 +229,14 @@ async def run_pipeline(
     )
     user_settings = user_settings_result.scalar_one_or_none()
 
-    # Create adapters from project config + user settings
-    text_model_id = project.text_model or app_settings.models.storyboard_llm
-    vision_model_id = project.vision_model or project.text_model or app_settings.models.storyboard_llm
+    # Create adapters from scene config + user settings
+    text_model_id = scene.text_model or app_settings.models.storyboard_llm
+    vision_model_id = scene.vision_model or scene.text_model or app_settings.models.storyboard_llm
     text_adapter = get_adapter(text_model_id, user_settings=user_settings)
     vision_adapter = get_adapter(vision_model_id, user_settings=user_settings)
 
     # Create PipelineRun record
-    run = PipelineRun(project_id=project_id)
+    run = PipelineRun(scene_id=scene_id)
     session.add(run)
     await session.commit()
     await session.refresh(run)
@@ -246,85 +246,85 @@ async def run_pipeline(
     pipeline_start = time.monotonic()
 
     # Determine resume point using database state
-    completed_steps = await _check_completed_steps(session, project)
-    resume_step = get_resume_step(project.status, completed_steps)
+    completed_steps = await _check_completed_steps(session, scene)
+    resume_step = get_resume_step(scene.status, completed_steps)
     logger.info(f"Resume point: {resume_step}, completed_steps: {completed_steps}")
 
     # Reset draft/failed/stopped/staged status to resume step (VGED-02 safety check)
-    if project.status in ("draft", "failed", "stopped", "staged"):
-        project.status = resume_step
+    if scene.status in ("draft", "failed", "stopped", "staged"):
+        scene.status = resume_step
         await session.commit()
-        logger.info(f"Project {project.id}: transitioned from previous status to {resume_step}")
+        logger.info(f"Scene {scene.id}: transitioned from previous status to {resume_step}")
 
     try:
         # Step 1: Storyboard generation
-        if project.status == "pending":
+        if scene.status == "pending":
             step_start = time.monotonic()
             logger.info("Starting storyboard step")
             if progress_callback:
                 progress_callback("Generating storyboard...")
 
-            project.status = "storyboarding"
+            scene.status = "storyboarding"
             await session.commit()
 
-            await generate_storyboard(session, project, text_adapter=text_adapter)
-            await session.refresh(project)
+            await generate_storyboard(session, scene, text_adapter=text_adapter)
+            await session.refresh(scene)
 
             # Transition handled by generate_storyboard (sets status to "keyframing")
             step_duration = time.monotonic() - step_start
             step_log["storyboard"] = step_duration
             logger.info(f"Storyboard step completed in {step_duration:.2f}s")
 
-            if await _check_stage_boundary(session, project):
+            if await _check_stage_boundary(session, scene):
                 raise PipelineStaged()
 
-        await _check_stopped(session, project_id)
+        await _check_stopped(session, scene_id)
 
         # Brief pause between phases so the frontend can fetch and display
         # each phase's results before the next phase overwrites generation_status.
         await asyncio.sleep(0.3)
 
         # Step 2: Keyframe generation
-        if project.status == "keyframing":
+        if scene.status == "keyframing":
             # Check if expansion shots are needed (fork delete-then-expand)
-            await _generate_expansion_if_needed(session, project, text_adapter=text_adapter)
+            await _generate_expansion_if_needed(session, scene, text_adapter=text_adapter)
 
             step_start = time.monotonic()
             logger.info("Starting keyframes step")
             if progress_callback:
                 progress_callback("Generating keyframes...")
 
-            await generate_keyframes(session, project, text_adapter=text_adapter)
-            await session.refresh(project)
+            await generate_keyframes(session, scene, text_adapter=text_adapter)
+            await session.refresh(scene)
 
             # Transition handled by generate_keyframes (sets status to "generating_video")
             # Note: The function sets "generating_video" but state machine expects "video_gen"
             # This is a deviation - need to fix status after keyframes
-            if project.status == "generating_video":
-                project.status = "video_gen"
+            if scene.status == "generating_video":
+                scene.status = "video_gen"
                 await session.commit()
 
             step_duration = time.monotonic() - step_start
             step_log["keyframes"] = step_duration
             logger.info(f"Keyframes step completed in {step_duration:.2f}s")
 
-            if await _check_stage_boundary(session, project):
+            if await _check_stage_boundary(session, scene):
                 raise PipelineStaged()
 
-        await _check_stopped(session, project_id)
+        await _check_stopped(session, scene_id)
         await asyncio.sleep(0.3)
 
         # Step 3: Video generation
-        if project.status == "video_gen":
+        if scene.status == "video_gen":
             step_start = time.monotonic()
             logger.info("Starting video generation step")
             if progress_callback:
                 progress_callback("Generating video clips (with CV analysis)...")
 
-            await generate_videos(session, project, text_adapter=text_adapter, vision_adapter=vision_adapter)
-            await session.refresh(project)
+            await generate_videos(session, scene, text_adapter=text_adapter, vision_adapter=vision_adapter)
+            await session.refresh(scene)
 
-            project.status = "stitching"
+            scene.status = "stitching"
             await session.commit()
 
             step_duration = time.monotonic() - step_start
@@ -332,21 +332,21 @@ async def run_pipeline(
             step_log["video_gen"] = step_duration
             logger.info(f"Video generation step completed in {step_duration:.2f}s")
 
-            if await _check_stage_boundary(session, project):
+            if await _check_stage_boundary(session, scene):
                 raise PipelineStaged()
 
-        await _check_stopped(session, project_id)
+        await _check_stopped(session, scene_id)
         await asyncio.sleep(0.3)
 
         # Step 4: Stitching
-        if project.status == "stitching":
+        if scene.status == "stitching":
             step_start = time.monotonic()
             logger.info("Starting stitching step")
             if progress_callback:
                 progress_callback("Stitching final video...")
 
-            await stitch_videos(session, project)
-            await session.refresh(project)
+            await stitch_videos(session, scene)
+            await session.refresh(scene)
 
             # Transition handled by stitch_videos (sets status to "complete")
             step_duration = time.monotonic() - step_start
@@ -354,11 +354,11 @@ async def run_pipeline(
             logger.info(f"Stitching step completed in {step_duration:.2f}s")
 
         # Auto-create initial checkpoint (PipeSVN)
-        if project.status == "complete" and project.head_sha is None:
+        if scene.status == "complete" and scene.head_sha is None:
             try:
                 from vidpipe.services.checkpoint_service import create_checkpoint
-                await create_checkpoint(session, project, "Initial checkpoint")
-                logger.info(f"Auto-checkpoint created for project {project.id}")
+                await create_checkpoint(session, scene, "Initial checkpoint")
+                logger.info(f"Auto-checkpoint created for scene {scene.id}")
             except Exception as cp_err:
                 logger.warning(f"Failed to create auto-checkpoint: {cp_err}")
 
@@ -371,7 +371,7 @@ async def run_pipeline(
         logger.info(f"Pipeline completed successfully in {run.total_duration_seconds:.2f}s")
 
     except PipelineStaged:
-        logger.info(f"Pipeline staged at {project.run_through} boundary")
+        logger.info(f"Pipeline staged at {scene.run_through} boundary")
         run.completed_at = datetime.utcnow()
         run.total_duration_seconds = time.monotonic() - pipeline_start
         run.log = step_log
@@ -379,7 +379,7 @@ async def run_pipeline(
         return
 
     except PipelineStopped:
-        logger.info(f"Pipeline stopped by user at step {project.status}")
+        logger.info(f"Pipeline stopped by user at step {scene.status}")
         run.completed_at = datetime.utcnow()
         run.total_duration_seconds = time.monotonic() - pipeline_start
         run.log = step_log
@@ -388,23 +388,23 @@ async def run_pipeline(
 
     except Exception as e:
         # Handle pipeline failure
-        logger.error(f"Pipeline failed at step {project.status}: {type(e).__name__}: {str(e)}")
+        logger.error(f"Pipeline failed at step {scene.status}: {type(e).__name__}: {str(e)}")
 
         # Determine which step failed based on current status
-        if project.status in ["pending", "storyboarding"]:
+        if scene.status in ["pending", "storyboarding"]:
             step_name = "storyboard"
-        elif project.status == "keyframing":
+        elif scene.status == "keyframing":
             step_name = "keyframes"
-        elif project.status == "video_gen":
+        elif scene.status == "video_gen":
             step_name = "video_gen"
-        elif project.status == "stitching":
+        elif scene.status == "stitching":
             step_name = "stitching"
         else:
             step_name = "unknown"
 
         # Persist failure state
-        project.status = "failed"
-        project.error_message = f"{step_name} failed: {type(e).__name__}: {str(e)}"
+        scene.status = "failed"
+        scene.error_message = f"{step_name} failed: {type(e).__name__}: {str(e)}"
         await session.commit()
 
         # Update PipelineRun with partial data
@@ -417,7 +417,7 @@ async def run_pipeline(
         raise
 
 
-async def _check_completed_steps(session: AsyncSession, project: Project) -> Dict[str, bool]:
+async def _check_completed_steps(session: AsyncSession, scene: Scene) -> Dict[str, bool]:
     """Query database to determine which pipeline steps are complete.
 
     Note: Video generation (Phase 9+) includes per-shot CV analysis
@@ -426,28 +426,28 @@ async def _check_completed_steps(session: AsyncSession, project: Project) -> Dic
 
     Args:
         session: Database session
-        project: Project to check
+        scene: Scene to check
 
     Returns:
         Dict with keys:
-            - has_storyboard: True if project has shots
+            - has_storyboard: True if scene has shots
             - has_keyframes: True if all shots have both start and end keyframes
             - has_clips: True if all shots have completed video clips
     """
     # Check for storyboard (has shots WITH content)
-    # Draft projects have Shot rows but empty descriptions — those need storyboarding
+    # Draft scenes have Shot rows but empty descriptions — those need storyboarding
     shot_count_result = await session.execute(
-        select(func.count(Shot.id)).where(Shot.project_id == project.id)
+        select(func.count(Shot.id)).where(Shot.scene_id == scene.id)
     )
     shot_count = shot_count_result.scalar()
 
     # A storyboard is "done" only if shots exist AND at least one has non-empty text
-    # (draft projects create empty Shot rows that still need LLM generation)
+    # (draft scenes create empty Shot rows that still need LLM generation)
     has_storyboard = False
     if shot_count > 0:
         filled_count_result = await session.execute(
             select(func.count(Shot.id)).where(
-                Shot.project_id == project.id,
+                Shot.scene_id == scene.id,
                 Shot.shot_description != "",
                 Shot.start_frame_prompt != "",
             )
@@ -465,7 +465,7 @@ async def _check_completed_steps(session: AsyncSession, project: Project) -> Dic
             select(func.count(func.distinct(Shot.id)))
             .select_from(Shot)
             .join(Keyframe, Keyframe.shot_id == Shot.id)
-            .where(Shot.project_id == project.id)
+            .where(Shot.scene_id == scene.id)
             .group_by(Shot.id)
             .having(func.count(Keyframe.id) >= 2)
         )
@@ -482,7 +482,7 @@ async def _check_completed_steps(session: AsyncSession, project: Project) -> Dic
             select(func.count(func.distinct(Shot.id)))
             .select_from(Shot)
             .join(VideoClip, VideoClip.shot_id == Shot.id)
-            .where(Shot.project_id == project.id)
+            .where(Shot.scene_id == scene.id)
             .where(VideoClip.status.in_(["completed", "rai_filtered"]))
         )
         shots_with_clips = shots_with_clips_result.scalar()

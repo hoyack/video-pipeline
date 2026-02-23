@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { getProjectDetail, getDownloadUrl, stopProject, resumeProject } from "../api/client.ts";
-import type { ProjectDetail } from "../api/types.ts";
-import { useProjectStatus } from "../hooks/useProjectStatus.ts";
+import { getSceneDetail, getDownloadUrl, stopScene, resumeScene } from "../api/client.ts";
+import type { SceneDetail } from "../api/types.ts";
+import { useSceneStatus } from "../hooks/useSceneStatus.ts";
 import { TERMINAL_STATUSES } from "../lib/constants.ts";
 import { PipelineStepper } from "./PipelineStepper.tsx";
 import { ShotCard } from "./ShotCard.tsx";
@@ -13,7 +13,7 @@ interface LatestActivity {
   desc: string;
 }
 
-function getLatestActivity(detail: ProjectDetail): LatestActivity | null {
+function getLatestActivity(detail: SceneDetail): LatestActivity | null {
   for (let i = detail.shots.length - 1; i >= 0; i--) {
     const s = detail.shots[i];
     if (s.clip_url) return { type: "clip", shot: i, url: s.clip_url, desc: s.description };
@@ -25,25 +25,25 @@ function getLatestActivity(detail: ProjectDetail): LatestActivity | null {
 }
 
 interface ProgressViewProps {
-  projectId: string;
-  onViewDetail: (projectId: string) => void;
+  sceneId: string;
+  onViewDetail: (sceneId: string) => void;
 }
 
-export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
-  const { status, error: pollError, isTerminal } = useProjectStatus(projectId);
-  const [detail, setDetail] = useState<ProjectDetail | null>(null);
+export function ProgressView({ sceneId, onViewDetail }: ProgressViewProps) {
+  const { status, error: pollError, isTerminal } = useSceneStatus(sceneId);
+  const [detail, setDetail] = useState<SceneDetail | null>(null);
   const [stopping, setStopping] = useState(false);
   const [resuming, setResuming] = useState(false);
 
   // Fetch full detail periodically to get shot info
   useEffect(() => {
-    if (!projectId) return;
+    if (!sceneId) return;
 
     let cancelled = false;
 
     async function fetchDetail() {
       try {
-        const d = await getProjectDetail(projectId);
+        const d = await getSceneDetail(sceneId);
         if (!cancelled) setDetail(d);
       } catch {
         // Status polling handles errors
@@ -57,21 +57,21 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [projectId, isTerminal]);
+  }, [sceneId, isTerminal]);
 
   // Stop detail polling once terminal
   useEffect(() => {
-    if (isTerminal && projectId) {
-      getProjectDetail(projectId).then(setDetail).catch(() => {});
+    if (isTerminal && sceneId) {
+      getSceneDetail(sceneId).then(setDetail).catch(() => {});
     }
-  }, [isTerminal, projectId]);
+  }, [isTerminal, sceneId]);
 
   const currentStatus = status?.status ?? "pending";
 
   async function handleStop() {
     setStopping(true);
     try {
-      await stopProject(projectId);
+      await stopScene(sceneId);
     } catch {
       // Status polling will show the actual state
     } finally {
@@ -82,7 +82,7 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
   async function handleResume() {
     setResuming(true);
     try {
-      await resumeProject(projectId);
+      await resumeScene(sceneId);
     } catch {
       // Status polling will show the actual state
     } finally {
@@ -99,7 +99,7 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
           {detail?.title || "Generation Progress"}
         </h1>
         <p className="text-sm text-gray-400">
-          Project {projectId.slice(0, 8)}...
+          Scene {sceneId.slice(0, 8)}...
         </p>
       </div>
 
@@ -205,7 +205,7 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
         <div className="flex gap-3">
           {currentStatus === "complete" && (
             <a
-              href={getDownloadUrl(projectId)}
+              href={getDownloadUrl(sceneId)}
               className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 transition-colors"
             >
               Download Video
@@ -222,14 +222,14 @@ export function ProgressView({ projectId, onViewDetail }: ProgressViewProps) {
           )}
           {currentStatus === "staged" && (
             <button
-              onClick={() => onViewDetail(projectId)}
+              onClick={() => onViewDetail(sceneId)}
               className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 transition-colors"
             >
               View & Continue
             </button>
           )}
           <button
-            onClick={() => onViewDetail(projectId)}
+            onClick={() => onViewDetail(sceneId)}
             className="rounded-lg border border-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:border-gray-600 transition-colors"
           >
             View Details

@@ -16,30 +16,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.config import settings
-from vidpipe.db.models import Project, Shot, VideoClip
+from vidpipe.db.models import Scene, Shot, VideoClip
 from vidpipe.services.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
 
 
-async def stitch_videos(session: AsyncSession, project: Project) -> None:
+async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
     """Stitch completed video clips into final output.
 
-    Queries all completed clips for the project, concatenates them in shot order
+    Queries all completed clips for the scene, concatenates them in shot order
     using either concat demuxer (hard cuts) or xfade filter (crossfades),
-    and saves the result to tmp/{project_id}/output/final.mp4.
+    and saves the result to tmp/{scene_id}/output/final.mp4.
 
-    Updates project status to 'complete' on success or 'failed' on error.
+    Updates scene status to 'complete' on success or 'failed' on error.
 
     Args:
         session: Async database session
-        project: Project object to stitch videos for
+        scene: Scene object to stitch videos for
 
     Requirements:
         - STCH-01: Concat demuxer for hard cuts when crossfade_seconds=0.0
         - STCH-02: xfade filter for crossfades when crossfade_seconds>0.0
         - STCH-03: Audio streams preserved during concatenation
-        - STCH-04: Output saved to tmp/{project_id}/output/final.mp4
+        - STCH-04: Output saved to tmp/{scene_id}/output/final.mp4
         - STCH-05: ffmpeg validated at startup (handled by validate_dependencies)
     """
     file_mgr = FileManager()
@@ -48,7 +48,7 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
     result = await session.execute(
         select(VideoClip)
         .join(Shot)
-        .where(Shot.project_id == project.id)
+        .where(Shot.scene_id == scene.id)
         .where(VideoClip.status == "complete")
         .order_by(Shot.shot_index)
     )
@@ -56,38 +56,38 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
 
     # Handle case with no completed clips
     if not clips:
-        logger.error(f"Project {project.id}: No completed clips available for stitching")
-        project.status = "failed"
-        project.error_message = "No completed video clips available for stitching"
+        logger.error(f"Scene {scene.id}: No completed clips available for stitching")
+        scene.status = "failed"
+        scene.error_message = "No completed video clips available for stitching"
         await session.commit()
         return
 
     # Get clip paths
     clip_paths = [Path(clip.local_path) for clip in clips]
-    logger.info(f"Project {project.id}: Stitching {len(clip_paths)} clips")
+    logger.info(f"Scene {scene.id}: Stitching {len(clip_paths)} clips")
 
     # Verify all clip files exist
     missing_clips = [p for p in clip_paths if not p.exists()]
     if missing_clips:
-        logger.error(f"Project {project.id}: Missing clip files: {missing_clips}")
-        project.status = "failed"
-        project.error_message = f"Missing clip files: {[str(p) for p in missing_clips]}"
+        logger.error(f"Scene {scene.id}: Missing clip files: {missing_clips}")
+        scene.status = "failed"
+        scene.error_message = f"Missing clip files: {[str(p) for p in missing_clips]}"
         await session.commit()
         return
 
     # Get output path (STCH-04)
-    output_path = file_mgr.get_output_path(project.id, "final.mp4")
+    output_path = file_mgr.get_output_path(scene.id, "final.mp4")
 
     # Choose stitching mode based on crossfade setting
     try:
         if settings.pipeline.crossfade_seconds == 0.0:
             # Hard cuts using concat demuxer (STCH-01)
-            logger.info(f"Project {project.id}: Using concat demuxer (hard cuts)")
+            logger.info(f"Scene {scene.id}: Using concat demuxer (hard cuts)")
             await asyncio.to_thread(_stitch_concat_demuxer, clip_paths, output_path)
         else:
             # Crossfade transitions using xfade filter (STCH-02)
             logger.info(
-                f"Project {project.id}: Using xfade filter "
+                f"Scene {scene.id}: Using xfade filter "
                 f"(crossfade={settings.pipeline.crossfade_seconds}s)"
             )
             await asyncio.to_thread(
@@ -95,38 +95,38 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
                 clip_paths,
                 output_path,
                 settings.pipeline.crossfade_seconds,
-                project.target_clip_duration,
+                scene.target_clip_duration,
             )
 
-        # Update project on success
-        project.output_path = str(output_path)
-        project.status = "complete"
-        logger.info(f"Project {project.id}: Stitching complete -> {output_path}")
+        # Update scene on success
+        scene.output_path = str(output_path)
+        scene.status = "complete"
+        logger.info(f"Scene {scene.id}: Stitching complete -> {output_path}")
         await session.commit()
 
         from vidpipe.services.event_bus import event_bus
-        event_bus.emit(project.id, "stitch_ready")
-        event_bus.emit(project.id, "refresh")
+        event_bus.emit(scene.id, "stitch_ready")
+        event_bus.emit(scene.id, "refresh")
 
     except subprocess.CalledProcessError as e:
         # ffmpeg error
         stderr = e.stderr.decode() if e.stderr else "No error output"
-        logger.error(f"Project {project.id}: ffmpeg error: {stderr}")
-        project.status = "failed"
-        project.error_message = f"Video stitching failed: {stderr[:500]}"
+        logger.error(f"Scene {scene.id}: ffmpeg error: {stderr}")
+        scene.status = "failed"
+        scene.error_message = f"Video stitching failed: {stderr[:500]}"
         await session.commit()
         from vidpipe.services.event_bus import event_bus
-        event_bus.emit(project.id, "error", phase="stitch", message=f"ffmpeg error: {stderr[:200]}")
+        event_bus.emit(scene.id, "error", phase="stitch", message=f"ffmpeg error: {stderr[:200]}")
         raise
 
     except Exception as e:
         # Unexpected error
-        logger.error(f"Project {project.id}: Stitching error: {e}")
-        project.status = "failed"
-        project.error_message = f"Stitching error: {str(e)[:500]}"
+        logger.error(f"Scene {scene.id}: Stitching error: {e}")
+        scene.status = "failed"
+        scene.error_message = f"Stitching error: {str(e)[:500]}"
         await session.commit()
         from vidpipe.services.event_bus import event_bus
-        event_bus.emit(project.id, "error", phase="stitch", message=str(e)[:200])
+        event_bus.emit(scene.id, "error", phase="stitch", message=str(e)[:200])
         raise
 
 

@@ -2,13 +2,15 @@ import { Route, Switch, Redirect, useLocation } from "wouter";
 import { Layout } from "./components/Layout.tsx";
 import { GenerateForm } from "./components/GenerateForm.tsx";
 import { ProgressView } from "./components/ProgressView.tsx";
-import { ProjectList } from "./components/ProjectList.tsx";
-import { ProjectDetail } from "./components/ProjectDetail.tsx";
+import { SceneList } from "./components/SceneList.tsx";
+import { SceneDetail } from "./components/SceneDetail.tsx";
 import { Dashboard } from "./components/Dashboard.tsx";
 import { ManifestLibrary } from "./components/ManifestLibrary.tsx";
 import { ManifestCreator } from "./components/ManifestCreator.tsx";
 import { SettingsPage } from "./components/SettingsPage.tsx";
-import { createDraftProject } from "./api/client.ts";
+import { ProductionList } from "./components/ProductionList.tsx";
+import { ProductionDetail } from "./components/ProductionDetail.tsx";
+import { createDraftScene } from "./api/client.ts";
 import { ShowCostProvider } from "./hooks/useShowCost.tsx";
 
 function App() {
@@ -16,8 +18,8 @@ function App() {
 
   async function handleNewDraft() {
     try {
-      const res = await createDraftProject();
-      navigate(`/projects/${res.project_id}`);
+      const res = await createDraftScene();
+      navigate(`/scenes/${res.scene_id}`);
     } catch {
       navigate("/generate");
     }
@@ -28,35 +30,48 @@ function App() {
       <Layout>
         <Switch>
           <Route path="/">
-            <ProjectList
-              onSelectProject={(id) => navigate(`/projects/${id}`)}
-              onNewProject={() => navigate("/generate")}
+            <SceneList
+              onSelectScene={(id) => navigate(`/scenes/${id}`)}
+              onNewScene={() => navigate("/generate")}
               onNewDraft={handleNewDraft}
             />
           </Route>
           <Route path="/generate">
             <GenerateForm
-              onGenerated={(id) => navigate(`/projects/${id}/progress`)}
+              onGenerated={(id) => navigate(`/scenes/${id}/progress`)}
             />
           </Route>
-          <Route path="/projects/:id/progress">
+          <Route path="/scenes/:id/progress">
             {(params) => (
               <ProgressView
-                projectId={params.id}
-                onViewDetail={(id) => navigate(`/projects/${id}`)}
+                sceneId={params.id}
+                onViewDetail={(id) => navigate(`/scenes/${id}`)}
               />
             )}
           </Route>
-          <Route path="/projects/:id">
+          <Route path="/scenes/:id">
             {(params) => (
-              <ProjectDetail
-                projectId={params.id}
-                onViewProgress={(id) => navigate(`/projects/${id}/progress`)}
-                onForked={(newId) => navigate(`/projects/${newId}/progress`)}
-                onViewProject={(id) => navigate(`/projects/${id}`)}
+              <SceneDetail
+                sceneId={params.id}
+                onViewProgress={(id) => navigate(`/scenes/${id}/progress`)}
+                onForked={(newId) => navigate(`/scenes/${newId}/progress`)}
+                onViewScene={(id) => navigate(`/scenes/${id}`)}
                 onViewManifest={(manifestId) =>
                   navigate(`/manifests/${manifestId}/edit`)
                 }
+              />
+            )}
+          </Route>
+          <Route path="/productions">
+            <ProductionList
+              onSelectProduction={(id) => navigate(`/productions/${id}`)}
+            />
+          </Route>
+          <Route path="/productions/:id">
+            {(params) => (
+              <ProductionDetail
+                productionId={params.id}
+                onViewScene={(id) => navigate(`/scenes/${id}`)}
               />
             )}
           </Route>

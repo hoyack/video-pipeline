@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { getProjectDetail, resumeProject, getDownloadUrl, updateProject } from "../api/client.ts";
-import type { ProjectDetail as ProjectDetailType } from "../api/types.ts";
+import { getSceneDetail, resumeScene, getDownloadUrl, updateScene } from "../api/client.ts";
+import type { SceneDetail as SceneDetailType } from "../api/types.ts";
 import { TERMINAL_STATUSES, TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, estimateCost } from "../lib/constants.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
@@ -71,17 +71,17 @@ function modelLabel(
   return id; // fallback to raw ID
 }
 
-interface ProjectDetailProps {
-  projectId: string;
-  onViewProgress: (projectId: string) => void;
-  onForked?: (newProjectId: string) => void;
-  onViewProject?: (projectId: string) => void;
+interface SceneDetailProps {
+  sceneId: string;
+  onViewProgress: (sceneId: string) => void;
+  onForked?: (newSceneId: string) => void;
+  onViewScene?: (sceneId: string) => void;
   onViewManifest?: (manifestId: string) => void;
 }
 
-export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProject, onViewManifest }: ProjectDetailProps) {
+export function SceneDetail({ sceneId, onViewProgress, onForked, onViewScene, onViewManifest }: SceneDetailProps) {
   const { showCost } = useShowCost();
-  const [detail, setDetail] = useState<ProjectDetailType | null>(null);
+  const [detail, setDetail] = useState<SceneDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
@@ -98,12 +98,12 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
     let cancelled = false;
     setLoading(true);
 
-    getProjectDetail(projectId)
+    getSceneDetail(sceneId)
       .then((d) => {
         if (!cancelled) {
           setDetail(d);
           setError(null);
-          // Auto-enter edit mode for draft projects
+          // Auto-enter edit mode for draft scenes
           if (d.status === "draft") {
             setEditing(true);
           }
@@ -119,13 +119,13 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [sceneId]);
 
   async function handleResume() {
     setResuming(true);
     try {
-      await resumeProject(projectId);
-      onViewProgress(projectId);
+      await resumeScene(sceneId);
+      onViewProgress(sceneId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Resume failed");
     } finally {
@@ -136,8 +136,8 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
   async function handleContinue(runThrough: string | null) {
     setContinuing(true);
     try {
-      await resumeProject(projectId, { run_through: runThrough ?? "all" });
-      onViewProgress(projectId);
+      await resumeScene(sceneId, { run_through: runThrough ?? "all" });
+      onViewProgress(sceneId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Continue failed");
     } finally {
@@ -175,16 +175,16 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
           onCommitted={() => {
             setEditing(false);
             // Refresh detail after commit
-            getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+            getSceneDetail(sceneId).then((d) => setDetail(d)).catch(() => {});
           }}
           onCancel={() => {
             setEditing(false);
             // Re-fetch in case regens were reverted during edit
-            getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+            getSceneDetail(sceneId).then((d) => setDetail(d)).catch(() => {});
           }}
           onRefresh={() => {
             // Refresh detail data without exiting edit mode
-            getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+            getSceneDetail(sceneId).then((d) => setDetail(d)).catch(() => {});
           }}
         />
       </div>
@@ -222,7 +222,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
               const trimmed = titleDraft.trim();
               if (!trimmed) return;
               try {
-                await updateProject(detail.project_id, { title: trimmed });
+                await updateScene(detail.scene_id, { title: trimmed });
                 setDetail({ ...detail, title: trimmed });
               } catch (err) {
                 setError(err instanceof Error ? err.message : "Failed to update title");
@@ -247,21 +247,21 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
             onClick={() => { setTitleDraft(detail.title || ""); setEditingTitle(true); }}
             title="Click to edit title"
           >
-            {detail.title || "Untitled Project"}
+            {detail.title || "Untitled Scene"}
             <svg className="ml-2 inline h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
             </svg>
           </h1>
         )}
         <div className="flex items-center gap-1">
-          <p className="text-sm text-gray-500 font-mono">{detail.project_id}</p>
-          <CopyButton text={detail.project_id} />
+          <p className="text-sm text-gray-500 font-mono">{detail.scene_id}</p>
+          <CopyButton text={detail.scene_id} />
         </div>
         {detail.forked_from && (
           <p className="mt-1 text-xs text-gray-500">
             Forked from{" "}
             <button
-              onClick={() => onViewProject?.(detail.forked_from!)}
+              onClick={() => onViewScene?.(detail.forked_from!)}
               className="font-mono text-blue-400 hover:text-blue-300 underline"
             >
               {detail.forked_from.slice(0, 8)}...
@@ -412,7 +412,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
           <h2 className="mb-3 text-sm font-medium text-gray-400">Final Video</h2>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video
-            src={`${getDownloadUrl(projectId)}?v=${detail.head_sha ?? ""}`}
+            src={`${getDownloadUrl(sceneId)}?v=${detail.head_sha ?? ""}`}
             className="w-full rounded-lg border border-gray-800"
             controls
             preload="metadata"
@@ -424,10 +424,10 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
       {showHistory && detail.head_sha && (
         <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
           <CheckpointLog
-            projectId={detail.project_id}
+            sceneId={detail.scene_id}
             headSha={detail.head_sha}
             onReverted={() => {
-              getProjectDetail(projectId).then((d) => setDetail(d)).catch(() => {});
+              getSceneDetail(sceneId).then((d) => setDetail(d)).catch(() => {});
             }}
           />
         </div>
@@ -448,7 +448,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
                 key={shot.shot_index}
                 shot={shot}
                 defaultExpanded={false}
-                projectId={detail.project_id}
+                sceneId={detail.scene_id}
                 qualityMode={detail.quality_mode}
                 onViewManifest={onViewManifest}
                 manifestId={detail.manifest_id}
@@ -468,7 +468,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
       <div className="flex gap-3">
         {detail.status === "complete" && (
           <a
-            href={`${getDownloadUrl(projectId)}?dl=1`}
+            href={`${getDownloadUrl(sceneId)}?dl=1`}
             className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 transition-colors"
           >
             Download Video
@@ -541,7 +541,7 @@ export function ProjectDetail({ projectId, onViewProgress, onForked, onViewProje
         )}
         {isRunning && (
           <button
-            onClick={() => onViewProgress(projectId)}
+            onClick={() => onViewProgress(sceneId)}
             className="rounded-lg border border-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:border-gray-600 transition-colors"
           >
             View Progress

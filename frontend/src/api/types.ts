@@ -1,4 +1,4 @@
-/** Candidate score data from GET /api/projects/{id}/shots/{idx}/candidates */
+/** Candidate score data from GET /api/scenes/{id}/shots/{idx}/candidates */
 export interface CandidateScore {
   candidate_id: string;
   candidate_number: number;
@@ -43,14 +43,14 @@ export interface GenerateRequest {
 
 /** Response from POST /api/generate */
 export interface GenerateResponse {
-  project_id: string;
+  scene_id: string;
   status: string;
   status_url: string;
 }
 
-/** Response from GET /api/projects/{id}/status */
+/** Response from GET /api/scenes/{id}/status */
 export interface StatusResponse {
-  project_id: string;
+  scene_id: string;
   status: string;
   created_at: string;
   updated_at: string;
@@ -69,7 +69,7 @@ export interface ShotReference {
   is_face_crop: boolean;
 }
 
-/** Shot detail within ProjectDetail */
+/** Shot detail within SceneDetail */
 export interface ShotDetail {
   shot_index: number;
   description: string;
@@ -99,9 +99,9 @@ export interface ShotDetail {
   generation_status?: string | null;
 }
 
-/** Response from GET /api/projects/{id} */
-export interface ProjectDetail {
-  project_id: string;
+/** Response from GET /api/scenes/{id} */
+export interface SceneDetail {
+  scene_id: string;
   title?: string | null;
   prompt: string;
   style?: string | null;
@@ -137,8 +137,8 @@ export interface ShotEditPayload {
   transition_notes?: string;
 }
 
-/** Request body for PATCH /api/projects/{id}/edit */
-export interface EditProjectRequest {
+/** Request body for PATCH /api/scenes/{id}/edit */
+export interface EditSceneRequest {
   prompt?: string;
   title?: string;
   style?: string;
@@ -158,15 +158,15 @@ export interface EditProjectRequest {
   expected_sha?: string;
 }
 
-/** Response from PATCH /api/projects/{id}/edit */
-export interface EditProjectResponse {
-  project_id: string;
+/** Response from PATCH /api/scenes/{id}/edit */
+export interface EditSceneResponse {
+  scene_id: string;
   head_sha: string;
   message: string;
   changes_count: number;
 }
 
-/** Checkpoint list item from GET /api/projects/{id}/checkpoints */
+/** Checkpoint list item from GET /api/scenes/{id}/checkpoints */
 export interface CheckpointListItem {
   sha: string;
   parent_sha: string | null;
@@ -175,7 +175,7 @@ export interface CheckpointListItem {
   created_at: string;
 }
 
-/** Checkpoint diff from GET /api/projects/{id}/checkpoints/{sha}/diff */
+/** Checkpoint diff from GET /api/scenes/{id}/checkpoints/{sha}/diff */
 export interface CheckpointDiff {
   sha: string;
   message: string;
@@ -188,7 +188,7 @@ export interface CheckpointDiff {
   }>;
 }
 
-/** Request body for POST /api/projects/{id}/shots/{idx}/regenerate */
+/** Request body for POST /api/scenes/{id}/shots/{idx}/regenerate */
 export interface RegenerateShotRequest {
   targets: string[];
   prompt_overrides?: Record<string, string>;
@@ -198,8 +198,8 @@ export interface RegenerateShotRequest {
   shot_edits?: Record<string, string>;
 }
 
-/** Request body for POST /api/projects/{id}/regenerate */
-export interface RegenerateProjectRequest {
+/** Request body for POST /api/scenes/{id}/regenerate */
+export interface RegenerateSceneRequest {
   scope: "stale" | "all" | "stitch_only" | "storyboard" | "keyframes" | "clips" | "all_phases";
   shot_indices?: number[];
   text_model?: string;
@@ -208,9 +208,9 @@ export interface RegenerateProjectRequest {
   run_through?: string | null;
 }
 
-/** Item in GET /api/projects list */
-export interface ProjectListItem {
-  project_id: string;
+/** Item in GET /api/scenes list */
+export interface SceneListItem {
+  scene_id: string;
   title?: string | null;
   prompt: string;
   status: string;
@@ -228,24 +228,24 @@ export interface ProjectListItem {
   thumbnail_url?: string | null;
 }
 
-/** Paginated response envelope for GET /api/projects */
-export interface PaginatedProjects {
-  items: ProjectListItem[];
+/** Paginated response envelope for GET /api/scenes */
+export interface PaginatedScenes {
+  items: SceneListItem[];
   total: number;
   page: number;
   per_page: number;
 }
 
-/** Response from POST /api/projects/{id}/resume */
+/** Response from POST /api/scenes/{id}/resume */
 export interface ResumeResponse {
-  project_id: string;
+  scene_id: string;
   status: string;
   status_url: string;
 }
 
-/** Response from POST /api/projects/{id}/stop */
+/** Response from POST /api/scenes/{id}/stop */
 export interface StopResponse {
-  project_id: string;
+  scene_id: string;
   status: string;
 }
 
@@ -274,7 +274,7 @@ export interface AssetChanges {
   new_uploads?: NewForkUpload[];
 }
 
-/** Request body for POST /api/projects/{id}/fork */
+/** Request body for POST /api/scenes/{id}/fork */
 export interface ForkRequest {
   prompt?: string;
   style?: string;
@@ -292,9 +292,9 @@ export interface ForkRequest {
   asset_changes?: AssetChanges;
 }
 
-/** Response from POST /api/projects/{id}/fork */
+/** Response from POST /api/scenes/{id}/fork */
 export interface ForkResponse {
-  project_id: string;
+  scene_id: string;
   forked_from: string;
   status: string;
   status_url: string;
@@ -304,7 +304,7 @@ export interface ForkResponse {
 
 /** Response from GET /api/metrics */
 export interface MetricsResponse {
-  total_projects: number;
+  total_scenes: number;
   status_counts: Record<string, number>;
   style_counts: Record<string, number>;
   aspect_ratio_counts: Record<string, number>;
@@ -474,7 +474,7 @@ export interface EnabledModelsResponse {
   show_cost: boolean;
 }
 
-/** Request body for POST /api/projects/{id}/shots/{idx}/regenerate-text */
+/** Request body for POST /api/scenes/{id}/shots/{idx}/regenerate-text */
 export interface RegenerateTextRequest {
   field: string;
   extra_context?: string;
@@ -483,13 +483,13 @@ export interface RegenerateTextRequest {
   prompt?: string;
 }
 
-/** Response from POST /api/projects/{id}/shots/{idx}/regenerate-text */
+/** Response from POST /api/scenes/{id}/shots/{idx}/regenerate-text */
 export interface RegenerateTextResponse {
   field: string;
   text: string;
 }
 
-/** Request body for POST /api/projects/{id}/generate-shot-fields */
+/** Request body for POST /api/scenes/{id}/generate-shot-fields */
 export interface GenerateShotFieldsRequest {
   shot_index: number;
   all_shot_edits?: Record<number, Record<string, string>>;
@@ -497,7 +497,7 @@ export interface GenerateShotFieldsRequest {
   prompt?: string;
 }
 
-/** Response from POST /api/projects/{id}/generate-shot-fields */
+/** Response from POST /api/scenes/{id}/generate-shot-fields */
 export interface GenerateShotFieldsResponse {
   shot_description: string;
   start_frame_prompt: string;
@@ -506,7 +506,7 @@ export interface GenerateShotFieldsResponse {
   transition_notes: string;
 }
 
-/** Request body for POST /api/projects/{id}/generate-new-shot */
+/** Request body for POST /api/scenes/{id}/generate-new-shot */
 export interface GenerateNewShotRequest {
   shot_index: number;
   all_shot_edits?: Record<number, Record<string, string>>;
@@ -516,7 +516,7 @@ export interface GenerateNewShotRequest {
   prompt?: string;
 }
 
-/** Response from POST /api/projects/{id}/generate-new-shot */
+/** Response from POST /api/scenes/{id}/generate-new-shot */
 export interface GenerateNewShotResponse {
   shot_index: number;
   shot_description: string;
@@ -527,8 +527,8 @@ export interface GenerateNewShotResponse {
   head_sha?: string | null;
 }
 
-/** Request body for POST /api/projects (draft project creation) */
-export interface CreateDraftProjectRequest {
+/** Request body for POST /api/scenes (draft scene creation) */
+export interface CreateDraftSceneRequest {
   prompt?: string;
   title?: string;
   style?: string;
@@ -545,14 +545,14 @@ export interface CreateDraftProjectRequest {
   vision_model?: string | null;
 }
 
-/** Response from POST /api/projects */
-export interface CreateDraftProjectResponse {
-  project_id: string;
+/** Response from POST /api/scenes */
+export interface CreateDraftSceneResponse {
+  scene_id: string;
   status: string;
   shot_count: number;
 }
 
-/** Request body for POST /api/projects/{id}/generate */
+/** Request body for POST /api/scenes/{id}/generate */
 export interface StartGenerationRequest {
   run_through?: string | null;
   text_model?: string;
@@ -563,9 +563,9 @@ export interface StartGenerationRequest {
   enable_audio?: boolean;
 }
 
-/** Response from POST /api/projects/{id}/generate */
+/** Response from POST /api/scenes/{id}/generate */
 export interface StartGenerationResponse {
-  project_id: string;
+  scene_id: string;
   status: string;
 }
 

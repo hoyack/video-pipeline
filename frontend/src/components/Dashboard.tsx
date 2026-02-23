@@ -140,10 +140,10 @@ export function Dashboard() {
     );
   }
 
-  if (!metrics || metrics.total_projects === 0) {
+  if (!metrics || metrics.total_scenes === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">No project data yet.</p>
+        <p className="text-gray-500">No scene data yet.</p>
         <p className="mt-1 text-sm text-gray-600">
           Generate some videos to see metrics here.
         </p>
@@ -152,9 +152,9 @@ export function Dashboard() {
   }
 
   const successRate =
-    metrics.total_projects > 0
+    metrics.total_scenes > 0
       ? Math.round(
-          ((metrics.status_counts["complete"] ?? 0) / metrics.total_projects) *
+          ((metrics.status_counts["complete"] ?? 0) / metrics.total_scenes) *
             100,
         )
       : 0;
@@ -166,8 +166,8 @@ export function Dashboard() {
       {/* Summary cards */}
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <SummaryCard
-          label="Total Projects"
-          value={String(metrics.total_projects)}
+          label="Total Scenes"
+          value={String(metrics.total_scenes)}
         />
         <SummaryCard
           label="Video Seconds"
@@ -211,7 +211,7 @@ export function Dashboard() {
           labelFn={(k) => k}
         />
         <DistributionSection
-          title="Shots per Project"
+          title="Shots per Scene"
           data={metrics.shot_count_counts}
           labelFn={(k) => `${k} shot${k === "1" ? "" : "s"}`}
         />

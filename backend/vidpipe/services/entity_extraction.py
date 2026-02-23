@@ -210,7 +210,7 @@ def identify_new_entities(
 
 async def extract_and_register_new_entities(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     manifest_id: uuid.UUID,
     shot_index: int,
     new_entities: list[NewEntityDetection],
@@ -230,7 +230,7 @@ async def extract_and_register_new_entities(
 
     Args:
         session: Active database session (caller manages commit)
-        project_id: Project UUID (for logging context)
+        scene_id: Scene UUID (for logging context)
         manifest_id: Target manifest for new assets
         shot_index: Shot index (for logging)
         new_entities: New entity detections from identify_new_entities()

@@ -14,7 +14,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Keyframe, Manifest, ManifestSnapshot, Project, Shot
+from vidpipe.db.models import Asset, Keyframe, Manifest, ManifestSnapshot, Scene, Shot
 
 # Valid enum constants
 VALID_CATEGORIES = {"CHARACTERS", "ENVIRONMENT", "FULL_PRODUCTION", "STYLE_KIT", "BRAND_KIT", "CUSTOM"}
@@ -67,48 +67,48 @@ async def create_manifest(
     return manifest
 
 
-async def create_manifest_from_project(
+async def create_manifest_from_scene(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
     name: Optional[str] = None,
 ) -> tuple[Manifest, list[Asset]]:
-    """Create a manifest pre-populated from a project's storyboard data.
+    """Create a manifest pre-populated from a scene's storyboard data.
 
     Extracts characters, shot environments, and style guide from
     storyboard_raw and creates corresponding assets.
 
     Args:
         session: Active database session
-        project_id: Source project UUID
-        name: Optional manifest name (defaults to truncated project prompt)
+        scene_id: Source scene UUID
+        name: Optional manifest name (defaults to truncated scene prompt)
 
     Returns:
         Tuple of (created Manifest, list of created Assets)
 
     Raises:
-        ValueError: If project not found or has no storyboard data
+        ValueError: If scene not found or has no storyboard data
     """
     result = await session.execute(
-        select(Project).where(Project.id == project_id)
+        select(Scene).where(Scene.id == scene_id)
     )
-    project = result.scalar_one_or_none()
-    if not project:
-        raise ValueError(f"Project {project_id} not found")
+    scene = result.scalar_one_or_none()
+    if not scene:
+        raise ValueError(f"Scene {scene_id} not found")
 
-    if not project.storyboard_raw:
-        raise ValueError(f"Project {project_id} has no storyboard data")
+    if not scene.storyboard_raw:
+        raise ValueError(f"Scene {scene_id} has no storyboard data")
 
-    storyboard = project.storyboard_raw
+    storyboard = scene.storyboard_raw
 
-    # Derive manifest name from project prompt if not provided
+    # Derive manifest name from scene prompt if not provided
     if not name:
-        prompt_text = project.prompt or "Untitled"
+        prompt_text = scene.prompt or "Untitled"
         name = prompt_text[:80] + ("..." if len(prompt_text) > 80 else "")
 
     manifest = await create_manifest(
         session,
         name=name,
-        description=f"Auto-imported from project {project_id}",
+        description=f"Auto-imported from scene {scene_id}",
         category="FULL_PRODUCTION",
     )
 
@@ -127,9 +127,9 @@ async def create_manifest_from_project(
             manifest_id=manifest.id,
             name=char_name,
             asset_type="CHARACTER",
-            description=f"Character from project import: {char_name}",
+            description=f"Character from scene import: {char_name}",
         )
-        asset.source = "project_import"
+        asset.source = "scene_import"
         if reverse_prompt:
             asset.reverse_prompt = reverse_prompt
         assets_list.append(asset)
@@ -140,7 +140,7 @@ async def create_manifest_from_project(
     # Query actual shots + keyframes from the database for file paths
     shot_result = await session.execute(
         select(Shot)
-        .where(Shot.project_id == project_id)
+        .where(Shot.scene_id == scene_id)
         .order_by(Shot.shot_index)
     )
     db_shots = list(shot_result.scalars().all())
@@ -173,7 +173,7 @@ async def create_manifest_from_project(
             asset_type="ENVIRONMENT",
             description=shot_desc or None,
         )
-        asset.source = "project_import"
+        asset.source = "scene_import"
         if start_prompt:
             asset.reverse_prompt = start_prompt
 
@@ -203,9 +203,9 @@ async def create_manifest_from_project(
             manifest_id=manifest.id,
             name="Visual Style",
             asset_type="STYLE",
-            description="Style guide from project import",
+            description="Style guide from scene import",
         )
-        asset.source = "project_import"
+        asset.source = "scene_import"
         if style_reverse_prompt:
             asset.reverse_prompt = style_reverse_prompt
         assets_list.append(asset)
@@ -318,20 +318,20 @@ async def delete_manifest(
     """Soft delete manifest by setting deleted_at timestamp.
 
     Raises:
-        ValueError: If manifest not found or if referenced by active projects
+        ValueError: If manifest not found or if referenced by active scenes
     """
     manifest = await get_manifest(session, manifest_id)
     if not manifest:
         raise ValueError(f"Manifest {manifest_id} not found")
 
-    # Check if any projects reference this manifest
+    # Check if any scenes reference this manifest
     result = await session.execute(
-        select(func.count(Project.id)).where(Project.manifest_id == manifest_id)
+        select(func.count(Scene.id)).where(Scene.manifest_id == manifest_id)
     )
-    project_count = result.scalar()
+    scene_count = result.scalar()
 
-    if project_count > 0:
-        raise ValueError(f"Cannot delete manifest: referenced by {project_count} project(s)")
+    if scene_count > 0:
+        raise ValueError(f"Cannot delete manifest: referenced by {scene_count} scene(s)")
 
     manifest.deleted_at = func.now()
     await session.flush()
@@ -626,14 +626,14 @@ def save_asset_image(
 async def create_snapshot(
     session: AsyncSession,
     manifest_id: uuid.UUID,
-    project_id: uuid.UUID,
+    scene_id: uuid.UUID,
 ) -> ManifestSnapshot:
     """Create a snapshot of manifest state at generation time.
 
     Args:
         session: Active database session
         manifest_id: Manifest UUID to snapshot
-        project_id: Project UUID this snapshot belongs to
+        scene_id: Scene UUID this snapshot belongs to
 
     Returns:
         Created ManifestSnapshot instance
@@ -692,7 +692,7 @@ async def create_snapshot(
     # Create snapshot
     snapshot = ManifestSnapshot(
         manifest_id=manifest_id,
-        project_id=project_id,
+        scene_id=scene_id,
         version_at_snapshot=manifest.version,
         snapshot_data=snapshot_data,
     )
@@ -769,7 +769,7 @@ def format_asset_registry(assets: list[Asset]) -> str:
     if not assets:
         return "No assets registered. Describe all visual elements in shots."
 
-    lines = ["AVAILABLE ASSETS FOR THIS PROJECT:", "━" * 40]
+    lines = ["AVAILABLE ASSETS FOR THIS SCENE:", "━" * 40]
 
     for asset in assets:
         # Header line with quality score

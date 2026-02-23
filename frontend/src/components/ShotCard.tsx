@@ -54,14 +54,14 @@ function PulseDot({ failed }: { failed?: boolean }) {
 export function ShotCard({
   shot,
   defaultExpanded = false,
-  projectId,
+  sceneId,
   qualityMode = false,
   onViewManifest,
   manifestId,
 }: {
   shot: ShotDetail;
   defaultExpanded?: boolean;
-  projectId?: string;
+  sceneId?: string;
   qualityMode?: boolean;
   onViewManifest?: (manifestId: string) => void;
   manifestId?: string | null;
@@ -115,15 +115,15 @@ export function ShotCard({
   }, [isGenerating]);
 
   useEffect(() => {
-    if (qualityMode && projectId && expanded && !candidatesLoaded) {
-      listCandidates(projectId, shot.shot_index)
+    if (qualityMode && sceneId && expanded && !candidatesLoaded) {
+      listCandidates(sceneId, shot.shot_index)
         .then((data) => {
           setCandidates(data);
           setCandidatesLoaded(true);
         })
         .catch(() => {}); // Non-critical — shot card still shows normally
     }
-  }, [qualityMode, projectId, expanded, candidatesLoaded, shot.shot_index]);
+  }, [qualityMode, sceneId, expanded, candidatesLoaded, shot.shot_index]);
 
   const shotLabel = `Shot ${shot.shot_index + 1}`;
 
@@ -331,8 +331,8 @@ export function ShotCard({
                     key={c.candidate_id}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!c.is_selected && projectId) {
-                        selectCandidate(projectId, shot.shot_index, c.candidate_id)
+                      if (!c.is_selected && sceneId) {
+                        selectCandidate(sceneId, shot.shot_index, c.candidate_id)
                           .then(() => {
                             setCandidates((prev) =>
                               prev.map((p) => ({

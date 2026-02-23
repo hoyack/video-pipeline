@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { WsEvent } from "../api/wsTypes.ts";
 
-interface UseProjectWebSocketOptions {
-  projectId: string | undefined;
+interface UseSceneWebSocketOptions {
+  sceneId: string | undefined;
   enabled: boolean;
   onEvent: (event: WsEvent) => void;
 }
 
-interface UseProjectWebSocketResult {
+interface UseSceneWebSocketResult {
   connected: boolean;
   error: string | null;
 }
@@ -16,11 +16,11 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const MAX_RECONNECT_DELAY = 30_000;
 const CLIENT_PING_INTERVAL = 25_000;
 
-export function useProjectWebSocket({
-  projectId,
+export function useSceneWebSocket({
+  sceneId,
   enabled,
   onEvent,
-}: UseProjectWebSocketOptions): UseProjectWebSocketResult {
+}: UseSceneWebSocketOptions): UseSceneWebSocketResult {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,10 +57,10 @@ export function useProjectWebSocket({
   }, []);
 
   const connect = useCallback(() => {
-    if (!projectId || !enabled) return;
+    if (!sceneId || !enabled) return;
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${location.host}/api/projects/${projectId}/ws`;
+    const url = `${protocol}//${location.host}/api/scenes/${sceneId}/ws`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -106,10 +106,10 @@ export function useProjectWebSocket({
     ws.onerror = () => {
       // onerror is always followed by onclose; no special handling needed
     };
-  }, [projectId, enabled, cleanup]);
+  }, [sceneId, enabled, cleanup]);
 
   useEffect(() => {
-    if (enabled && projectId) {
+    if (enabled && sceneId) {
       reconnectCountRef.current = 0;
       // Defer connection to next tick so React Strict Mode's mount→unmount→mount
       // cycle cancels the first attempt before the WebSocket is actually created.
@@ -118,7 +118,7 @@ export function useProjectWebSocket({
       cleanup();
     }
     return cleanup;
-  }, [enabled, projectId, connect, cleanup]);
+  }, [enabled, sceneId, connect, cleanup]);
 
   return { connected, error };
 }

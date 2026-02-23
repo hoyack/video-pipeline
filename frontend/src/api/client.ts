@@ -2,18 +2,18 @@ import type {
   GenerateRequest,
   GenerateResponse,
   StatusResponse,
-  ProjectDetail,
-  PaginatedProjects,
+  SceneDetail,
+  PaginatedScenes,
   ResumeResponse,
   StopResponse,
   ForkRequest,
   ForkResponse,
-  EditProjectRequest,
-  EditProjectResponse,
+  EditSceneRequest,
+  EditSceneResponse,
   CheckpointListItem,
   CheckpointDiff,
   RegenerateShotRequest,
-  RegenerateProjectRequest,
+  RegenerateSceneRequest,
   RegenerateTextRequest,
   RegenerateTextResponse,
   GenerateShotFieldsRequest,
@@ -33,8 +33,8 @@ import type {
   UserSettingsResponse,
   UserSettingsUpdate,
   EnabledModelsResponse,
-  CreateDraftProjectRequest,
-  CreateDraftProjectResponse,
+  CreateDraftSceneRequest,
+  CreateDraftSceneResponse,
   StartGenerationRequest,
   StartGenerationResponse,
 } from "./types.ts";
@@ -58,18 +58,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** POST /api/projects — create a draft project (no pipeline execution) */
-export function createDraftProject(body: CreateDraftProjectRequest = {}): Promise<CreateDraftProjectResponse> {
-  return request<CreateDraftProjectResponse>("/api/projects", {
+/** POST /api/scenes — create a draft scene (no pipeline execution) */
+export function createDraftScene(body: CreateDraftSceneRequest = {}): Promise<CreateDraftSceneResponse> {
+  return request<CreateDraftSceneResponse>("/api/scenes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-/** POST /api/projects/{id}/generate — start pipeline on an existing project */
-export function startGeneration(projectId: string, body?: StartGenerationRequest): Promise<StartGenerationResponse> {
-  return request<StartGenerationResponse>(`/api/projects/${projectId}/generate`, {
+/** POST /api/scenes/{id}/generate — start pipeline on an existing scene */
+export function startGeneration(sceneId: string, body?: StartGenerationRequest): Promise<StartGenerationResponse> {
+  return request<StartGenerationResponse>(`/api/scenes/${sceneId}/generate`, {
     method: "POST",
     ...(body
       ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
@@ -86,51 +86,51 @@ export function generateVideo(body: GenerateRequest): Promise<GenerateResponse> 
   });
 }
 
-/** GET /api/projects/{id}/status — lightweight polling endpoint */
-export function getProjectStatus(projectId: string): Promise<StatusResponse> {
-  return request<StatusResponse>(`/api/projects/${projectId}/status`);
+/** GET /api/scenes/{id}/status — lightweight polling endpoint */
+export function getSceneStatus(sceneId: string): Promise<StatusResponse> {
+  return request<StatusResponse>(`/api/scenes/${sceneId}/status`);
 }
 
-/** GET /api/projects/{id} — full project detail with shots */
-export function getProjectDetail(projectId: string): Promise<ProjectDetail> {
-  return request<ProjectDetail>(`/api/projects/${projectId}`);
+/** GET /api/scenes/{id} — full scene detail with shots */
+export function getSceneDetail(sceneId: string): Promise<SceneDetail> {
+  return request<SceneDetail>(`/api/scenes/${sceneId}`);
 }
 
-/** GET /api/projects — list projects with pagination */
-export function listProjects(params?: {
+/** GET /api/scenes — list scenes with pagination */
+export function listScenes(params?: {
   page?: number;
   per_page?: number;
   view?: string;
   status?: string;
-}): Promise<PaginatedProjects> {
+}): Promise<PaginatedScenes> {
   const searchParams = new URLSearchParams();
   if (params?.page) searchParams.set("page", String(params.page));
   if (params?.per_page) searchParams.set("per_page", String(params.per_page));
   if (params?.view) searchParams.set("view", params.view);
   if (params?.status) searchParams.set("status", params.status);
   const qs = searchParams.toString();
-  return request<PaginatedProjects>(`/api/projects${qs ? `?${qs}` : ""}`);
+  return request<PaginatedScenes>(`/api/scenes${qs ? `?${qs}` : ""}`);
 }
 
-/** PATCH /api/projects/{id} — update project title */
-export function updateProject(projectId: string, body: { title: string }): Promise<{ project_id: string; title: string }> {
-  return request<{ project_id: string; title: string }>(`/api/projects/${projectId}`, {
+/** PATCH /api/scenes/{id} — update scene title */
+export function updateScene(sceneId: string, body: { title: string }): Promise<{ scene_id: string; title: string }> {
+  return request<{ scene_id: string; title: string }>(`/api/scenes/${sceneId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-/** DELETE /api/projects/{id} — soft delete project */
-export function deleteProject(projectId: string): Promise<{ status: string; project_id: string }> {
-  return request<{ status: string; project_id: string }>(`/api/projects/${projectId}`, {
+/** DELETE /api/scenes/{id} — soft delete scene */
+export function deleteScene(sceneId: string): Promise<{ status: string; scene_id: string }> {
+  return request<{ status: string; scene_id: string }>(`/api/scenes/${sceneId}`, {
     method: "DELETE",
   });
 }
 
-/** POST /api/projects/{id}/resume — resume a failed/interrupted job */
-export function resumeProject(
-  projectId: string,
+/** POST /api/scenes/{id}/resume — resume a failed/interrupted job */
+export function resumeScene(
+  sceneId: string,
   body?: {
     run_through?: string | null;
     image_model?: string;
@@ -140,7 +140,7 @@ export function resumeProject(
     clip_duration?: number;
   },
 ): Promise<ResumeResponse> {
-  return request<ResumeResponse>(`/api/projects/${projectId}/resume`, {
+  return request<ResumeResponse>(`/api/scenes/${sceneId}/resume`, {
     method: "POST",
     ...(body
       ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
@@ -148,37 +148,37 @@ export function resumeProject(
   });
 }
 
-/** POST /api/projects/{id}/stop — stop a running pipeline */
-export function stopProject(projectId: string): Promise<StopResponse> {
-  return request<StopResponse>(`/api/projects/${projectId}/stop`, {
+/** POST /api/scenes/{id}/stop — stop a running pipeline */
+export function stopScene(sceneId: string): Promise<StopResponse> {
+  return request<StopResponse>(`/api/scenes/${sceneId}/stop`, {
     method: "POST",
   });
 }
 
-/** POST /api/projects/{id}/fork — fork a project with optional edits */
-export function forkProject(projectId: string, body: ForkRequest): Promise<ForkResponse> {
-  return request<ForkResponse>(`/api/projects/${projectId}/fork`, {
+/** POST /api/scenes/{id}/fork — fork a scene with optional edits */
+export function forkScene(sceneId: string, body: ForkRequest): Promise<ForkResponse> {
+  return request<ForkResponse>(`/api/scenes/${sceneId}/fork`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-/** PATCH /api/projects/{id}/edit — edit project in-place (PipeSVN) */
-export function editProject(projectId: string, body: EditProjectRequest): Promise<EditProjectResponse> {
-  return request<EditProjectResponse>(`/api/projects/${projectId}/edit`, {
+/** PATCH /api/scenes/{id}/edit — edit scene in-place (PipeSVN) */
+export function editScene(sceneId: string, body: EditSceneRequest): Promise<EditSceneResponse> {
+  return request<EditSceneResponse>(`/api/scenes/${sceneId}/edit`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-/** GET /api/projects/{id}/download — returns download URL (not JSON) */
-export function getDownloadUrl(projectId: string): string {
-  return `/api/projects/${projectId}/download`;
+/** GET /api/scenes/{id}/download — returns download URL (not JSON) */
+export function getDownloadUrl(sceneId: string): string {
+  return `/api/scenes/${sceneId}/download`;
 }
 
-/** GET /api/metrics — aggregate metrics across all projects */
+/** GET /api/metrics — aggregate metrics across all scenes */
 export function getMetrics(): Promise<MetricsResponse> {
   return request<MetricsResponse>("/api/metrics");
 }
@@ -206,15 +206,15 @@ export function createManifest(body: CreateManifestRequest): Promise<ManifestLis
   });
 }
 
-/** POST /api/manifests/from-project — create manifest from project storyboard */
-export function importProjectToManifest(
-  projectId: string,
+/** POST /api/manifests/from-scene — create manifest from scene storyboard */
+export function importSceneToManifest(
+  sceneId: string,
   name?: string,
 ): Promise<ManifestDetail> {
-  return request<ManifestDetail>("/api/manifests/from-project", {
+  return request<ManifestDetail>("/api/manifests/from-scene", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project_id: projectId, name }),
+    body: JSON.stringify({ scene_id: sceneId, name }),
   });
 }
 
@@ -329,24 +329,24 @@ export function reprocessAsset(assetId: string): Promise<AssetResponse> {
   });
 }
 
-/** GET /api/projects/{id}/shots/{idx}/candidates */
+/** GET /api/scenes/{id}/shots/{idx}/candidates */
 export function listCandidates(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
 ): Promise<CandidateScore[]> {
   return request<CandidateScore[]>(
-    `/api/projects/${projectId}/shots/${shotIdx}/candidates`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/candidates`,
   );
 }
 
-/** PUT /api/projects/{id}/shots/{idx}/candidates/{cid}/select */
+/** PUT /api/scenes/{id}/shots/{idx}/candidates/{cid}/select */
 export function selectCandidate(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
   candidateId: string,
 ): Promise<{ selected: string; selected_by: string }> {
   return request<{ selected: string; selected_by: string }>(
-    `/api/projects/${projectId}/shots/${shotIdx}/candidates/${candidateId}/select`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/candidates/${candidateId}/select`,
     { method: "PUT" },
   );
 }
@@ -382,37 +382,37 @@ export function getEnabledModels(): Promise<EnabledModelsResponse> {
 // PipeSVN: Checkpoint API
 // ============================================================================
 
-/** GET /api/projects/{id}/checkpoints — list checkpoints */
-export function listCheckpoints(projectId: string): Promise<CheckpointListItem[]> {
-  return request<CheckpointListItem[]>(`/api/projects/${projectId}/checkpoints`);
+/** GET /api/scenes/{id}/checkpoints — list checkpoints */
+export function listCheckpoints(sceneId: string): Promise<CheckpointListItem[]> {
+  return request<CheckpointListItem[]>(`/api/scenes/${sceneId}/checkpoints`);
 }
 
-/** GET /api/projects/{id}/checkpoints/{sha}/diff — get checkpoint diff */
-export function getCheckpointDiff(projectId: string, sha: string): Promise<CheckpointDiff> {
-  return request<CheckpointDiff>(`/api/projects/${projectId}/checkpoints/${sha}/diff`);
+/** GET /api/scenes/{id}/checkpoints/{sha}/diff — get checkpoint diff */
+export function getCheckpointDiff(sceneId: string, sha: string): Promise<CheckpointDiff> {
+  return request<CheckpointDiff>(`/api/scenes/${sceneId}/checkpoints/${sha}/diff`);
 }
 
-/** POST /api/projects/{id}/checkpoints — create manual checkpoint */
-export function createCheckpoint(projectId: string): Promise<{ sha: string; message: string }> {
-  return request<{ sha: string; message: string }>(`/api/projects/${projectId}/checkpoints`, {
+/** POST /api/scenes/{id}/checkpoints — create manual checkpoint */
+export function createCheckpoint(sceneId: string): Promise<{ sha: string; message: string }> {
+  return request<{ sha: string; message: string }>(`/api/scenes/${sceneId}/checkpoints`, {
     method: "POST",
   });
 }
 
-/** DELETE /api/projects/{id}/checkpoints/{sha} — delete checkpoint */
-export function deleteCheckpoint(projectId: string, sha: string): Promise<{ status: string }> {
-  return request<{ status: string }>(`/api/projects/${projectId}/checkpoints/${sha}`, {
+/** DELETE /api/scenes/{id}/checkpoints/{sha} — delete checkpoint */
+export function deleteCheckpoint(sceneId: string, sha: string): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/scenes/${sceneId}/checkpoints/${sha}`, {
     method: "DELETE",
   });
 }
 
-/** POST /api/projects/{id}/revert — revert to checkpoint */
+/** POST /api/scenes/{id}/revert — revert to checkpoint */
 export function revertToCheckpoint(
-  projectId: string,
+  sceneId: string,
   sha: string,
 ): Promise<{ status: string; head_sha: string; reverted_to: string }> {
   return request<{ status: string; head_sha: string; reverted_to: string }>(
-    `/api/projects/${projectId}/revert`,
+    `/api/scenes/${sceneId}/revert`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -425,14 +425,14 @@ export function revertToCheckpoint(
 // PipeSVN: Regeneration API
 // ============================================================================
 
-/** POST /api/projects/{id}/shots/{idx}/regenerate — regenerate shot assets */
+/** POST /api/scenes/{id}/shots/{idx}/regenerate — regenerate shot assets */
 export function regenerateShot(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
   body: RegenerateShotRequest,
 ): Promise<{ status: string; head_sha?: string | null }> {
   return request<{ status: string; head_sha?: string | null }>(
-    `/api/projects/${projectId}/shots/${shotIdx}/regenerate`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/regenerate`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -441,55 +441,55 @@ export function regenerateShot(
   );
 }
 
-/** POST /api/projects/{id}/shots/{idx}/regenerate-text — regenerate a text field via LLM */
+/** POST /api/scenes/{id}/shots/{idx}/regenerate-text — regenerate a text field via LLM */
 export function regenerateShotText(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
   body: RegenerateTextRequest,
 ): Promise<RegenerateTextResponse> {
   return request<RegenerateTextResponse>(
-    `/api/projects/${projectId}/shots/${shotIdx}/regenerate-text`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/regenerate-text`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
   );
 }
 
-/** POST /api/projects/{id}/generate-shot-fields — generate all 5 text fields for a new shot */
+/** POST /api/scenes/{id}/generate-shot-fields — generate all 5 text fields for a new shot */
 export function generateShotFields(
-  projectId: string,
+  sceneId: string,
   body: GenerateShotFieldsRequest,
 ): Promise<GenerateShotFieldsResponse> {
   return request<GenerateShotFieldsResponse>(
-    `/api/projects/${projectId}/generate-shot-fields`,
+    `/api/scenes/${sceneId}/generate-shot-fields`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
   );
 }
 
-/** POST /api/projects/{id}/generate-new-shot — generate complete shot (text sync + assets background) */
+/** POST /api/scenes/{id}/generate-new-shot — generate complete shot (text sync + assets background) */
 export function generateNewShot(
-  projectId: string,
+  sceneId: string,
   body: GenerateNewShotRequest,
 ): Promise<GenerateNewShotResponse> {
   return request<GenerateNewShotResponse>(
-    `/api/projects/${projectId}/generate-new-shot`,
+    `/api/scenes/${sceneId}/generate-new-shot`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
   );
 }
 
-/** POST /api/projects/{id}/regenerate — project-wide regeneration */
-export function regenerateProject(
-  projectId: string,
-  body: RegenerateProjectRequest,
+/** POST /api/scenes/{id}/regenerate — scene-wide regeneration */
+export function regenerateScene(
+  sceneId: string,
+  body: RegenerateSceneRequest,
 ): Promise<{ status: string }> {
-  return request<{ status: string }>(`/api/projects/${projectId}/regenerate`, {
+  return request<{ status: string }>(`/api/scenes/${sceneId}/regenerate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-/** PUT /api/projects/{id}/shots/{idx}/keyframes/{pos} — upload keyframe */
+/** PUT /api/scenes/{id}/shots/{idx}/keyframes/{pos} — upload keyframe */
 export async function uploadKeyframe(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
   position: string,
   file: File,
@@ -497,7 +497,7 @@ export async function uploadKeyframe(
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(
-    `/api/projects/${projectId}/shots/${shotIdx}/keyframes/${position}`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/keyframes/${position}`,
     { method: "PUT", body: formData },
   );
   if (!res.ok) {
@@ -507,16 +507,16 @@ export async function uploadKeyframe(
   return res.json();
 }
 
-/** PUT /api/projects/{id}/shots/{idx}/clip — upload clip */
+/** PUT /api/scenes/{id}/shots/{idx}/clip — upload clip */
 export async function uploadClip(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
   file: File,
 ): Promise<{ status: string; file_path: string; clip_id: string }> {
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(
-    `/api/projects/${projectId}/shots/${shotIdx}/clip`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/clip`,
     { method: "PUT", body: formData },
   );
   if (!res.ok) {
@@ -526,27 +526,102 @@ export async function uploadClip(
   return res.json();
 }
 
-/** DELETE /api/projects/{id}/shots/{idx}/clip — delete clip */
+/** DELETE /api/scenes/{id}/shots/{idx}/clip — delete clip */
 export function deleteShotClip(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
 ): Promise<{ status: string }> {
   return request<{ status: string }>(
-    `/api/projects/${projectId}/shots/${shotIdx}/clip`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/clip`,
     { method: "DELETE" },
   );
 }
 
-/** DELETE /api/projects/{id}/shots/{idx}/keyframes/{pos} — delete keyframe */
+/** DELETE /api/scenes/{id}/shots/{idx}/keyframes/{pos} — delete keyframe */
 export function deleteShotKeyframe(
-  projectId: string,
+  sceneId: string,
   shotIdx: number,
   position: string,
 ): Promise<{ status: string }> {
   return request<{ status: string }>(
-    `/api/projects/${projectId}/shots/${shotIdx}/keyframes/${position}`,
+    `/api/scenes/${sceneId}/shots/${shotIdx}/keyframes/${position}`,
     { method: "DELETE" },
   );
+}
+
+// ============================================================================
+// Productions API
+// ============================================================================
+
+export interface ProductionResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  tags: string[] | null;
+  scene_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductionCreate {
+  name: string;
+  description?: string;
+  tags?: string[];
+}
+
+export interface ProductionUpdate {
+  name?: string;
+  description?: string;
+  tags?: string[];
+}
+
+/** GET /api/productions — list all productions */
+export function listProductions(): Promise<ProductionResponse[]> {
+  return request<ProductionResponse[]>("/api/productions");
+}
+
+/** POST /api/productions — create a production */
+export function createProduction(body: ProductionCreate): Promise<ProductionResponse> {
+  return request<ProductionResponse>("/api/productions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** GET /api/productions/{id} — get production detail */
+export function getProduction(productionId: string): Promise<ProductionResponse> {
+  return request<ProductionResponse>(`/api/productions/${productionId}`);
+}
+
+/** PUT /api/productions/{id} — update production */
+export function updateProduction(productionId: string, body: ProductionUpdate): Promise<ProductionResponse> {
+  return request<ProductionResponse>(`/api/productions/${productionId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE /api/productions/{id} — delete production */
+export function deleteProduction(productionId: string): Promise<{ status: string; production_id: string }> {
+  return request<{ status: string; production_id: string }>(`/api/productions/${productionId}`, {
+    method: "DELETE",
+  });
+}
+
+/** POST /api/productions/{id}/scenes/{sceneId} — add scene to production */
+export function addSceneToProduction(productionId: string, sceneId: string): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/productions/${productionId}/scenes/${sceneId}`, {
+    method: "POST",
+  });
+}
+
+/** DELETE /api/productions/{id}/scenes/{sceneId} — remove scene from production */
+export function removeSceneFromProduction(productionId: string, sceneId: string): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/productions/${productionId}/scenes/${sceneId}`, {
+    method: "DELETE",
+  });
 }
 
 export { ApiError };

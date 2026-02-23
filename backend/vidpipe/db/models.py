@@ -13,6 +13,24 @@ class Base(DeclarativeBase):
     pass
 
 
+class Production(Base):
+    """Production model representing a named collection of scenes.
+
+    Domain hierarchy: Production → Scene → Shot
+    """
+    __tablename__ = "productions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
 class Manifest(Base):
     """Manifest model representing a standalone, reusable asset collection.
 
@@ -84,7 +102,7 @@ class Asset(Base):
     # Phase 12: Fork inheritance tracking
     is_inherited: Mapped[bool] = mapped_column(Boolean, default=False)
     inherited_from_asset: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("assets.id"), nullable=True)
-    inherited_from_project: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    inherited_from_scene: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scenes.id"), nullable=True)
 
 
 class AssetCleanReference(Base):
@@ -123,7 +141,7 @@ class AssetAppearance(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assets.id"), index=True)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     shot_index: Mapped[int] = mapped_column(Integer)
     frame_index: Mapped[int] = mapped_column(Integer)  # Which sampled frame (0-7)
     timestamp_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -142,18 +160,18 @@ class ManifestSnapshot(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     manifest_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("manifests.id"), index=True)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     version_at_snapshot: Mapped[int] = mapped_column(Integer)
     snapshot_data: Mapped[dict] = mapped_column(JSON)  # Full manifest + assets serialized
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
-class Project(Base):
-    """Project model representing a video generation project.
+class Scene(Base):
+    """Scene model representing a video generation scene.
 
     Spec reference: Section 4.1
     """
-    __tablename__ = "projects"
+    __tablename__ = "scenes"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
@@ -169,7 +187,7 @@ class Project(Base):
     audio_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     seed: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     forked_from_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("projects.id"), nullable=True
+        ForeignKey("scenes.id"), nullable=True
     )
     manifest_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("manifests.id"), nullable=True, index=True
@@ -191,6 +209,11 @@ class Project(Base):
     # PipeSVN: version control
     head_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
+    # Production association
+    production_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("productions.id"), nullable=True, index=True
+    )
+
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -204,14 +227,14 @@ class Project(Base):
 
 
 class Shot(Base):
-    """Shot model representing a single shot within a project.
+    """Shot model representing a single shot within a scene.
 
     Spec reference: Section 4.2
     """
     __tablename__ = "shots"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     shot_index: Mapped[int] = mapped_column(Integer)
     shot_description: Mapped[str] = mapped_column(Text)
     start_frame_prompt: Mapped[str] = mapped_column(Text)
@@ -231,7 +254,7 @@ class ShotManifest(Base):
     """
     __tablename__ = "shot_manifests"
 
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), primary_key=True)
     shot_index: Mapped[int] = mapped_column(Integer, primary_key=True)
     manifest_json: Mapped[dict] = mapped_column(JSON)
     composition_shot_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -256,7 +279,7 @@ class ShotAudioManifest(Base):
     """
     __tablename__ = "shot_audio_manifests"
 
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), primary_key=True)
     shot_index: Mapped[int] = mapped_column(Integer, primary_key=True)
     dialogue_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     sfx_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
@@ -317,11 +340,11 @@ class GenerationCandidate(Base):
     """
     __tablename__ = "generation_candidates"
     __table_args__ = (
-        Index("idx_candidates_project_shot", "project_id", "shot_index"),
+        Index("idx_candidates_scene_shot", "scene_id", "shot_index"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     shot_index: Mapped[int] = mapped_column(Integer)
     candidate_number: Mapped[int] = mapped_column(Integer)  # 0-based index within batch
     local_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -349,14 +372,14 @@ class GenerationCandidate(Base):
 
 
 class PipelineRun(Base):
-    """PipelineRun model tracking execution metrics for a project.
+    """PipelineRun model tracking execution metrics for a scene.
 
     Spec reference: Section 4.5
     """
     __tablename__ = "pipeline_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     started_at: Mapped[datetime] = mapped_column(server_default=func.now())
     completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     total_duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -430,19 +453,19 @@ class UserSettings(Base):
     )
 
 
-class ProjectCheckpoint(Base):
-    """Immutable snapshot of project state for version control.
+class SceneCheckpoint(Base):
+    """Immutable snapshot of scene state for version control.
 
     Spec reference: PipeSVN
     """
-    __tablename__ = "project_checkpoints"
+    __tablename__ = "scene_checkpoints"
     __table_args__ = (
-        UniqueConstraint("project_id", "sha", name="uq_checkpoint_project_sha"),
-        Index("idx_checkpoint_project_created", "project_id", "created_at"),
+        UniqueConstraint("scene_id", "sha", name="uq_checkpoint_scene_sha"),
+        Index("idx_checkpoint_scene_created", "scene_id", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     sha: Mapped[str] = mapped_column(String(40))
     parent_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     snapshot_data: Mapped[dict] = mapped_column(JSON)

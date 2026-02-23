@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 class EventBus:
-    """Lightweight publish-subscribe bus keyed by project_id.
+    """Lightweight publish-subscribe bus keyed by scene_id.
 
-    Pipeline functions call ``emit(project_id, event_type, **payload)`` to
+    Pipeline functions call ``emit(scene_id, event_type, **payload)`` to
     broadcast progress events.  WebSocket endpoints ``subscribe`` to receive
     events via an ``asyncio.Queue``.
 
@@ -26,21 +26,21 @@ class EventBus:
         self._subscribers: dict[str, set[asyncio.Queue]] = {}
 
     @staticmethod
-    def _normalize(project_id: Union[str, _uuid.UUID]) -> str:
-        """Normalize project_id to hex string (no dashes)."""
-        if isinstance(project_id, _uuid.UUID):
-            return project_id.hex
-        return str(project_id).replace("-", "")
+    def _normalize(scene_id: Union[str, _uuid.UUID]) -> str:
+        """Normalize scene_id to hex string (no dashes)."""
+        if isinstance(scene_id, _uuid.UUID):
+            return scene_id.hex
+        return str(scene_id).replace("-", "")
 
-    def subscribe(self, project_id: Union[str, _uuid.UUID]) -> asyncio.Queue:
-        key = self._normalize(project_id)
+    def subscribe(self, scene_id: Union[str, _uuid.UUID]) -> asyncio.Queue:
+        key = self._normalize(scene_id)
         queue: asyncio.Queue = asyncio.Queue(maxsize=256)
         self._subscribers.setdefault(key, set()).add(queue)
         logger.debug("EventBus: subscribed to %s (total=%d)", key, len(self._subscribers[key]))
         return queue
 
-    def unsubscribe(self, project_id: Union[str, _uuid.UUID], queue: asyncio.Queue) -> None:
-        key = self._normalize(project_id)
+    def unsubscribe(self, scene_id: Union[str, _uuid.UUID], queue: asyncio.Queue) -> None:
+        key = self._normalize(scene_id)
         subs = self._subscribers.get(key)
         if subs:
             subs.discard(queue)
@@ -48,8 +48,8 @@ class EventBus:
                 del self._subscribers[key]
         logger.debug("EventBus: unsubscribed from %s", key)
 
-    def emit(self, project_id: Union[str, _uuid.UUID], event_type: str, **payload: Any) -> None:
-        key = self._normalize(project_id)
+    def emit(self, scene_id: Union[str, _uuid.UUID], event_type: str, **payload: Any) -> None:
+        key = self._normalize(scene_id)
         subs = self._subscribers.get(key)
         if not subs:
             return

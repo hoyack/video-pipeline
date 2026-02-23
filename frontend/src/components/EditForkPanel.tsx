@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
-import { forkProject, fetchManifestAssets, getEnabledModels } from "../api/client.ts";
+import { forkScene, fetchManifestAssets, getEnabledModels } from "../api/client.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
-import type { ProjectDetail } from "../api/types.ts";
+import type { SceneDetail } from "../api/types.ts";
 import type { ForkRequest, AssetResponse, ModifiedAsset, NewForkUpload, EnabledModelsResponse } from "../api/types.ts";
 import {
   STYLE_OPTIONS,
@@ -16,14 +16,14 @@ import {
 import { EditableShotCard } from "./EditableShotCard.tsx";
 
 interface EditForkPanelProps {
-  detail: ProjectDetail;
-  onForked: (newProjectId: string) => void;
+  detail: SceneDetail;
+  onForked: (newSceneId: string) => void;
   onCancel: () => void;
 }
 
 export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps) {
   const { showCost } = useShowCost();
-  // Project-level state (initialized from existing detail)
+  // Scene-level state (initialized from existing detail)
   const [prompt, setPrompt] = useState(detail.prompt);
   const [style, setStyle] = useState(detail.style);
   const [aspectRatio, setAspectRatio] = useState(detail.aspect_ratio);
@@ -262,7 +262,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
   function buildForkRequest(): ForkRequest {
     const req: ForkRequest = {};
 
-    // Only include changed project-level fields
+    // Only include changed scene-level fields
     if (prompt !== detail.prompt) req.prompt = prompt;
     if (style !== detail.style) req.style = style;
     if (aspectRatio !== detail.aspect_ratio) req.aspect_ratio = aspectRatio;
@@ -312,8 +312,8 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     setError(null);
     try {
       const req = buildForkRequest();
-      const res = await forkProject(detail.project_id, req);
-      onForked(res.project_id);
+      const res = await forkScene(detail.scene_id, req);
+      onForked(res.scene_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fork failed");
     } finally {
@@ -325,9 +325,9 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-white">Fork Project</h2>
+          <h2 className="text-lg font-bold text-white">Fork Scene</h2>
           <p className="text-sm text-gray-400">
-            Modify settings or shot prompts, then fork to create a new project.
+            Modify settings or shot prompts, then fork to create a new scene.
           </p>
         </div>
         <button

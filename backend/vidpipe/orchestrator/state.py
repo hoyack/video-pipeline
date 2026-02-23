@@ -8,8 +8,8 @@ from typing import Dict
 
 # Pipeline states in execution order
 PIPELINE_STATES = {
-    "draft": "Project created, not yet generating",
-    "pending": "Initial state after project creation",
+    "draft": "Scene created, not yet generating",
+    "pending": "Initial state after scene creation",
     "storyboarding": "Generating storyboard from prompt",
     "keyframing": "Generating sequential keyframe images",
     "video_gen": "Generating video clips via Veo",
@@ -47,7 +47,7 @@ def can_resume(status: str) -> bool:
     """Check if pipeline can resume from given status.
 
     Args:
-        status: Current project status
+        status: Current scene status
 
     Returns:
         True if status is resumable, False otherwise
@@ -63,9 +63,9 @@ def get_resume_step(status: str, completed_steps: Dict[str, bool]) -> str:
     completed.
 
     Args:
-        status: Current project status
+        status: Current scene status
         completed_steps: Dict with keys:
-            - has_storyboard: project has shots (count > 0)
+            - has_storyboard: scene has shots (count > 0)
             - has_keyframes: all shots have both start and end keyframes
             - has_clips: all shots have completed video clips
 

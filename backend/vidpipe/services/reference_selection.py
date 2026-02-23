@@ -35,7 +35,7 @@ def select_references_for_shot(
 
     Args:
         shot_manifest_json: Shot manifest JSON (from ShotManifest.manifest_json)
-        all_assets: All manifest assets available for this project
+        all_assets: All manifest assets available for this scene
 
     Returns:
         List of up to 3 Asset objects selected for Veo reference passthrough

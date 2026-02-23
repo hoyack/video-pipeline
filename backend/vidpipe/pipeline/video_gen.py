@@ -888,8 +888,8 @@ async def generate_videos(
 
     # Update project status
     project.status = "stitching"
-    event_bus.emit(project.id, "phase_completed", phase="clips")
     await session.commit()
+    event_bus.emit(project.id, "phase_completed", phase="clips")
 
 
 # ---------------------------------------------------------------------------

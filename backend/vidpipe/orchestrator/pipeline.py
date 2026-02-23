@@ -8,6 +8,7 @@ Coordinates the full video generation pipeline with:
 - Progress callback interface for CLI/API integration
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -279,6 +280,10 @@ async def run_pipeline(
 
         await _check_stopped(session, project_id)
 
+        # Brief pause between phases so the frontend can fetch and display
+        # each phase's results before the next phase overwrites generation_status.
+        await asyncio.sleep(0.3)
+
         # Step 2: Keyframe generation
         if project.status == "keyframing":
             # Check if expansion scenes are needed (fork delete-then-expand)
@@ -307,6 +312,7 @@ async def run_pipeline(
                 raise PipelineStaged()
 
         await _check_stopped(session, project_id)
+        await asyncio.sleep(0.3)
 
         # Step 3: Video generation
         if project.status == "video_gen":
@@ -330,6 +336,7 @@ async def run_pipeline(
                 raise PipelineStaged()
 
         await _check_stopped(session, project_id)
+        await asyncio.sleep(0.3)
 
         # Step 4: Stitching
         if project.status == "stitching":

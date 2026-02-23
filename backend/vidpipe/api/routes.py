@@ -13,11 +13,11 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import and_ as sa_and, case, func as sa_func, select
+from sqlalchemy import and_ as sa_and, case, func as sa_func, select, update
 from sqlalchemy.orm import selectinload
 
 from vidpipe.db import async_session
-from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID, ProjectCheckpoint
+from vidpipe.db.models import Project, Scene, Keyframe, VideoClip, Manifest, Asset, SceneManifest as SceneManifestModel, SceneAudioManifest as SceneAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID, ProjectCheckpoint, AssetAppearance
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import SceneSchema
@@ -332,6 +332,7 @@ class EditProjectRequest(BaseModel):
     manifest_id: Optional[str] = None
     scene_edits: Optional[dict[int, SceneEditPayload]] = None
     removed_scenes: Optional[list[int]] = None
+    scene_order: Optional[list[int]] = None
     commit_message: Optional[str] = None
     expected_sha: Optional[str] = None
 
@@ -2465,6 +2466,78 @@ async def edit_project_in_place(project_id: uuid.UUID, body: EditProjectRequest)
                 if scene:
                     scene.status = "removed"
                     changes.append({"type": "scene_removed", "scene_index": scene_idx})
+
+        # Reorder scenes
+        if body.scene_order is not None:
+            # Fetch all active scenes for this project
+            scene_result = await session.execute(
+                select(Scene).where(
+                    Scene.project_id == project.id,
+                    Scene.status != "removed",
+                )
+            )
+            active_scenes = {s.scene_index: s for s in scene_result.scalars().all()}
+
+            # Validate: all indices in scene_order must exist
+            for idx in body.scene_order:
+                if idx not in active_scenes:
+                    raise HTTPException(400, f"scene_order references unknown scene_index {idx}")
+
+            # Two-pass renumber to avoid composite PK collisions
+            # Pass 1: assign temporary negative indices
+            temp_mapping = {}  # old_index -> temp_index
+            for i, old_idx in enumerate(body.scene_order):
+                temp_idx = -(i + 1)
+                temp_mapping[old_idx] = temp_idx
+
+            for old_idx, temp_idx in temp_mapping.items():
+                active_scenes[old_idx].scene_index = temp_idx
+                await session.execute(
+                    update(SceneManifestModel).where(
+                        SceneManifestModel.project_id == project.id,
+                        SceneManifestModel.scene_index == old_idx,
+                    ).values(scene_index=temp_idx)
+                )
+                await session.execute(
+                    update(SceneAudioManifestModel).where(
+                        SceneAudioManifestModel.project_id == project.id,
+                        SceneAudioManifestModel.scene_index == old_idx,
+                    ).values(scene_index=temp_idx)
+                )
+                await session.execute(
+                    update(AssetAppearance).where(
+                        AssetAppearance.project_id == project.id,
+                        AssetAppearance.scene_index == old_idx,
+                    ).values(scene_index=temp_idx)
+                )
+
+            await session.flush()
+
+            # Pass 2: assign final indices (0, 1, 2, ...)
+            for new_idx, old_idx in enumerate(body.scene_order):
+                temp_idx = temp_mapping[old_idx]
+                active_scenes[old_idx].scene_index = new_idx
+                await session.execute(
+                    update(SceneManifestModel).where(
+                        SceneManifestModel.project_id == project.id,
+                        SceneManifestModel.scene_index == temp_idx,
+                    ).values(scene_index=new_idx)
+                )
+                await session.execute(
+                    update(SceneAudioManifestModel).where(
+                        SceneAudioManifestModel.project_id == project.id,
+                        SceneAudioManifestModel.scene_index == temp_idx,
+                    ).values(scene_index=new_idx)
+                )
+                await session.execute(
+                    update(AssetAppearance).where(
+                        AssetAppearance.project_id == project.id,
+                        AssetAppearance.scene_index == temp_idx,
+                    ).values(scene_index=new_idx)
+                )
+
+            await session.flush()
+            changes.append({"type": "scenes_reordered", "new_order": body.scene_order})
 
         if not changes:
             raise HTTPException(status_code=400, detail="No changes to commit")
@@ -5228,32 +5301,7 @@ async def _run_keyframes_regeneration(
             from vidpipe.services.llm import get_adapter
             text_adapter = get_adapter(project.text_model, user_settings=user_settings)
 
-            # Delete stale keyframe records so gap-filling regenerates them
-            from vidpipe.services.checkpoint_service import compute_keyframe_staleness
-            from vidpipe.db.models import SceneManifest as SceneManifestModel
-
-            scenes_result = await session.execute(
-                select(Scene).where(Scene.project_id == project.id).order_by(Scene.scene_index)
-            )
-            scenes = scenes_result.scalars().all()
-
-            for scene in scenes:
-                kf_result = await session.execute(select(Keyframe).where(Keyframe.scene_id == scene.id))
-                kfs = kf_result.scalars().all()
-                sm_result = await session.execute(
-                    select(SceneManifestModel).where(
-                        SceneManifestModel.project_id == project.id,
-                        SceneManifestModel.scene_index == scene.scene_index,
-                    )
-                )
-                sm = sm_result.scalar_one_or_none()
-
-                for kf in kfs:
-                    staleness = compute_keyframe_staleness(scene, kf, sm)
-                    if staleness in ("stale", "missing"):
-                        await session.delete(kf)
-                await session.flush()
-
+            # Gap-filling: generate_keyframes already skips scenes with existing keyframes
             from vidpipe.pipeline.keyframes import generate_keyframes
             await generate_keyframes(session, project, text_adapter=text_adapter)
 
@@ -5312,10 +5360,8 @@ async def _run_clips_regeneration(
             if project.vision_model:
                 vision_adapter = get_adapter(project.vision_model, user_settings=user_settings)
 
-            # Delete stale clip records and reset scene status so generate_videos picks them up
-            from vidpipe.services.checkpoint_service import compute_clip_staleness
-            from vidpipe.db.models import SceneManifest as SceneManifestModel
-
+            # Gap-filling: ensure scenes without clips have the right status
+            # for generate_videos to pick them up
             scenes_result = await session.execute(
                 select(Scene).where(Scene.project_id == project.id).order_by(Scene.scene_index)
             )
@@ -5326,19 +5372,8 @@ async def _run_clips_regeneration(
                     select(VideoClip).where(VideoClip.scene_id == scene.id)
                 )
                 clip = clip_result.scalar_one_or_none()
-                sm_result = await session.execute(
-                    select(SceneManifestModel).where(
-                        SceneManifestModel.project_id == project.id,
-                        SceneManifestModel.scene_index == scene.scene_index,
-                    )
-                )
-                sm = sm_result.scalar_one_or_none()
-
-                staleness = compute_clip_staleness(scene, clip, sm)
-                if staleness in ("stale", "missing"):
-                    if clip:
-                        await session.delete(clip)
-                    # generate_videos filters on status == "keyframes_done"
+                if not clip:
+                    # No clip exists — mark as keyframes_done so generate_videos picks it up
                     scene.status = "keyframes_done"
             await session.flush()
 

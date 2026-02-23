@@ -44,18 +44,6 @@ async def stitch_videos(session: AsyncSession, project: Project) -> None:
     """
     file_mgr = FileManager()
 
-    # Gap-filling: skip if final video already exists (VGED-06)
-    if project.output_path:
-        existing_output = Path(project.output_path)
-        if existing_output.exists():
-            logger.info(
-                f"Project {project.id}: final video already exists at "
-                f"{project.output_path}, skipping stitch"
-            )
-            project.status = "complete"
-            await session.commit()
-            return
-
     # Query completed clips in scene order (STCH-04)
     result = await session.execute(
         select(VideoClip)

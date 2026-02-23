@@ -153,6 +153,7 @@ export interface EditProjectRequest {
   manifest_id?: string | null;
   scene_edits?: Record<number, SceneEditPayload>;
   removed_scenes?: number[];
+  scene_order?: number[];  // scene_indices in desired display order
   commit_message?: string;
   expected_sha?: string;
 }

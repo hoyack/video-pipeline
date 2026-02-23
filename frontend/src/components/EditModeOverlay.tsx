@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import clsx from "clsx";
-import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewScene, getDownloadUrl, deleteProject } from "../api/client.ts";
+import { editProject, getEnabledModels, regenerateProject, revertToCheckpoint, createCheckpoint, generateNewScene, getDownloadUrl, deleteProject, stopProject } from "../api/client.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { ProjectDetail, SceneDetail, SceneEditPayload, EditProjectRequest, EnabledModelsResponse, SceneReference } from "../api/types.ts";
 import { usePolling } from "../hooks/usePolling.ts";
@@ -12,8 +12,11 @@ import {
   VIDEO_MODELS,
   estimatePartialCost,
 } from "../lib/constants.ts";
-import { SceneEditorCard } from "./SceneEditorCard.tsx";
+import { SortableSceneCard } from "./SortableSceneCard.tsx";
 import { CopyButton } from "./CopyButton.tsx";
+import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
 import { ManifestSelector } from "./ManifestSelector.tsx";
 import { RegenProgressBar } from "./RegenProgressBar.tsx";
@@ -89,6 +92,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   // Accordion state — all collapsed by default
   const [expandedScenes, setExpandedScenes] = useState<Set<number>>(new Set());
 
+  // Drag-and-drop scene order
+  const [sceneOrder, setSceneOrder] = useState<number[]>([]);
+
   const [commitMessage, setCommitMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,9 +102,17 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
   const [stitching, setStitching] = useState(false);
   const [stitchMessage, setStitchMessage] = useState<string | null>(null);
+  const [promptExpanded, setPromptExpanded] = useState(!detail.prompt);
+  const [manifestExpanded, setManifestExpanded] = useState(!detail.manifest_id);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+
+  // Settings panel — expand by default if any key setting is missing
+  const [settingsExpanded, setSettingsExpanded] = useState(
+    !detail.text_model || !detail.image_model || !detail.video_model
+    || !detail.style || !detail.aspect_ratio || !detail.clip_duration,
+  );
 
   // Background operation tracking: regen ("all"/"stale") or stitch
   // When set, polling is enabled and we watch for head_sha to change.
@@ -115,15 +129,25 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     completedScenes: number;
     currentSceneIndex: number | null;
     currentStatus: string | null;
-  }>({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+    completedPhases: string[];
+  }>({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
 
   const handleWsEvent = useCallback((event: WsEvent) => {
     switch (event.type) {
       case "phase_started":
-        setWsProgress({ phase: event.phase, totalScenes: event.total_scenes, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+        setWsProgress(prev => ({ ...prev, phase: event.phase, totalScenes: event.total_scenes, completedScenes: 0, currentSceneIndex: null, currentStatus: null }));
+        onRefresh?.();  // Fetch updated generation_status (e.g. "generating_text")
         break;
       case "phase_completed":
-        setWsProgress(prev => ({ ...prev, phase: null, currentSceneIndex: null, currentStatus: null }));
+        setWsProgress(prev => ({
+          ...prev,
+          phase: null,
+          currentSceneIndex: null,
+          currentStatus: null,
+          completedPhases: prev.completedPhases.includes(event.phase)
+            ? prev.completedPhases
+            : [...prev.completedPhases, event.phase],
+        }));
         break;
       case "scene_status":
         setWsProgress(prev => ({ ...prev, currentSceneIndex: event.scene_index, currentStatus: event.status }));
@@ -135,6 +159,13 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         onRefresh?.();
         break;
       case "scene_text_ready":
+        setWsProgress(prev =>
+          prev.phase === "storyboard"
+            ? { ...prev, completedScenes: prev.completedScenes + 1 }
+            : prev,
+        );
+        onRefresh?.();
+        break;
       case "stitch_ready":
       case "refresh":
         onRefresh?.();
@@ -148,13 +179,16 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         const op = bgOpPending;
         setBgOpPending(null);
         bgOpBaselineSha.current = null;
-        setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+        setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
         if (op === "stitch") {
           setStitchMessage("Re-stitch complete — video updated.");
         } else if (op) {
           setRegenMessage(`Regeneration (${op}) complete.`);
         }
         onRefresh?.();
+        // Safety-net: re-fetch after a short delay to catch any data
+        // that wasn't visible in the first refresh (e.g. commit timing)
+        setTimeout(() => onRefresh?.(), 2000);
         break;
       }
       case "error":
@@ -162,7 +196,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         if (bgOpPending) {
           setBgOpPending(null);
           bgOpBaselineSha.current = null;
-          setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null });
+          setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
         }
         break;
       case "scene_regen_started":
@@ -174,10 +208,11 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     }
   }, [bgOpPending, onRefresh]);
 
-  const wsEnabled = bgOpPending !== null || generatingSceneIndices.size > 0;
+  // Always keep WS connected in Edit Mode — avoids race conditions where
+  // toggling enabled creates/destroys the connection before it establishes.
   const { connected: wsConnected } = useProjectWebSocket({
     projectId: detail.project_id,
-    enabled: wsEnabled,
+    enabled: true,
     onEvent: handleWsEvent,
   });
 
@@ -263,8 +298,10 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         quality_mode: detail.quality_mode,
         candidate_count: detail.candidate_count,
       },
-      scenes: detail.scenes
-        .filter((s) => !s.is_empty_slot && !removedScenes.has(s.scene_index))
+      scenes: sceneOrder
+        .filter(idx => !removedScenes.has(idx))
+        .map(idx => scenesByIndex.get(idx))
+        .filter((s): s is SceneDetail => s != null && !s.is_empty_slot)
         .map((s) => ({
           scene_index: s.scene_index,
           description: effective(s, "scene_description", s.description),
@@ -601,6 +638,16 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       req.removed_scenes = [...removedScenes];
     }
 
+    // Check if scene order changed from original
+    const originalOrder = allScenes.map(s => s.scene_index);
+    const activeOrder = sceneOrder.filter(idx => !removedScenes.has(idx));
+    const originalActive = originalOrder.filter(idx => !removedScenes.has(idx));
+    const orderChanged = activeOrder.length !== originalActive.length
+      || activeOrder.some((v, i) => v !== originalActive[i]);
+    if (orderChanged) {
+      req.scene_order = activeOrder;
+    }
+
     if (commitMessage.trim()) {
       req.commit_message = commitMessage.trim();
     }
@@ -690,6 +737,10 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       }
 
       bgOpBaselineSha.current = currentSha;
+      // Set bgOpPending BEFORE the API call so the WS handler is ready for
+      // events as soon as the backend starts the background pipeline.
+      setBgOpPending(scope);
+      handleRegenStarted(currentSha);
       await regenerateProject(detail.project_id, {
         scope,
         ...(textModel ? { text_model: textModel } : {}),
@@ -697,10 +748,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         ...(videoModel ? { video_model: videoModel } : {}),
         ...(scope === "all_phases" ? { run_through: runThrough } : {}),
       });
-      handleRegenStarted(detail.head_sha ?? null);
-      setBgOpPending(scope);
       setRegenMessage(`Regeneration (${scope}) started — running in background.`);
     } catch (err) {
+      setBgOpPending(null);  // Clear since the API call failed
       setError(err instanceof Error ? err.message : "Regeneration failed");
     } finally {
       setRegenScope(null);
@@ -713,13 +763,27 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     setError(null);
     try {
       bgOpBaselineSha.current = detail.head_sha ?? null;
-      await regenerateProject(detail.project_id, { scope: "stitch_only" });
       setBgOpPending("stitch");
+      await regenerateProject(detail.project_id, { scope: "stitch_only" });
       setStitchMessage("Re-stitching started — video will update when complete.");
     } catch (err) {
+      setBgOpPending(null);
       setError(err instanceof Error ? err.message : "Re-stitch failed");
     } finally {
       setStitching(false);
+    }
+  }
+
+  async function handleStopPipeline() {
+    try {
+      await stopProject(detail.project_id);
+      setBgOpPending(null);
+      bgOpBaselineSha.current = null;
+      setWsProgress({ phase: null, totalScenes: 0, completedScenes: 0, currentSceneIndex: null, currentStatus: null, completedPhases: [] });
+      setRegenMessage("Generation cancelled.");
+      onRefresh?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel");
     }
   }
 
@@ -757,6 +821,44 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   }));
 
   const allScenes = [...detail.scenes, ...syntheticScenes];
+
+  // Keep sceneOrder in sync when allScenes changes (refresh, add/remove scenes)
+  useEffect(() => {
+    setSceneOrder(prev => {
+      const allIndices = new Set(allScenes.map(s => s.scene_index));
+      const kept = prev.filter(idx => allIndices.has(idx));
+      const keptSet = new Set(kept);
+      const added = allScenes
+        .map(s => s.scene_index)
+        .filter(idx => !keptSet.has(idx));
+      const merged = [...kept, ...added];
+      if (merged.length === prev.length && merged.every((v, i) => v === prev[i])) return prev;
+      return merged;
+    });
+  }, [allScenes]);
+
+  const scenesByIndex = useMemo(() => {
+    const map = new Map<number, SceneDetail>();
+    for (const s of allScenes) map.set(s.scene_index, s);
+    return map;
+  }, [allScenes]);
+
+  // DnD sensors & handler
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setSceneOrder(prev => {
+        const oldIndex = prev.indexOf(Number(active.id));
+        const newIndex = prev.indexOf(Number(over.id));
+        return arrayMove(prev, oldIndex, newIndex);
+      });
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -824,7 +926,28 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </div>
       </div>
 
-      {/* Import feedback */}
+      {/* Notifications — consolidated at top for visibility */}
+      {error && (
+        <div className="rounded-md border border-red-800 bg-red-900/50 px-3 py-2 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+      {regenMessage && (
+        <div className="flex items-center justify-between rounded-md border border-green-800 bg-green-900/50 px-3 py-2 text-sm text-green-300">
+          <span>{regenMessage}</span>
+          <button onClick={() => setRegenMessage(null)} className="text-green-400 hover:text-green-300 text-xs ml-2">
+            Dismiss
+          </button>
+        </div>
+      )}
+      {stitchMessage && (
+        <div className="flex items-center justify-between rounded-md border border-green-800 bg-green-900/50 px-3 py-2 text-sm text-green-300">
+          <span>{stitchMessage}</span>
+          <button onClick={() => setStitchMessage(null)} className="text-green-400 hover:text-green-300 text-xs ml-2">
+            &times;
+          </button>
+        </div>
+      )}
       {importMessage && (
         <div className="flex items-center justify-between rounded-md border border-blue-800 bg-blue-900/50 px-3 py-2 text-sm text-blue-300">
           <span>{importMessage}</span>
@@ -834,46 +957,67 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </div>
       )}
 
-      {/* Prompt */}
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <label htmlFor="edit-prompt" className="text-sm font-medium text-gray-300">
-            Prompt
-          </label>
-          <div className="flex items-center gap-1">
-            <CopyButton text={prompt} />
-            <button
-              type="button"
-              onClick={() => setPromptEditorOpen(true)}
-              className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-gray-700/50 transition-colors"
-              title="Edit in markdown editor"
-            >
-              <svg className="h-3.5 w-3.5 text-gray-500 hover:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-              </svg>
-            </button>
+      {/* Prompt — collapsible */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50">
+        <button
+          type="button"
+          onClick={() => setPromptExpanded(!promptExpanded)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Prompt</h3>
+            {!promptExpanded && prompt && (
+              <span className="text-xs text-gray-500 truncate">{prompt}</span>
+            )}
           </div>
-        </div>
-        <textarea
-          id="edit-prompt"
-          rows={3}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          className={clsx(
-            "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1",
-            prompt !== detail.prompt
-              ? "border-amber-600 focus:ring-amber-500"
-              : "border-gray-700 focus:ring-blue-500",
-          )}
-        />
-        {promptEditorOpen && (
-          <MarkdownEditorModal
-            label="Project Prompt"
-            value={prompt}
-            onChange={setPrompt}
-            onClose={() => setPromptEditorOpen(false)}
-          />
+          <svg
+            className={clsx(
+              "h-4 w-4 text-gray-500 transition-transform shrink-0",
+              promptExpanded && "rotate-180",
+            )}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {promptExpanded && (
+          <div className="px-4 pb-4">
+            <div className="mb-1 flex items-center justify-end gap-1">
+              <CopyButton text={prompt} />
+              <button
+                type="button"
+                onClick={() => setPromptEditorOpen(true)}
+                className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-gray-700/50 transition-colors"
+                title="Edit in markdown editor"
+              >
+                <svg className="h-3.5 w-3.5 text-gray-500 hover:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                </svg>
+              </button>
+            </div>
+            <textarea
+              id="edit-prompt"
+              rows={3}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              className={clsx(
+                "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1",
+                prompt !== detail.prompt
+                  ? "border-amber-600 focus:ring-amber-500"
+                  : "border-gray-700 focus:ring-blue-500",
+              )}
+            />
+            {promptEditorOpen && (
+              <MarkdownEditorModal
+                label="Project Prompt"
+                value={prompt}
+                onChange={setPrompt}
+                onClose={() => setPromptEditorOpen(false)}
+              />
+            )}
+          </div>
         )}
       </div>
 
@@ -905,14 +1049,6 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
             </button>
           </div>
         </div>
-        {stitchMessage && (
-          <div className="mb-2 flex items-center justify-between rounded border border-green-800 bg-green-900/50 px-2 py-1 text-[11px] text-green-300">
-            <span>{stitchMessage}</span>
-            <button onClick={() => setStitchMessage(null)} className="text-green-400 hover:text-green-300 text-xs ml-2">
-              &times;
-            </button>
-          </div>
-        )}
         {detail.status === "complete" ? (
           <video
             src={`${getDownloadUrl(detail.project_id)}?v=${detail.head_sha ?? ""}`}
@@ -927,13 +1063,41 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         )}
       </div>
 
-      {/* Asset Manifest */}
-      <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4">
-        <h3 className="mb-2 text-sm font-medium text-gray-400">Asset Manifest</h3>
-        <ManifestSelector
-          selectedManifestId={manifestId}
-          onManifestSelect={setManifestId}
-        />
+      {/* Asset Manifest — collapsible */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50">
+        <button
+          type="button"
+          onClick={() => setManifestExpanded(!manifestExpanded)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Asset Manifest</h3>
+            {!manifestExpanded && manifestId && (
+              <span className="text-xs text-gray-500 truncate">{manifestId}</span>
+            )}
+            {!manifestExpanded && !manifestId && (
+              <span className="text-xs text-gray-500">None</span>
+            )}
+          </div>
+          <svg
+            className={clsx(
+              "h-4 w-4 text-gray-500 transition-transform shrink-0",
+              manifestExpanded && "rotate-180",
+            )}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {manifestExpanded && (
+          <div className="px-4 pb-4">
+            <ManifestSelector
+              selectedManifestId={manifestId}
+              onManifestSelect={setManifestId}
+            />
+          </div>
+        )}
       </div>
 
       {/* Scene Count */}
@@ -989,33 +1153,43 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
               {expandedScenes.size > 0 ? "Collapse All" : "Expand All"}
             </button>
           </div>
-          <div className="grid gap-3">
-            {allScenes.map((scene) => (
-              <SceneEditorCard
-                key={scene.scene_index}
-                scene={scene}
-                edits={sceneEdits[scene.scene_index] || {}}
-                onChange={handleSceneChange}
-                removed={removedScenes.has(scene.scene_index)}
-                onRemove={handleRemoveScene}
-                onRestore={handleRestoreScene}
-                canRemove={activeScenes.length + syntheticCount > 1}
-                projectId={detail.project_id}
-                onAssetChanged={handleAssetChanged}
-                onRegenStarted={handleRegenStarted}
-                textModel={textModel}
-                videoModel={videoModel}
-                imageModel={imageModel}
-                allSceneEdits={sceneEdits}
-                prompt={prompt}
-                onGenerateScene={handleGenerateScene}
-                isGeneratingAssets={generatingSceneIndices.has(scene.scene_index)}
-                wsConnected={wsConnected}
-                expanded={expandedScenes.has(scene.scene_index)}
-                onToggleExpand={() => toggleScene(scene.scene_index)}
-              />
-            ))}
-          </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={sceneOrder} strategy={verticalListSortingStrategy}>
+              <div className="grid gap-3">
+                {sceneOrder.map((sceneIdx, position) => {
+                  const scene = scenesByIndex.get(sceneIdx);
+                  if (!scene) return null;
+                  return (
+                    <SortableSceneCard
+                      id={sceneIdx}
+                      key={sceneIdx}
+                      scene={scene}
+                      displayIndex={position + 1}
+                      edits={sceneEdits[scene.scene_index] || {}}
+                      onChange={handleSceneChange}
+                      removed={removedScenes.has(scene.scene_index)}
+                      onRemove={handleRemoveScene}
+                      onRestore={handleRestoreScene}
+                      canRemove={activeScenes.length + syntheticCount > 1}
+                      projectId={detail.project_id}
+                      onAssetChanged={handleAssetChanged}
+                      onRegenStarted={handleRegenStarted}
+                      textModel={textModel}
+                      videoModel={videoModel}
+                      imageModel={imageModel}
+                      allSceneEdits={sceneEdits}
+                      prompt={prompt}
+                      onGenerateScene={handleGenerateScene}
+                      isGeneratingAssets={generatingSceneIndices.has(scene.scene_index)}
+                      wsConnected={wsConnected}
+                      expanded={expandedScenes.has(scene.scene_index)}
+                      onToggleExpand={() => toggleScene(scene.scene_index)}
+                    />
+                  );
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
         </div>
       )}
 
@@ -1065,36 +1239,36 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                   <button
                     key={scope}
                     type="button"
-                    onClick={() => handleRegenerate(scope)}
-                    disabled={disabled}
+                    onClick={isActive ? handleStopPipeline : () => handleRegenerate(scope)}
+                    disabled={disabled && !isActive}
                     className={clsx(
                       "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
                       isActive
-                        ? "border-gray-700 bg-gray-800 text-gray-500"
+                        ? "border-red-600 bg-red-900/50 text-red-300 hover:bg-red-800/50"
                         : disabled
                           ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
                           : activeClass,
                     )}
                   >
-                    {isActive ? "Running..." : label}
+                    {isActive ? "Cancel" : label}
                   </button>
                 );
               })}
             </div>
             <button
               type="button"
-              onClick={() => handleRegenerate("all_phases")}
-              disabled={allPhasesDisabled}
+              onClick={allPhasesActive ? handleStopPipeline : () => handleRegenerate("all_phases")}
+              disabled={allPhasesDisabled && !allPhasesActive}
               className={clsx(
                 "w-full rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors text-center",
                 allPhasesActive
-                  ? "border-gray-700 bg-gray-800 text-gray-500"
+                  ? "border-red-600 bg-red-900/50 text-red-300 hover:bg-red-800/50"
                   : allPhasesDisabled
                     ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
                     : "border-indigo-600 bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50",
               )}
             >
-              {allPhasesActive ? "Running..." : "All Phases"}
+              {allPhasesActive ? "Cancel" : "All Phases"}
             </button>
           </div>
         );
@@ -1103,12 +1277,14 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       {/* WebSocket progress bar — shown during background operations */}
       {bgOpPending && (
         <RegenProgressBar
+          scope={bgOpPending}
           phase={wsProgress.phase}
           totalScenes={wsProgress.totalScenes}
           completedScenes={wsProgress.completedScenes}
           currentSceneIndex={wsProgress.currentSceneIndex}
           currentStatus={wsProgress.currentStatus}
           wsConnected={wsConnected}
+          completedPhases={wsProgress.completedPhases}
         />
       )}
 
@@ -1124,104 +1300,137 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         </div>
       </div>}
 
-      {/* Models & Settings */}
-      <div className="space-y-4">
-        {/* Text Model + Vision Model (side by side) */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-300">Text Model</label>
-            <div className="flex flex-wrap gap-2">
-              {allTextModels.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setTextModel(textModel === m.id ? "" : m.id)}
-                  className={clsx(
-                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                    textModel === m.id
-                      ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                  )}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-300">
-              Vision Model
-              <span className="ml-2 text-xs text-gray-500 font-normal">
-                For image analysis &amp; scoring
+      {/* Models & Settings — collapsible */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50">
+        <button
+          type="button"
+          onClick={() => setSettingsExpanded(!settingsExpanded)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-gray-300">Models & Settings</h3>
+            {!settingsExpanded && (
+              <span className="text-xs text-gray-500">
+                {[
+                  allTextModels.find(m => m.id === textModel)?.label,
+                  filteredImageModels.find(m => m.id === imageModel)?.label,
+                  filteredVideoModels.find(m => m.id === videoModel)?.label,
+                  aspectRatio,
+                  clipDuration ? `${clipDuration}s` : null,
+                  style ? style.replace("_", " ") : null,
+                ].filter(Boolean).join(" · ") || "Not configured"}
               </span>
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {allVisionModels.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setVisionModel(visionModel === m.id ? "" : m.id)}
-                  className={clsx(
-                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                    visionModel === m.id
-                      ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                      : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                  )}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+            )}
           </div>
-        </div>
+          <svg
+            className={clsx(
+              "h-4 w-4 text-gray-500 transition-transform",
+              settingsExpanded && "rotate-180",
+            )}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
 
-        {/* Image Model + Aspect Ratio */}
-        <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-300">Image Model</label>
-              <div className="flex flex-wrap gap-2">
-                {filteredImageModels.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setImageModel(imageModel === m.id ? "" : m.id)}
-                    className={clsx(
-                      "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                      imageModel === m.id
-                        ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                        : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                    )}
-                  >
-                    {m.label}
-                  </button>
-                ))}
+        {settingsExpanded && (
+          <div className="space-y-4 px-4 pb-4">
+            {/* Text Model + Vision Model (side by side) */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-300">Text Model</label>
+                <div className="flex flex-wrap gap-2">
+                  {allTextModels.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setTextModel(textModel === m.id ? "" : m.id)}
+                      className={clsx(
+                        "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                        textModel === m.id
+                          ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                          : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-300">
+                  Vision Model
+                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                    For image analysis &amp; scoring
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {allVisionModels.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setVisionModel(visionModel === m.id ? "" : m.id)}
+                      className={clsx(
+                        "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                        visionModel === m.id
+                          ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                          : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-300">Aspect Ratio</label>
-              <div className="flex gap-2">
-                {ASPECT_RATIOS.map((ar) => (
-                  <button
-                    key={ar}
-                    type="button"
-                    onClick={() => setAspectRatio(aspectRatio === ar ? "" : ar)}
-                    className={clsx(
-                      "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
-                      aspectRatio === ar
-                        ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                        : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                    )}
-                  >
-                    {ar}
-                  </button>
-                ))}
+            {/* Image Model + Aspect Ratio */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-300">Image Model</label>
+                <div className="flex flex-wrap gap-2">
+                  {filteredImageModels.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setImageModel(imageModel === m.id ? "" : m.id)}
+                      className={clsx(
+                        "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                        imageModel === m.id
+                          ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                          : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-300">Aspect Ratio</label>
+                <div className="flex gap-2">
+                  {ASPECT_RATIOS.map((ar) => (
+                    <button
+                      key={ar}
+                      type="button"
+                      onClick={() => setAspectRatio(aspectRatio === ar ? "" : ar)}
+                      className={clsx(
+                        "rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
+                        aspectRatio === ar
+                          ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                          : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                      )}
+                    >
+                      {ar}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
 
-        {/* Video Model + Scene Length + Audio */}
+            {/* Video Model + Scene Length + Audio */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-300">Video Model</label>
@@ -1291,34 +1500,36 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
               </div>
             )}
 
-        {/* Style (always visible) */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">Style</label>
-          <div className="flex flex-wrap gap-2">
-            {STYLE_OPTIONS.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStyle(style === s ? "" : s)}
-                className={clsx(
-                  "rounded-md border px-3 py-1.5 text-sm font-medium capitalize transition-colors",
-                  style === s
-                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
-                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
-                )}
-              >
-                {s.replace("_", " ")}
-              </button>
-            ))}
-          </div>
-        </div>
+            {/* Style */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-300">Style</label>
+              <div className="flex flex-wrap gap-2">
+                {STYLE_OPTIONS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStyle(style === s ? "" : s)}
+                    className={clsx(
+                      "rounded-md border px-3 py-1.5 text-sm font-medium capitalize transition-colors",
+                      style === s
+                        ? "border-indigo-500 bg-indigo-500/20 text-indigo-300"
+                        : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                    )}
+                  >
+                    {s.replace("_", " ")}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        {/* Quality Mode (read-only) */}
-        {detail.quality_mode && (
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-amber-900/50 border border-amber-700 px-2.5 py-0.5 text-xs font-medium text-amber-300">
-              Quality Mode: {detail.candidate_count ?? 2}x candidates
-            </span>
+            {/* Quality Mode (read-only) */}
+            {detail.quality_mode && (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full bg-amber-900/50 border border-amber-700 px-2.5 py-0.5 text-xs font-medium text-amber-300">
+                  Quality Mode: {detail.candidate_count ?? 2}x candidates
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1337,23 +1548,6 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
       </div>
-
-      {/* Error */}
-      {error && (
-        <div className="rounded-md border border-red-800 bg-red-900/50 px-3 py-2 text-sm text-red-300">
-          {error}
-        </div>
-      )}
-
-      {/* Regen feedback */}
-      {regenMessage && (
-        <div className="flex items-center justify-between rounded-md border border-green-800 bg-green-900/50 px-3 py-2 text-sm text-green-300">
-          <span>{regenMessage}</span>
-          <button onClick={() => setRegenMessage(null)} className="text-green-400 hover:text-green-300 text-xs ml-2">
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {/* Actions */}
       <div className="flex items-center gap-3">
@@ -1374,7 +1568,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           disabled={cancelling}
           className="rounded-lg border border-gray-700 px-4 py-2.5 text-sm font-medium text-gray-300 hover:border-gray-600 transition-colors disabled:opacity-50"
         >
-          {cancelling ? "Reverting..." : "Cancel"}
+          {cancelling ? "Reverting..." : "Close"}
         </button>
         <button
           onClick={async () => {

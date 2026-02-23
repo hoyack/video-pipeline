@@ -27,11 +27,16 @@ export function useProjectWebSocket({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectCountRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
   const cleanup = useCallback(() => {
+    if (connectTimerRef.current) {
+      clearTimeout(connectTimerRef.current);
+      connectTimerRef.current = null;
+    }
     if (pingTimerRef.current) {
       clearInterval(pingTimerRef.current);
       pingTimerRef.current = null;
@@ -106,7 +111,9 @@ export function useProjectWebSocket({
   useEffect(() => {
     if (enabled && projectId) {
       reconnectCountRef.current = 0;
-      connect();
+      // Defer connection to next tick so React Strict Mode's mount→unmount→mount
+      // cycle cancels the first attempt before the WebSocket is actually created.
+      connectTimerRef.current = setTimeout(connect, 0);
     } else {
       cleanup();
     }

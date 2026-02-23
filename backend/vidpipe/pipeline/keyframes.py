@@ -856,5 +856,5 @@ async def generate_keyframes(
 
     # Update project status after all keyframes generated
     project.status = "generating_video"
-    event_bus.emit(project.id, "phase_completed", phase="keyframes")
     await session.commit()
+    event_bus.emit(project.id, "phase_completed", phase="keyframes")

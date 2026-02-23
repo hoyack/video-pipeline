@@ -46,6 +46,12 @@ interface SceneEditorCardProps {
   expanded?: boolean;
   /** Toggle expand/collapse */
   onToggleExpand?: () => void;
+  /** 1-based display position (from drag order) */
+  displayIndex?: number;
+  /** Drag handle listeners from useSortable */
+  dragHandleListeners?: Record<string, Function>;
+  /** Drag handle attributes from useSortable */
+  dragHandleAttributes?: Record<string, unknown>;
 }
 
 function StalenessBadge({ staleness }: { staleness: string | null | undefined }) {
@@ -231,6 +237,9 @@ export function SceneEditorCard({
   wsConnected,
   expanded,
   onToggleExpand,
+  displayIndex,
+  dragHandleListeners,
+  dragHandleAttributes,
 }: SceneEditorCardProps) {
   const idx = scene.scene_index;
   const [promptDetailsOpen, setPromptDetailsOpen] = useState(false);
@@ -491,6 +500,22 @@ export function SceneEditorCard({
         onClick={onToggleExpand}
       >
         <div className="flex items-center gap-1.5 min-w-0">
+          {dragHandleListeners && dragHandleAttributes && (
+            <button
+              type="button"
+              className="flex-shrink-0 cursor-grab active:cursor-grabbing text-gray-600 hover:text-gray-400 transition-colors touch-none"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              {...dragHandleAttributes}
+              {...dragHandleListeners}
+            >
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                <circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="3" r="1.5" />
+                <circle cx="5" cy="8" r="1.5" /><circle cx="11" cy="8" r="1.5" />
+                <circle cx="5" cy="13" r="1.5" /><circle cx="11" cy="13" r="1.5" />
+              </svg>
+            </button>
+          )}
           {onToggleExpand && (
             <svg
               className={clsx("h-3.5 w-3.5 flex-shrink-0 text-gray-500 transition-transform", expanded && "rotate-180")}
@@ -500,7 +525,7 @@ export function SceneEditorCard({
             </svg>
           )}
           <span className={clsx("text-xs font-medium flex-shrink-0", isNewScene ? "text-emerald-400" : "text-gray-400")}>
-            Scene {idx + 1}{isNewScene ? " — New" : ""}
+            Scene {displayIndex ?? (idx + 1)}{isNewScene ? " — New" : ""}
           </span>
           {expanded === false && (
             <>

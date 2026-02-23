@@ -472,10 +472,15 @@ async def generate_storyboard(
                     status="pending",
                 )
                 session.add(scene)
-            event_bus.emit(project.id, "scene_text_ready", scene_index=scene_data.scene_index)
         # Clear generation_status on filled scenes too
         for s in filled_scenes:
             s.generation_status = None
+        # Safety net: clear generation_status on any empty scene the LLM
+        # didn't include in its output (prevents stuck "Generating..." UI)
+        processed_indices = {sd.scene_index for sd in storyboard.scenes}
+        for s in empty_scenes:
+            if s.scene_index not in processed_indices and s.generation_status == "generating_text":
+                s.generation_status = None
     else:
         # Non-draft project: no existing scenes — create all from scratch
         for scene_data in storyboard.scenes:
@@ -490,7 +495,6 @@ async def generate_storyboard(
                 status="pending",
             )
             session.add(scene)
-            event_bus.emit(project.id, "scene_text_ready", scene_index=scene_data.scene_index)
 
     # Persist scene and audio manifests if manifest-aware mode
     if use_manifests:
@@ -569,8 +573,13 @@ async def generate_storyboard(
 
     # Update project status to indicate storyboard completion
     project.status = "keyframing"
+
+    # Commit all changes BEFORE emitting events so that frontend refreshes
+    # see the committed data (generation_status cleared, text fields populated).
+    await session.commit()
+
+    # Now emit events — any frontend refresh will see the committed state
+    for scene_data in storyboard.scenes:
+        event_bus.emit(project.id, "scene_text_ready", scene_index=scene_data.scene_index)
     event_bus.emit(project.id, "phase_completed", phase="storyboard")
     event_bus.emit(project.id, "refresh")
-
-    # Commit all changes
-    await session.commit()

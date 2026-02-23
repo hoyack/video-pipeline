@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { Route, Switch, Redirect, useLocation } from "wouter";
 import { Layout } from "./components/Layout.tsx";
-import type { View } from "./components/Layout.tsx";
 import { GenerateForm } from "./components/GenerateForm.tsx";
 import { ProgressView } from "./components/ProgressView.tsx";
 import { ProjectList } from "./components/ProjectList.tsx";
@@ -13,112 +12,88 @@ import { createDraftProject } from "./api/client.ts";
 import { ShowCostProvider } from "./hooks/useShowCost.tsx";
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>("list");
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [activeManifestId, setActiveManifestId] = useState<string | null>(null);
-
-  function navigateTo(view: View, projectId?: string) {
-    setCurrentView(view);
-    if (projectId !== undefined) {
-      setActiveProjectId(projectId);
-    }
-  }
-
-  function handleGenerated(projectId: string) {
-    navigateTo("progress", projectId);
-  }
-
-  function handleSelectProject(projectId: string) {
-    navigateTo("detail", projectId);
-  }
-
-  function handleViewProgress(projectId: string) {
-    navigateTo("progress", projectId);
-  }
-
-  function handleViewDetail(projectId: string) {
-    navigateTo("detail", projectId);
-  }
-
-  function handleCreateManifest() {
-    setActiveManifestId(null);
-    navigateTo("manifest-creator");
-  }
-
-  function handleEditManifest(manifestId: string) {
-    setActiveManifestId(manifestId);
-    navigateTo("manifest-creator");
-  }
-
-  function handleViewManifest(manifestId: string) {
-    setActiveManifestId(manifestId);
-    navigateTo("manifest-creator"); // View opens creator in read mode for now
-  }
+  const [, navigate] = useLocation();
 
   async function handleNewDraft() {
     try {
       const res = await createDraftProject();
-      navigateTo("detail", res.project_id);
+      navigate(`/projects/${res.project_id}`);
     } catch {
-      // Fall back to generate form if draft creation fails
-      navigateTo("generate");
+      navigate("/generate");
     }
   }
 
   return (
     <ShowCostProvider>
-    <Layout currentView={currentView} onNavigate={(v) => navigateTo(v)}>
-      {currentView === "generate" && (
-        <GenerateForm onGenerated={handleGenerated} />
-      )}
-      {currentView === "progress" && activeProjectId && (
-        <ProgressView
-          projectId={activeProjectId}
-          onViewDetail={handleViewDetail}
-        />
-      )}
-      {currentView === "list" && (
-        <ProjectList
-          onSelectProject={handleSelectProject}
-          onNewProject={() => navigateTo("generate")}
-          onNewDraft={handleNewDraft}
-        />
-      )}
-      {currentView === "detail" && activeProjectId && (
-        <ProjectDetail
-          projectId={activeProjectId}
-          onViewProgress={handleViewProgress}
-          onForked={(newId) => navigateTo("progress", newId)}
-          onViewProject={(id) => navigateTo("detail", id)}
-          onViewManifest={(manifestId) => {
-            setActiveManifestId(manifestId);
-            navigateTo("manifest-creator");
-          }}
-        />
-      )}
-      {currentView === "dashboard" && <Dashboard />}
-      {currentView === "manifests" && (
-        <ManifestLibrary
-          onCreateNew={handleCreateManifest}
-          onEditManifest={handleEditManifest}
-          onViewManifest={handleViewManifest}
-        />
-      )}
-      {currentView === "manifest-creator" && (
-        <ManifestCreator
-          manifestId={activeManifestId}
-          onSaved={() => {
-            setActiveManifestId(null);
-            navigateTo("manifests");
-          }}
-          onCancel={() => {
-            setActiveManifestId(null);
-            navigateTo("manifests");
-          }}
-        />
-      )}
-      {currentView === "settings" && <SettingsPage />}
-    </Layout>
+      <Layout>
+        <Switch>
+          <Route path="/">
+            <ProjectList
+              onSelectProject={(id) => navigate(`/projects/${id}`)}
+              onNewProject={() => navigate("/generate")}
+              onNewDraft={handleNewDraft}
+            />
+          </Route>
+          <Route path="/generate">
+            <GenerateForm
+              onGenerated={(id) => navigate(`/projects/${id}/progress`)}
+            />
+          </Route>
+          <Route path="/projects/:id/progress">
+            {(params) => (
+              <ProgressView
+                projectId={params.id}
+                onViewDetail={(id) => navigate(`/projects/${id}`)}
+              />
+            )}
+          </Route>
+          <Route path="/projects/:id">
+            {(params) => (
+              <ProjectDetail
+                projectId={params.id}
+                onViewProgress={(id) => navigate(`/projects/${id}/progress`)}
+                onForked={(newId) => navigate(`/projects/${newId}/progress`)}
+                onViewProject={(id) => navigate(`/projects/${id}`)}
+                onViewManifest={(manifestId) =>
+                  navigate(`/manifests/${manifestId}/edit`)
+                }
+              />
+            )}
+          </Route>
+          <Route path="/dashboard">
+            <Dashboard />
+          </Route>
+          <Route path="/manifests/new">
+            <ManifestCreator
+              manifestId={null}
+              onSaved={() => navigate("/manifests")}
+              onCancel={() => navigate("/manifests")}
+            />
+          </Route>
+          <Route path="/manifests/:id/edit">
+            {(params) => (
+              <ManifestCreator
+                manifestId={params.id}
+                onSaved={() => navigate("/manifests")}
+                onCancel={() => navigate("/manifests")}
+              />
+            )}
+          </Route>
+          <Route path="/manifests">
+            <ManifestLibrary
+              onCreateNew={() => navigate("/manifests/new")}
+              onEditManifest={(id) => navigate(`/manifests/${id}/edit`)}
+              onViewManifest={(id) => navigate(`/manifests/${id}/edit`)}
+            />
+          </Route>
+          <Route path="/settings">
+            <SettingsPage />
+          </Route>
+          <Route>
+            <Redirect to="/" />
+          </Route>
+        </Switch>
+      </Layout>
     </ShowCostProvider>
   );
 }

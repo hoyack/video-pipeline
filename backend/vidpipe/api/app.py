@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from vidpipe import validate_dependencies
@@ -64,7 +64,18 @@ app.include_router(router)
 # Serve frontend static files in production (after API routes take priority)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
 if _frontend_dist.is_dir():
-    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
+    # Mount /assets separately so JS/CSS bundles are served directly
+    _assets_dir = _frontend_dist / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+    # SPA catch-all: serve the file if it exists, otherwise index.html
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        file = _frontend_dist / full_path
+        if full_path and file.is_file():
+            return FileResponse(str(file))
+        return FileResponse(str(_frontend_dist / "index.html"))
 
 
 @app.exception_handler(Exception)

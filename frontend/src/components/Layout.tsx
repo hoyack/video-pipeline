@@ -1,38 +1,44 @@
 import type { ReactNode } from "react";
-
-export type View = "generate" | "progress" | "list" | "detail" | "dashboard" | "manifests" | "manifest-creator" | "settings";
+import { Link, useLocation } from "wouter";
 
 interface LayoutProps {
-  currentView: View;
-  onNavigate: (view: View) => void;
   children: ReactNode;
 }
 
-const NAV_ITEMS: { view: View; label: string; activeFor?: View[] }[] = [
-  { view: "list", label: "Projects", activeFor: ["generate"] },
-  { view: "manifests", label: "Manifests" },
-  { view: "dashboard", label: "Dashboard" },
-  { view: "settings", label: "Settings" },
+const NAV_ITEMS: { href: string; label: string; match: (path: string) => boolean }[] = [
+  {
+    href: "/",
+    label: "Projects",
+    match: (path) =>
+      path === "/" ||
+      path === "/generate" ||
+      path.startsWith("/projects/"),
+  },
+  { href: "/manifests", label: "Manifests", match: (path) => path.startsWith("/manifests") },
+  { href: "/dashboard", label: "Dashboard", match: (path) => path === "/dashboard" },
+  { href: "/settings", label: "Settings", match: (path) => path === "/settings" },
 ];
 
-export function Layout({ currentView, onNavigate, children }: LayoutProps) {
+export function Layout({ children }: LayoutProps) {
+  const [location] = useLocation();
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <button
-            onClick={() => onNavigate("list")}
+          <Link
+            href="/"
             className="text-lg font-bold tracking-tight text-white"
           >
             vidpipe
-          </button>
+          </Link>
           <nav className="flex gap-1">
-            {NAV_ITEMS.map(({ view, label, activeFor }) => {
-              const isActive = currentView === view || (activeFor?.includes(currentView) ?? false);
+            {NAV_ITEMS.map(({ href, label, match }) => {
+              const isActive = match(location);
               return (
-                <button
-                  key={view}
-                  onClick={() => onNavigate(view)}
+                <Link
+                  key={href}
+                  href={href}
                   className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
                     isActive
                       ? "bg-gray-800 text-white"
@@ -40,7 +46,7 @@ export function Layout({ currentView, onNavigate, children }: LayoutProps) {
                   }`}
                 >
                   {label}
-                </button>
+                </Link>
               );
             })}
           </nav>

@@ -1,1 +1,27 @@
 [     150ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5174/favicon.ico:0
+[44052097ms] [ERROR] Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem. @ http://127.0.0.1:5174/node_modules/.vite/deps/chunk-RY7GF66K.js?v=70516a4c:391
+[44052100ms] [ERROR] Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem. @ http://127.0.0.1:5174/node_modules/.vite/deps/chunk-RY7GF66K.js?v=70516a4c:391
+[44052110ms] TypeError: Cannot read properties of null (reading 'useContext')
+    at exports.useContext (http://127.0.0.1:5174/node_modules/.vite/deps/chunk-RY7GF66K.js?v=70516a4c:911:27)
+    at useRouter (http://127.0.0.1:5174/node_modules/.vite/deps/wouter.js?v=fd792d77:218:51)
+    at useLocation (http://127.0.0.1:5174/node_modules/.vite/deps/wouter.js?v=fd792d77:231:47)
+    at App (http://127.0.0.1:5174/src/App.tsx?t=1771851622191:17:24)
+    at Object.react_stack_bottom_frame (http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:18509:20)
+    at renderWithHooks (http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:5654:24)
+    at updateFunctionComponent (http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:7475:21)
+    at beginWork (http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:8525:20)
+    at runWithFiberInDEV (http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:997:72)
+    at performUnitOfWork (http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:12561:98)
+[44052106ms] [WARNING] %s
+
+%s
+ An error occurred in the <App> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://127.0.0.1:5174/node_modules/.vite/deps/react-dom_client.js?v=c5c82051:6965

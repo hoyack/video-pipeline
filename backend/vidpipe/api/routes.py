@@ -368,6 +368,7 @@ class SceneListItem(BaseModel):
     style: Optional[str] = None
     aspect_ratio: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    production_id: Optional[str] = None
 
 
 class PaginatedScenes(BaseModel):
@@ -383,6 +384,11 @@ class ResumeResponse(BaseModel):
     scene_id: str
     status: str
     status_url: str
+
+
+class BatchAddScenesRequest(BaseModel):
+    """Request body for POST /api/productions/{id}/scenes (batch add)."""
+    scene_ids: list[str]
 
 
 class ContinueRequest(BaseModel):
@@ -1350,6 +1356,7 @@ async def list_scenes(
                     style=p.style,
                     aspect_ratio=p.aspect_ratio,
                     thumbnail_url=thumbnail_map.get(str(p.id)),
+                    production_id=str(p.production_id) if p.production_id else None,
                 )
                 for p in scenes
             ],
@@ -5865,6 +5872,37 @@ async def delete_production(production_id: uuid.UUID):
         await session.delete(prod)
         await session.commit()
         return {"status": "deleted", "production_id": str(production_id)}
+
+@router.post("/productions/{production_id}/scenes")
+async def batch_add_scenes_to_production(production_id: uuid.UUID, body: BatchAddScenesRequest):
+    """Batch-add multiple scenes to a production in one atomic commit."""
+    from vidpipe.db.models import Production
+    if not body.scene_ids:
+        raise HTTPException(status_code=400, detail="scene_ids must not be empty")
+    async with async_session() as session:
+        prod = (await session.execute(select(Production).where(Production.id == production_id))).scalar_one_or_none()
+        if not prod:
+            raise HTTPException(status_code=404, detail="Production not found")
+        parsed_ids = []
+        for sid in body.scene_ids:
+            try:
+                parsed_ids.append(uuid.UUID(sid))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid scene ID: {sid}")
+        scenes = (await session.execute(select(Scene).where(Scene.id.in_(parsed_ids)))).scalars().all()
+        if len(scenes) != len(parsed_ids):
+            found = {s.id for s in scenes}
+            missing = [str(sid) for sid in parsed_ids if sid not in found]
+            raise HTTPException(status_code=404, detail=f"Scenes not found: {', '.join(missing)}")
+        for scene in scenes:
+            scene.production_id = prod.id
+        await session.commit()
+        return {
+            "status": "added",
+            "production_id": str(production_id),
+            "scene_ids": [str(sid) for sid in parsed_ids],
+            "count": len(parsed_ids),
+        }
 
 @router.post("/productions/{production_id}/scenes/{scene_id}")
 async def add_scene_to_production(production_id: uuid.UUID, scene_id: uuid.UUID):

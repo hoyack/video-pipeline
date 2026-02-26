@@ -33,18 +33,24 @@ function shortModel(modelId: string | null | undefined): string | null {
 interface SceneCardProps {
   scene: SceneListItem;
   onClick: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
+  selected?: boolean;
+  selectable?: boolean;
 }
 
-export function SceneCard({ scene, onClick, onDelete }: SceneCardProps) {
+export function SceneCard({ scene, onClick, onDelete, selected, selectable }: SceneCardProps) {
   const { showCost } = useShowCost();
   const cost = formatCost(scene);
-  const canDelete = TERMINAL_STATUSES.has(scene.status);
+  const canDelete = !selectable && TERMINAL_STATUSES.has(scene.status);
 
   return (
     <div
       onClick={onClick}
-      className="group cursor-pointer rounded-lg border border-gray-800 bg-gray-900/50 hover:border-gray-700 transition-colors overflow-hidden"
+      className={`group cursor-pointer rounded-lg border transition-colors overflow-hidden ${
+        selected
+          ? "border-blue-500 bg-blue-500/5"
+          : "border-gray-800 bg-gray-900/50 hover:border-gray-700"
+      }`}
     >
       {/* Thumbnail area */}
       <div className="relative aspect-video bg-gray-800">
@@ -59,6 +65,20 @@ export function SceneCard({ scene, onClick, onDelete }: SceneCardProps) {
             <svg className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
             </svg>
+          </div>
+        )}
+        {/* Selection circle (always visible when selectable — touch-friendly) */}
+        {selectable && (
+          <div className="absolute top-2 left-2">
+            {selected ? (
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500">
+                <svg className="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+              </div>
+            ) : (
+              <div className="h-6 w-6 rounded-full border-2 border-gray-600 bg-gray-900/60" />
+            )}
           </div>
         )}
         {/* Status badge overlaid */}
@@ -111,7 +131,7 @@ export function SceneCard({ scene, onClick, onDelete }: SceneCardProps) {
             <span className="text-gray-500">
               {new Date(scene.created_at).toLocaleDateString()}
             </span>
-            {canDelete && (
+            {canDelete && onDelete && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();

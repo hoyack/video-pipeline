@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   getProduction,
   updateProduction,
   listScenes,
-  addSceneToProduction,
+  batchAddScenesToProduction,
   removeSceneFromProduction,
   type ProductionResponse,
 } from "../api/client.ts";
 import type { SceneListItem } from "../api/types.ts";
+import { ScenePickerModal } from "./ScenePickerModal.tsx";
 
 interface ProductionDetailProps {
   productionId: string;
@@ -17,31 +18,24 @@ interface ProductionDetailProps {
 export function ProductionDetail({ productionId, onViewScene }: ProductionDetailProps) {
   const [production, setProduction] = useState<ProductionResponse | null>(null);
   const [scenes, setScenes] = useState<SceneListItem[]>([]);
-  const [allScenes, setAllScenes] = useState<SceneListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
-  const [showAddScene, setShowAddScene] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
 
   async function load() {
     try {
       setLoading(true);
-      const [prod, allScenesData] = await Promise.all([
+      const [prod, scenesData] = await Promise.all([
         getProduction(productionId),
-        listScenes({ per_page: 200 }),
+        listScenes({ per_page: 96, view: "cards" }),
       ]);
       setProduction(prod);
       setEditName(prod.name);
       setEditDesc(prod.description || "");
-      setAllScenes(allScenesData.items);
-      // Filter scenes belonging to this production
-      // We need to fetch scene details to check production_id, but for now
-      // we'll use the scene list and re-fetch on add/remove
-      setScenes(allScenesData.items.filter((s: SceneListItem & { production_id?: string }) =>
-        (s as SceneListItem & { production_id?: string }).production_id === productionId
-      ));
+      setScenes(scenesData.items.filter((s) => s.production_id === productionId));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load production");
@@ -68,13 +62,13 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
     }
   }
 
-  async function handleAddScene(sceneId: string) {
+  async function handleBatchAdd(sceneIds: string[]) {
     try {
-      await addSceneToProduction(productionId, sceneId);
-      setShowAddScene(false);
+      await batchAddScenesToProduction(productionId, sceneIds);
+      setShowPicker(false);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add scene");
+      setError(err instanceof Error ? err.message : "Failed to add scenes");
     }
   }
 
@@ -87,6 +81,11 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
     }
   }
 
+  const linkedSceneIds = useMemo(
+    () => new Set(scenes.map((s) => s.scene_id)),
+    [scenes],
+  );
+
   if (loading) {
     return <div className="text-center py-12 text-gray-400">Loading production...</div>;
   }
@@ -94,10 +93,6 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
   if (!production) {
     return <div className="text-center py-12 text-red-400">Production not found</div>;
   }
-
-  const unlinkedScenes = allScenes.filter(
-    (s) => !scenes.some((linked) => linked.scene_id === s.scene_id)
-  );
 
   return (
     <div className="space-y-6">
@@ -157,29 +152,12 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Scenes</h2>
           <button
-            onClick={() => setShowAddScene(!showAddScene)}
+            onClick={() => setShowPicker(true)}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
           >
-            Add Scene
+            Add Scenes
           </button>
         </div>
-
-        {showAddScene && unlinkedScenes.length > 0 && (
-          <div className="rounded-lg border border-gray-700 bg-gray-800 p-3 space-y-1 max-h-48 overflow-y-auto">
-            {unlinkedScenes.map((s) => (
-              <button
-                key={s.scene_id}
-                onClick={() => handleAddScene(s.scene_id)}
-                className="w-full text-left rounded-md px-3 py-2 text-sm text-gray-300 hover:bg-gray-700"
-              >
-                {s.title || s.prompt.slice(0, 60) + "..."}
-              </button>
-            ))}
-          </div>
-        )}
-        {showAddScene && unlinkedScenes.length === 0 && (
-          <p className="text-sm text-gray-500">No unlinked scenes available.</p>
-        )}
 
         {scenes.length === 0 ? (
           <p className="text-sm text-gray-500 py-4">No scenes in this production yet.</p>
@@ -213,6 +191,15 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
           </div>
         )}
       </div>
+
+      {showPicker && (
+        <ScenePickerModal
+          productionId={productionId}
+          linkedSceneIds={linkedSceneIds}
+          onConfirm={handleBatchAdd}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
     </div>
   );
 }

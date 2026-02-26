@@ -617,6 +617,21 @@ export function addSceneToProduction(productionId: string, sceneId: string): Pro
   });
 }
 
+/** POST /api/productions/{id}/scenes — batch add scenes to production */
+export function batchAddScenesToProduction(
+  productionId: string,
+  sceneIds: string[],
+): Promise<{ status: string; production_id: string; scene_ids: string[]; count: number }> {
+  return request<{ status: string; production_id: string; scene_ids: string[]; count: number }>(
+    `/api/productions/${productionId}/scenes`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scene_ids: sceneIds }),
+    },
+  );
+}
+
 /** DELETE /api/productions/{id}/scenes/{sceneId} — remove scene from production */
 export function removeSceneFromProduction(productionId: string, sceneId: string): Promise<{ status: string }> {
   return request<{ status: string }>(`/api/productions/${productionId}/scenes/${sceneId}`, {

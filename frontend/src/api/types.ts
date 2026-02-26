@@ -226,6 +226,7 @@ export interface SceneListItem {
   style?: string | null;
   aspect_ratio?: string | null;
   thumbnail_url?: string | null;
+  production_id?: string | null;
 }
 
 /** Paginated response envelope for GET /api/scenes */

@@ -80,6 +80,20 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
+function AutoResizeTextarea(
+  props: React.TextareaHTMLAttributes<HTMLTextAreaElement>,
+) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const resize = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 40)}px`;
+  }, []);
+  useEffect(resize, [props.value, resize]);
+  return <textarea ref={ref} rows={2} {...props} onInput={resize} />;
+}
+
 function EditableField({
   label,
   value,
@@ -189,13 +203,12 @@ function EditableField({
         />
       )}
       <div className="relative mt-0.5">
-        <textarea
-          rows={2}
+        <AutoResizeTextarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onClick={(e) => e.stopPropagation()}
           className={clsx(
-            "w-full rounded border bg-gray-950 px-2 py-1 text-xs leading-relaxed text-gray-300 focus:outline-none focus:ring-1",
+            "w-full rounded border bg-gray-950 px-2 py-1 text-xs leading-relaxed text-gray-300 focus:outline-none focus:ring-1 resize-none overflow-hidden",
             regenerating
               ? "border-indigo-600/50 text-gray-500"
               : isModified

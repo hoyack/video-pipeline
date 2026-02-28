@@ -67,6 +67,20 @@ interface EditModeOverlayProps {
   onRefresh?: () => void;
 }
 
+function AutoResizeTextarea(
+  props: React.TextareaHTMLAttributes<HTMLTextAreaElement>,
+) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const resize = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 48)}px`;
+  }, []);
+  useEffect(() => { resize(); }, [props.value, resize]);
+  return <textarea ref={ref} rows={3} {...props} onInput={resize} />;
+}
+
 export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: EditModeOverlayProps) {
   const { showCost } = useShowCost();
   // Scene-level state
@@ -1041,13 +1055,12 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                 </svg>
               </button>
             </div>
-            <textarea
+            <AutoResizeTextarea
               id="edit-prompt"
-              rows={3}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               className={clsx(
-                "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1",
+                "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1 resize-none overflow-hidden",
                 prompt !== detail.prompt
                   ? "border-amber-600 focus:ring-amber-500"
                   : "border-gray-700 focus:ring-blue-500",

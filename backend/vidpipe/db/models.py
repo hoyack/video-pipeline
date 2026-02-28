@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Text, JSON, Integer, Float, Boolean, ForeignKey, Index, UniqueConstraint, func
+from sqlalchemy import String, Text, JSON, Integer, BigInteger, Float, Boolean, ForeignKey, Index, UniqueConstraint, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -185,7 +185,7 @@ class Scene(Base):
     image_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     video_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     audio_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    seed: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    seed: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     forked_from_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("scenes.id"), nullable=True
     )
@@ -437,7 +437,7 @@ class UserSettings(Base):
     comfyui_cost_per_second: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Display preferences
-    show_cost: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    show_cost: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
     # Phase 13: Ollama configuration
     ollama_use_cloud: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -1,0 +1,31 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      - VIDPIPE_STORAGE__DATABASE_URL=sqlite+aiosqlite:///data/vidpipe.db
+      - VIDPIPE_STORAGE__TMP_DIR=/app/tmp
+    volumes:
+      - vidpipe-data:/app/data
+      - vidpipe-tmp:/app/tmp
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-./.gcp-credentials.json}:/app/credentials.json:ro
+    ports:
+      - "${VIDPIPE_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: production
+    ports:
+      - "${VIDPIPE_FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  vidpipe-data:
+  vidpipe-tmp:

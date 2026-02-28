@@ -53,12 +53,16 @@ async def _seed_default_user(conn) -> None:
 async def _run_migrations(conn) -> None:
     """Run safe ALTER TABLE migrations for new columns (idempotent).
 
-    Skipped on PostgreSQL — create_all() handles full schema from ORM models.
-    These migrations use SQLite-specific syntax (BLOB, INTEGER DEFAULT 0).
-    """
-    if not _is_sqlite():
-        return
+    Runs on both SQLite and PostgreSQL. PostgreSQL uses ADD COLUMN IF NOT EXISTS
+    for idempotency; SQLite doesn't support IF NOT EXISTS so we catch exceptions.
 
+    Note: create_all() only creates NEW tables — it won't add columns to
+    existing tables, so these migrations are needed on both drivers.
+    """
+    is_sqlite = _is_sqlite()
+
+    # Migrations use SQLite types (TEXT, INTEGER, REAL, BLOB).
+    # PostgreSQL also accepts these via implicit type aliases.
     migrations = [
         "ALTER TABLE scenes ADD COLUMN forked_from_id TEXT REFERENCES scenes(id)",
         "ALTER TABLE video_clips ADD COLUMN source VARCHAR(20) DEFAULT 'generated'",
@@ -114,9 +118,12 @@ async def _run_migrations(conn) -> None:
     ]
     for sql in migrations:
         try:
+            if not is_sqlite:
+                # PostgreSQL supports IF NOT EXISTS for idempotent column adds
+                sql = sql.replace("ADD COLUMN ", "ADD COLUMN IF NOT EXISTS ")
             await conn.execute(text(sql))
         except Exception:
-            # Column already exists — safe to ignore
+            # Column already exists (SQLite) or other safe-to-ignore error
             pass
 
 

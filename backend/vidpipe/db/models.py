@@ -446,6 +446,9 @@ class UserSettings(Base):
     ollama_models: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     # ^ list of {"id": "ollama/llama3.1", "label": "Llama 3.1", "enabled": true, "vision": false}
 
+    # ElevenLabs configuration
+    elevenlabs_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),

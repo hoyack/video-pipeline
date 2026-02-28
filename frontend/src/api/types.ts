@@ -436,6 +436,7 @@ export interface UserSettingsResponse {
   ollama_endpoint: string | null;
   ollama_models: OllamaModelEntry[] | null;
   show_cost: boolean;
+  has_elevenlabs_key: boolean;
 }
 
 /** Request body for PUT /api/settings */
@@ -460,6 +461,8 @@ export interface UserSettingsUpdate {
   ollama_endpoint?: string | null;
   ollama_models?: OllamaModelEntry[] | null;
   show_cost?: boolean;
+  elevenlabs_api_key?: string | null;
+  clear_elevenlabs_key?: boolean;
 }
 
 /** Lightweight response from GET /api/settings/models */

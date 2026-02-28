@@ -100,6 +100,33 @@ export const VIDEO_MODELS: VideoModelOption[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Provider-grouped model subsets (for Settings page)
+// ---------------------------------------------------------------------------
+
+/** Vertex Studio text models — all support vision */
+export const VERTEX_TEXT_MODELS = TEXT_MODELS;
+
+/** Vertex Studio image models (Gemini-based) */
+export const VERTEX_IMAGE_MODELS = IMAGE_MODELS.filter(
+  (m) => m.id.startsWith("gemini-"),
+);
+
+/** Vertex Studio video models (Veo family) */
+export const VERTEX_VIDEO_MODELS = VIDEO_MODELS.filter(
+  (m) => m.id.startsWith("veo-"),
+);
+
+/** ComfyUI video models (Wan family) */
+export const COMFYUI_VIDEO_MODELS_LIST = VIDEO_MODELS.filter(
+  (m) => m.id.startsWith("wan-"),
+);
+
+/** ComfyUI image models */
+export const COMFYUI_IMAGE_MODELS = IMAGE_MODELS.filter(
+  (m) => !m.id.startsWith("gemini-"),
+);
+
+// ---------------------------------------------------------------------------
 // Cost estimation
 // ---------------------------------------------------------------------------
 

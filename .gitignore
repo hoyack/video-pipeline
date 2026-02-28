@@ -47,6 +47,10 @@ tmp/
 *.json
 !config.json
 !backend/vidpipe/services/comfyui_templates/*.json
+!frontend/package.json
+!frontend/tsconfig.json
+!frontend/tsconfig.app.json
+!frontend/tsconfig.node.json
 
 # Frontend
 frontend/node_modules/

@@ -1,0 +1,59 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+venv/
+ENV/
+env/
+build/
+dist/
+sdist/
+wheels/
+*.so
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Temporary files & artifacts
+tmp/
+
+# Environment & credentials
+.env
+*.json
+!config.json
+!backend/vidpipe/services/comfyui_templates/*.json
+!frontend/package.json
+!frontend/tsconfig.json
+!frontend/tsconfig.app.json
+!frontend/tsconfig.node.json
+
+# Media (generated content)
+*.png
+*.mp4
+*.pt
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Project tooling
+.planning/
+.claude/
+.playwright-mcp/
+docs/

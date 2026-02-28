@@ -109,6 +109,8 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE user_settings ADD COLUMN show_cost INTEGER DEFAULT 1",
         # Productions
         "ALTER TABLE scenes ADD COLUMN production_id TEXT REFERENCES productions(id)",
+        # ElevenLabs configuration
+        "ALTER TABLE user_settings ADD COLUMN elevenlabs_api_key TEXT",
     ]
     for sql in migrations:
         try:

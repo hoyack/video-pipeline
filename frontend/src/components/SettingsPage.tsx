@@ -1,9 +1,180 @@
 import { useState, useEffect } from "react";
 import clsx from "clsx";
 import { getSettings, updateSettings } from "../api/client.ts";
-import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS } from "../lib/constants.ts";
+import {
+  TEXT_MODELS,
+  IMAGE_MODELS,
+  VIDEO_MODELS,
+  VERTEX_TEXT_MODELS,
+  VERTEX_IMAGE_MODELS,
+  VERTEX_VIDEO_MODELS,
+  COMFYUI_VIDEO_MODELS_LIST,
+  COMFYUI_IMAGE_MODELS,
+} from "../lib/constants.ts";
 import type { UserSettingsResponse, OllamaModelEntry } from "../api/types.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
+
+// ---------------------------------------------------------------------------
+// Collapsible provider card
+// ---------------------------------------------------------------------------
+
+function CollapsibleCard({
+  title,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <section className="rounded-lg border border-gray-700 bg-gray-800/50">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-5 py-3.5"
+      >
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <svg
+          className={clsx(
+            "h-5 w-5 text-gray-400 transition-transform",
+            open && "rotate-180",
+          )}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && <div className="space-y-5 px-5 pb-5">{children}</div>}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-container inside a provider card (e.g. "Text Models", "API Settings")
+// ---------------------------------------------------------------------------
+
+function SettingsContainer({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-3 rounded-md border border-gray-700/60 bg-gray-900/30 p-4">
+      <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
+        {title}
+      </h3>
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model toggle row with optional Vision badge
+// ---------------------------------------------------------------------------
+
+function ModelToggleRow({
+  id,
+  label,
+  isEnabled,
+  onToggle,
+  showVision,
+}: {
+  id: string;
+  label: string;
+  isEnabled: boolean;
+  onToggle: () => void;
+  showVision?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-2.5">
+      <div className="flex items-center gap-2">
+        <span
+          className={clsx(
+            "text-sm font-medium",
+            isEnabled ? "text-gray-200" : "text-gray-500",
+          )}
+        >
+          {label}
+        </span>
+        <span className="text-xs text-gray-600">{id}</span>
+        {showVision && (
+          <span className="rounded bg-purple-600/30 px-2 py-0.5 text-xs text-purple-300 border border-purple-600/50">
+            Vision
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={clsx(
+          "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+          isEnabled ? "bg-blue-600" : "bg-gray-700",
+        )}
+      >
+        <span
+          className={clsx(
+            "inline-block h-4 w-4 rounded-full bg-white transition-transform",
+            isEnabled ? "translate-x-6" : "translate-x-1",
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Default model dropdown
+// ---------------------------------------------------------------------------
+
+function DefaultModelSelect({
+  allModels,
+  enabled,
+  defaultModel,
+  onDefaultChange,
+}: {
+  allModels: { id: string; label: string }[];
+  enabled: string[];
+  defaultModel: string | null;
+  onDefaultChange: (id: string | null) => void;
+}) {
+  const enabledModels = allModels.filter((m) => enabled.includes(m.id));
+  return (
+    <div className="flex items-center gap-3 pt-1">
+      <label className="text-sm text-gray-400">Default:</label>
+      <select
+        value={defaultModel ?? ""}
+        onChange={(e) => onDefaultChange(e.target.value || null)}
+        className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+      >
+        <option value="">None</option>
+        {enabledModels.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Input field helper
+// ---------------------------------------------------------------------------
+
+const inputClass =
+  "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+
+// ===========================================================================
+// Main component
+// ===========================================================================
 
 export function SettingsPage() {
   const { setShowCost: setShowCostCtx } = useShowCost();
@@ -11,27 +182,32 @@ export function SettingsPage() {
   const [, setSettings] = useState<UserSettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error";
+    msg: string;
+  } | null>(null);
 
-  // Local form state
+  // Model state (flat lists — same data model as before)
   const [enabledText, setEnabledText] = useState<string[]>([]);
   const [enabledImage, setEnabledImage] = useState<string[]>([]);
   const [enabledVideo, setEnabledVideo] = useState<string[]>([]);
   const [defaultText, setDefaultText] = useState<string | null>(null);
   const [defaultImage, setDefaultImage] = useState<string | null>(null);
   const [defaultVideo, setDefaultVideo] = useState<string | null>(null);
+
+  // Vertex Studio / GCP
   const [gcpProject, setGcpProject] = useState("");
   const [gcpLocation, setGcpLocation] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [hasApiKey, setHasApiKey] = useState(false);
 
-  // ComfyUI form state
+  // ComfyUI
   const [comfyuiHost, setComfyuiHost] = useState("");
   const [comfyuiApiKey, setComfyuiApiKey] = useState("");
   const [hasComfyuiKey, setHasComfyuiKey] = useState(false);
   const [comfyuiCostPerSecond, setComfyuiCostPerSecond] = useState("");
 
-  // Ollama form state
+  // Ollama
   const [ollamaUseCloud, setOllamaUseCloud] = useState(false);
   const [ollamaApiKey, setOllamaApiKey] = useState("");
   const [hasOllamaKey, setHasOllamaKey] = useState(false);
@@ -39,11 +215,15 @@ export function SettingsPage() {
   const [ollamaModels, setOllamaModels] = useState<OllamaModelEntry[]>([]);
   const [newModelName, setNewModelName] = useState("");
 
+  // ElevenLabs
+  const [elevenlabsApiKey, setElevenlabsApiKey] = useState("");
+  const [hasElevenlabsKey, setHasElevenlabsKey] = useState(false);
+
+  // ---- Load settings ----
   useEffect(() => {
     getSettings()
       .then((s) => {
         setSettings(s);
-        // null = all enabled
         setEnabledText(s.enabled_text_models ?? TEXT_MODELS.map((m) => m.id));
         setEnabledImage(s.enabled_image_models ?? IMAGE_MODELS.map((m) => m.id));
         setEnabledVideo(s.enabled_video_models ?? VIDEO_MODELS.map((m) => m.id));
@@ -56,20 +236,31 @@ export function SettingsPage() {
         setComfyuiHost(s.comfyui_host ?? "");
         setHasComfyuiKey(s.has_comfyui_key);
         setComfyuiCostPerSecond(
-          s.comfyui_cost_per_second != null ? String(s.comfyui_cost_per_second) : ""
+          s.comfyui_cost_per_second != null
+            ? String(s.comfyui_cost_per_second)
+            : "",
         );
         setOllamaUseCloud(s.ollama_use_cloud);
         setHasOllamaKey(s.has_ollama_key);
         setOllamaEndpoint(s.ollama_endpoint ?? "");
         setOllamaModels(s.ollama_models ?? []);
         setShowCostLocal(s.show_cost);
+        setHasElevenlabsKey(s.has_elevenlabs_key);
       })
-      .catch(() => setFeedback({ type: "error", msg: "Failed to load settings" }))
+      .catch(() =>
+        setFeedback({ type: "error", msg: "Failed to load settings" }),
+      )
       .finally(() => setLoading(false));
   }, []);
 
-  function toggleModel(list: string[], setList: (v: string[]) => void, id: string,
-    defaultVal: string | null, setDefault: (v: string | null) => void) {
+  // ---- Helpers ----
+  function toggleModel(
+    list: string[],
+    setList: (v: string[]) => void,
+    id: string,
+    defaultVal: string | null,
+    setDefault: (v: string | null) => void,
+  ) {
     if (list.includes(id)) {
       const next = list.filter((m) => m !== id);
       setList(next);
@@ -79,6 +270,7 @@ export function SettingsPage() {
     }
   }
 
+  // ---- Save ----
   async function handleSave() {
     setSaving(true);
     setFeedback(null);
@@ -102,6 +294,7 @@ export function SettingsPage() {
         ollama_api_key: ollamaApiKey || null,
         ollama_endpoint: ollamaEndpoint || null,
         ollama_models: ollamaModels,
+        elevenlabs_api_key: elevenlabsApiKey || null,
       });
       setSettings(res);
       setHasApiKey(res.has_api_key);
@@ -110,15 +303,21 @@ export function SettingsPage() {
       setComfyuiApiKey("");
       setHasOllamaKey(res.has_ollama_key);
       setOllamaApiKey("");
+      setHasElevenlabsKey(res.has_elevenlabs_key);
+      setElevenlabsApiKey("");
       setShowCostCtx(res.show_cost);
       setFeedback({ type: "success", msg: "Settings saved" });
     } catch (err) {
-      setFeedback({ type: "error", msg: err instanceof Error ? err.message : "Save failed" });
+      setFeedback({
+        type: "error",
+        msg: err instanceof Error ? err.message : "Save failed",
+      });
     } finally {
       setSaving(false);
     }
   }
 
+  // ---- Clear key helpers ----
   async function handleClearKey() {
     setSaving(true);
     setFeedback(null);
@@ -139,7 +338,10 @@ export function SettingsPage() {
       setApiKey("");
       setFeedback({ type: "success", msg: "API key cleared" });
     } catch (err) {
-      setFeedback({ type: "error", msg: err instanceof Error ? err.message : "Failed to clear key" });
+      setFeedback({
+        type: "error",
+        msg: err instanceof Error ? err.message : "Failed to clear key",
+      });
     } finally {
       setSaving(false);
     }
@@ -165,40 +367,77 @@ export function SettingsPage() {
       setComfyuiApiKey("");
       setFeedback({ type: "success", msg: "ComfyUI API key cleared" });
     } catch (err) {
-      setFeedback({ type: "error", msg: err instanceof Error ? err.message : "Failed to clear key" });
+      setFeedback({
+        type: "error",
+        msg: err instanceof Error ? err.message : "Failed to clear key",
+      });
     } finally {
       setSaving(false);
     }
   }
 
+  async function handleClearElevenlabsKey() {
+    setSaving(true);
+    setFeedback(null);
+    try {
+      const res = await updateSettings({
+        enabled_text_models: enabledText,
+        enabled_image_models: enabledImage,
+        enabled_video_models: enabledVideo,
+        default_text_model: defaultText,
+        default_image_model: defaultImage,
+        default_video_model: defaultVideo,
+        gcp_project_id: gcpProject || null,
+        gcp_location: gcpLocation || null,
+        clear_elevenlabs_key: true,
+      });
+      setSettings(res);
+      setHasElevenlabsKey(false);
+      setElevenlabsApiKey("");
+      setFeedback({ type: "success", msg: "ElevenLabs API key cleared" });
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        msg: err instanceof Error ? err.message : "Failed to clear key",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ---- Ollama model management ----
   function handleAddOllamaModel() {
     const name = newModelName.trim();
     if (!name) return;
     const id = `ollama/${name}`;
-    if (ollamaModels.some((m) => m.id === id)) return; // duplicate guard
-    const label = name.split("/").pop() ?? name; // Use last segment as label
-    // Auto-detect vision from name (heuristic: contains "vision" or "llava")
+    if (ollamaModels.some((m) => m.id === id)) return;
+    const label = name.split("/").pop() ?? name;
     const vision = /vision|llava/i.test(name);
     setOllamaModels([...ollamaModels, { id, label, enabled: true, vision }]);
     setNewModelName("");
   }
 
   function toggleOllamaModelEnabled(id: string) {
-    setOllamaModels(ollamaModels.map((m) =>
-      m.id === id ? { ...m, enabled: !m.enabled } : m
-    ));
+    setOllamaModels(
+      ollamaModels.map((m) =>
+        m.id === id ? { ...m, enabled: !m.enabled } : m,
+      ),
+    );
   }
 
   function toggleOllamaModelVision(id: string) {
-    setOllamaModels(ollamaModels.map((m) =>
-      m.id === id ? { ...m, vision: !m.vision } : m
-    ));
+    setOllamaModels(
+      ollamaModels.map((m) =>
+        m.id === id ? { ...m, vision: !m.vision } : m,
+      ),
+    );
   }
 
   function removeOllamaModel(id: string) {
     setOllamaModels(ollamaModels.filter((m) => m.id !== id));
   }
 
+  // ---- Loading state ----
   if (loading) {
     return (
       <div className="mx-auto max-w-2xl py-12 text-center text-gray-400">
@@ -207,8 +446,9 @@ export function SettingsPage() {
     );
   }
 
+  // ---- Render ----
   return (
-    <div className="mx-auto max-w-2xl space-y-8">
+    <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="mb-1 text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-gray-400">
@@ -216,286 +456,506 @@ export function SettingsPage() {
         </p>
       </div>
 
-      {/* Display Preferences */}
+      {/* ================================================================
+          Display Preferences
+          ================================================================ */}
       <section className="space-y-4">
         <h2 className="text-lg font-semibold text-white">Display</h2>
         <div className="flex items-center justify-between">
           <div>
-            <span className="text-sm font-medium text-gray-300">Show Cost Estimates</span>
-            <p className="text-xs text-gray-500">Display estimated costs on scenes, forms, and dashboard</p>
+            <span className="text-sm font-medium text-gray-300">
+              Show Cost Estimates
+            </span>
+            <p className="text-xs text-gray-500">
+              Display estimated costs on scenes, forms, and dashboard
+            </p>
           </div>
           <button
             type="button"
             onClick={() => setShowCostLocal((v) => !v)}
             className={clsx(
               "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-              showCostLocal ? "bg-cyan-600" : "bg-gray-700"
+              showCostLocal ? "bg-cyan-600" : "bg-gray-700",
             )}
           >
             <span
               className={clsx(
                 "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
-                showCostLocal ? "translate-x-6" : "translate-x-1"
+                showCostLocal ? "translate-x-6" : "translate-x-1",
               )}
             />
           </button>
         </div>
       </section>
 
-      {/* Text Models */}
-      <ModelSection
-        title="Text Models"
-        models={TEXT_MODELS.map((m) => ({ id: m.id, label: m.label }))}
-        enabled={enabledText}
-        onToggle={(id) => toggleModel(enabledText, setEnabledText, id, defaultText, setDefaultText)}
-        defaultModel={defaultText}
-        onDefaultChange={setDefaultText}
-      />
-
-      {/* Image Models */}
-      <ModelSection
-        title="Image Models"
-        models={IMAGE_MODELS.map((m) => ({ id: m.id, label: m.label }))}
-        enabled={enabledImage}
-        onToggle={(id) => toggleModel(enabledImage, setEnabledImage, id, defaultImage, setDefaultImage)}
-        defaultModel={defaultImage}
-        onDefaultChange={setDefaultImage}
-      />
-
-      {/* Video Models */}
-      <ModelSection
-        title="Video Models"
-        models={VIDEO_MODELS.map((m) => ({ id: m.id, label: m.label }))}
-        enabled={enabledVideo}
-        onToggle={(id) => toggleModel(enabledVideo, setEnabledVideo, id, defaultVideo, setDefaultVideo)}
-        defaultModel={defaultVideo}
-        onDefaultChange={setDefaultVideo}
-      />
-
-      {/* GCP Configuration */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-white">GCP Configuration</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-300">
-              Project ID
-            </label>
-            <input
-              type="text"
-              value={gcpProject}
-              onChange={(e) => setGcpProject(e.target.value)}
-              placeholder="my-gcp-project"
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
+      {/* ================================================================
+          Vertex Studio
+          ================================================================ */}
+      <CollapsibleCard title="Vertex Studio">
+        {/* --- API Settings --- */}
+        <SettingsContainer title="API Settings">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-300">
+                Project ID
+              </label>
+              <input
+                type="text"
+                value={gcpProject}
+                onChange={(e) => setGcpProject(e.target.value)}
+                placeholder="my-gcp-project"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-300">
+                Location
+              </label>
+              <input
+                type="text"
+                value={gcpLocation}
+                onChange={(e) => setGcpLocation(e.target.value)}
+                placeholder="us-central1"
+                className={inputClass}
+              />
+            </div>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-300">
-              Location
+              API Key
             </label>
             <input
-              type="text"
-              value={gcpLocation}
-              onChange={(e) => setGcpLocation(e.target.value)}
-              placeholder="us-central1"
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={
+                hasApiKey
+                  ? "API key is set (leave blank to keep)"
+                  : "Enter API key"
+              }
+              className={inputClass}
             />
-          </div>
-        </div>
-      </section>
-
-      {/* Vertex AI API Key */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-white">Vertex AI API Key</h2>
-        <div>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={hasApiKey ? "API key is set (leave blank to keep)" : "Enter API key"}
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-          {hasApiKey && (
-            <div className="mt-2 flex items-center gap-3">
-              <span className="text-xs text-green-400">API key is set</span>
-              <button
-                type="button"
-                onClick={handleClearKey}
-                disabled={saving}
-                className="text-xs text-red-400 hover:text-red-300"
-              >
-                Clear key
-              </button>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ComfyUI Configuration */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-white">ComfyUI Configuration</h2>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-300">
-            Host URL
-          </label>
-          <input
-            type="text"
-            value={comfyuiHost}
-            onChange={(e) => setComfyuiHost(e.target.value)}
-            placeholder="https://api.comfy.org"
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-300">
-            API Key
-          </label>
-          <input
-            type="password"
-            value={comfyuiApiKey}
-            onChange={(e) => setComfyuiApiKey(e.target.value)}
-            placeholder={hasComfyuiKey ? "API key is set (leave blank to keep)" : "Enter ComfyUI API key"}
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-          {hasComfyuiKey && (
-            <div className="mt-2 flex items-center gap-3">
-              <span className="text-xs text-green-400">API key is set</span>
-              <button
-                type="button"
-                onClick={handleClearComfyuiKey}
-                disabled={saving}
-                className="text-xs text-red-400 hover:text-red-300"
-              >
-                Clear key
-              </button>
-            </div>
-          )}
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-300">
-            Cost per Second ($)
-          </label>
-          <input
-            type={showCostLocal ? "number" : "password"}
-            step="0.01"
-            min="0"
-            value={comfyuiCostPerSecond}
-            onChange={(e) => setComfyuiCostPerSecond(e.target.value)}
-            placeholder="0.00"
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-          <p className="mt-1 text-xs text-gray-500">
-            Leave empty for $0.00. Used for cost estimation in the Generate form.
-          </p>
-        </div>
-      </section>
-
-      {/* Ollama Configuration */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-white">Ollama Configuration</h2>
-
-        {/* Cloud vs Local toggle */}
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-300">Mode:</span>
-          <button onClick={() => setOllamaUseCloud(false)}
-            className={clsx("px-3 py-1 rounded text-sm", !ollamaUseCloud ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300")}>
-            Local
-          </button>
-          <button onClick={() => setOllamaUseCloud(true)}
-            className={clsx("px-3 py-1 rounded text-sm", ollamaUseCloud ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300")}>
-            Cloud
-          </button>
-        </div>
-
-        {/* API Key — only show in cloud mode */}
-        {ollamaUseCloud && (
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-300">API Key</label>
-            <input type="password" value={ollamaApiKey}
-              onChange={(e) => setOllamaApiKey(e.target.value)}
-              placeholder={hasOllamaKey ? "Key is set (leave blank to keep)" : "Enter Ollama API key"}
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            {hasOllamaKey && (
-              <span className="mt-1 text-xs text-green-400">API key is set</span>
+            {hasApiKey && (
+              <div className="mt-2 flex items-center gap-3">
+                <span className="text-xs text-green-400">API key is set</span>
+                <button
+                  type="button"
+                  onClick={handleClearKey}
+                  disabled={saving}
+                  className="text-xs text-red-400 hover:text-red-300"
+                >
+                  Clear key
+                </button>
+              </div>
             )}
           </div>
-        )}
+        </SettingsContainer>
 
-        {/* Endpoint URL */}
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-300">Endpoint URL</label>
-          <input type="text" value={ollamaEndpoint}
-            onChange={(e) => setOllamaEndpoint(e.target.value)}
-            placeholder={ollamaUseCloud ? "https://ollama.com" : "http://localhost:11434"}
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        {/* --- Text Models --- */}
+        <SettingsContainer title="Text Models">
+          <div className="space-y-2">
+            {VERTEX_TEXT_MODELS.map((m) => (
+              <ModelToggleRow
+                key={m.id}
+                id={m.id}
+                label={m.label}
+                isEnabled={enabledText.includes(m.id)}
+                onToggle={() =>
+                  toggleModel(
+                    enabledText,
+                    setEnabledText,
+                    m.id,
+                    defaultText,
+                    setDefaultText,
+                  )
+                }
+                showVision
+              />
+            ))}
+          </div>
+          <DefaultModelSelect
+            allModels={TEXT_MODELS.map((m) => ({ id: m.id, label: m.label }))}
+            enabled={enabledText}
+            defaultModel={defaultText}
+            onDefaultChange={setDefaultText}
           />
-          <p className="mt-1 text-xs text-gray-500">
-            Leave empty for default. Local: http://localhost:11434, Cloud: https://ollama.com
-          </p>
-        </div>
+        </SettingsContainer>
 
-        {/* Model Management */}
-        <div>
-          <label className="mb-2 block text-sm font-medium text-gray-300">Models</label>
-          <div className="flex gap-2 mb-3">
-            <input type="text" value={newModelName}
+        {/* --- Image Models --- */}
+        <SettingsContainer title="Image Models">
+          <div className="space-y-2">
+            {VERTEX_IMAGE_MODELS.map((m) => (
+              <ModelToggleRow
+                key={m.id}
+                id={m.id}
+                label={m.label}
+                isEnabled={enabledImage.includes(m.id)}
+                onToggle={() =>
+                  toggleModel(
+                    enabledImage,
+                    setEnabledImage,
+                    m.id,
+                    defaultImage,
+                    setDefaultImage,
+                  )
+                }
+              />
+            ))}
+          </div>
+          <DefaultModelSelect
+            allModels={IMAGE_MODELS.map((m) => ({ id: m.id, label: m.label }))}
+            enabled={enabledImage}
+            defaultModel={defaultImage}
+            onDefaultChange={setDefaultImage}
+          />
+        </SettingsContainer>
+
+        {/* --- Video Models --- */}
+        <SettingsContainer title="Video Models">
+          <div className="space-y-2">
+            {VERTEX_VIDEO_MODELS.map((m) => (
+              <ModelToggleRow
+                key={m.id}
+                id={m.id}
+                label={m.label}
+                isEnabled={enabledVideo.includes(m.id)}
+                onToggle={() =>
+                  toggleModel(
+                    enabledVideo,
+                    setEnabledVideo,
+                    m.id,
+                    defaultVideo,
+                    setDefaultVideo,
+                  )
+                }
+              />
+            ))}
+          </div>
+          <DefaultModelSelect
+            allModels={VIDEO_MODELS.map((m) => ({ id: m.id, label: m.label }))}
+            enabled={enabledVideo}
+            defaultModel={defaultVideo}
+            onDefaultChange={setDefaultVideo}
+          />
+        </SettingsContainer>
+      </CollapsibleCard>
+
+      {/* ================================================================
+          ComfyUI
+          ================================================================ */}
+      <CollapsibleCard title="ComfyUI">
+        {/* --- API Settings --- */}
+        <SettingsContainer title="API Settings">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Host URL
+            </label>
+            <input
+              type="text"
+              value={comfyuiHost}
+              onChange={(e) => setComfyuiHost(e.target.value)}
+              placeholder="https://api.comfy.org"
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              API Key
+            </label>
+            <input
+              type="password"
+              value={comfyuiApiKey}
+              onChange={(e) => setComfyuiApiKey(e.target.value)}
+              placeholder={
+                hasComfyuiKey
+                  ? "API key is set (leave blank to keep)"
+                  : "Enter ComfyUI API key"
+              }
+              className={inputClass}
+            />
+            {hasComfyuiKey && (
+              <div className="mt-2 flex items-center gap-3">
+                <span className="text-xs text-green-400">API key is set</span>
+                <button
+                  type="button"
+                  onClick={handleClearComfyuiKey}
+                  disabled={saving}
+                  className="text-xs text-red-400 hover:text-red-300"
+                >
+                  Clear key
+                </button>
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Cost per Second ($)
+            </label>
+            <input
+              type={showCostLocal ? "number" : "password"}
+              step="0.01"
+              min="0"
+              value={comfyuiCostPerSecond}
+              onChange={(e) => setComfyuiCostPerSecond(e.target.value)}
+              placeholder="0.00"
+              className={inputClass}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Leave empty for $0.00. Used for cost estimation in the Generate
+              form.
+            </p>
+          </div>
+        </SettingsContainer>
+
+        {/* --- Video Models --- */}
+        <SettingsContainer title="Video Models">
+          <div className="space-y-2">
+            {COMFYUI_VIDEO_MODELS_LIST.map((m) => (
+              <ModelToggleRow
+                key={m.id}
+                id={m.id}
+                label={m.label}
+                isEnabled={enabledVideo.includes(m.id)}
+                onToggle={() =>
+                  toggleModel(
+                    enabledVideo,
+                    setEnabledVideo,
+                    m.id,
+                    defaultVideo,
+                    setDefaultVideo,
+                  )
+                }
+              />
+            ))}
+          </div>
+        </SettingsContainer>
+
+        {/* --- Image Models --- */}
+        <SettingsContainer title="Image Models">
+          <div className="space-y-2">
+            {COMFYUI_IMAGE_MODELS.map((m) => (
+              <ModelToggleRow
+                key={m.id}
+                id={m.id}
+                label={m.label}
+                isEnabled={enabledImage.includes(m.id)}
+                onToggle={() =>
+                  toggleModel(
+                    enabledImage,
+                    setEnabledImage,
+                    m.id,
+                    defaultImage,
+                    setDefaultImage,
+                  )
+                }
+              />
+            ))}
+          </div>
+        </SettingsContainer>
+      </CollapsibleCard>
+
+      {/* ================================================================
+          Ollama
+          ================================================================ */}
+      <CollapsibleCard title="Ollama">
+        {/* --- API Settings --- */}
+        <SettingsContainer title="API Settings">
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-300">Mode:</span>
+            <button
+              onClick={() => setOllamaUseCloud(false)}
+              className={clsx(
+                "rounded px-3 py-1 text-sm",
+                !ollamaUseCloud
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-700 text-gray-300",
+              )}
+            >
+              Local
+            </button>
+            <button
+              onClick={() => setOllamaUseCloud(true)}
+              className={clsx(
+                "rounded px-3 py-1 text-sm",
+                ollamaUseCloud
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-700 text-gray-300",
+              )}
+            >
+              Cloud
+            </button>
+          </div>
+
+          {ollamaUseCloud && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-300">
+                API Key
+              </label>
+              <input
+                type="password"
+                value={ollamaApiKey}
+                onChange={(e) => setOllamaApiKey(e.target.value)}
+                placeholder={
+                  hasOllamaKey
+                    ? "Key is set (leave blank to keep)"
+                    : "Enter Ollama API key"
+                }
+                className={inputClass}
+              />
+              {hasOllamaKey && (
+                <span className="mt-1 text-xs text-green-400">
+                  API key is set
+                </span>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Endpoint URL
+            </label>
+            <input
+              type="text"
+              value={ollamaEndpoint}
+              onChange={(e) => setOllamaEndpoint(e.target.value)}
+              placeholder={
+                ollamaUseCloud
+                  ? "https://ollama.com"
+                  : "http://localhost:11434"
+              }
+              className={inputClass}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Leave empty for default. Local: http://localhost:11434, Cloud:
+              https://ollama.com
+            </p>
+          </div>
+        </SettingsContainer>
+
+        {/* --- Models --- */}
+        <SettingsContainer title="Models">
+          <div className="mb-3 flex gap-2">
+            <input
+              type="text"
+              value={newModelName}
               onChange={(e) => setNewModelName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAddOllamaModel()}
               placeholder="e.g. llama3.2-vision"
-              className="flex-1 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className={clsx(inputClass, "flex-1")}
             />
-            <button type="button" onClick={handleAddOllamaModel}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">
+            <button
+              type="button"
+              onClick={handleAddOllamaModel}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+            >
               Add
             </button>
           </div>
 
-          {/* Model list */}
           <div className="space-y-2">
             {ollamaModels.map((m) => (
-              <div key={m.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-2.5">
+              <div
+                key={m.id}
+                className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-2.5"
+              >
                 <div className="flex items-center gap-3">
-                  <span className={clsx("text-sm font-medium", m.enabled ? "text-gray-200" : "text-gray-500")}>
+                  <span
+                    className={clsx(
+                      "text-sm font-medium",
+                      m.enabled ? "text-gray-200" : "text-gray-500",
+                    )}
+                  >
                     {m.label}
                   </span>
                   <span className="text-xs text-gray-600">{m.id}</span>
-                  {/* Vision toggle */}
-                  <button type="button"
+                  <button
+                    type="button"
                     onClick={() => toggleOllamaModelVision(m.id)}
-                    className={clsx("px-2 py-0.5 rounded text-xs",
-                      m.vision ? "bg-purple-600/30 text-purple-300 border border-purple-600/50" : "bg-gray-800 text-gray-500"
-                    )}>
-                    vision
+                    className={clsx(
+                      "rounded px-2 py-0.5 text-xs",
+                      m.vision
+                        ? "border border-purple-600/50 bg-purple-600/30 text-purple-300"
+                        : "bg-gray-800 text-gray-500",
+                    )}
+                  >
+                    Vision
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Enable/disable toggle */}
-                  <button type="button" onClick={() => toggleOllamaModelEnabled(m.id)}
-                    className={clsx("relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
-                      m.enabled ? "bg-blue-600" : "bg-gray-700"
-                    )}>
-                    <span className={clsx("inline-block h-3 w-3 rounded-full bg-white transition-transform",
-                      m.enabled ? "translate-x-5" : "translate-x-1"
-                    )} />
+                  <button
+                    type="button"
+                    onClick={() => toggleOllamaModelEnabled(m.id)}
+                    className={clsx(
+                      "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                      m.enabled ? "bg-blue-600" : "bg-gray-700",
+                    )}
+                  >
+                    <span
+                      className={clsx(
+                        "inline-block h-3 w-3 rounded-full bg-white transition-transform",
+                        m.enabled ? "translate-x-5" : "translate-x-1",
+                      )}
+                    />
                   </button>
-                  {/* Remove button */}
-                  <button type="button" onClick={() => removeOllamaModel(m.id)}
-                    className="text-xs text-red-400 hover:text-red-300">
+                  <button
+                    type="button"
+                    onClick={() => removeOllamaModel(m.id)}
+                    className="text-xs text-red-400 hover:text-red-300"
+                  >
                     Remove
                   </button>
                 </div>
               </div>
             ))}
             {ollamaModels.length === 0 && (
-              <p className="text-xs text-gray-600 py-2">
+              <p className="py-2 text-xs text-gray-600">
                 No Ollama models added. Type a model name above and click Add.
               </p>
             )}
           </div>
-        </div>
-      </section>
+        </SettingsContainer>
+      </CollapsibleCard>
 
-      {/* Feedback */}
+      {/* ================================================================
+          ElevenLabs
+          ================================================================ */}
+      <CollapsibleCard title="ElevenLabs" defaultOpen={false}>
+        <SettingsContainer title="API Settings">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              API Key
+            </label>
+            <input
+              type="password"
+              value={elevenlabsApiKey}
+              onChange={(e) => setElevenlabsApiKey(e.target.value)}
+              placeholder={
+                hasElevenlabsKey
+                  ? "API key is set (leave blank to keep)"
+                  : "Enter ElevenLabs API key"
+              }
+              className={inputClass}
+            />
+            {hasElevenlabsKey && (
+              <div className="mt-2 flex items-center gap-3">
+                <span className="text-xs text-green-400">API key is set</span>
+                <button
+                  type="button"
+                  onClick={handleClearElevenlabsKey}
+                  disabled={saving}
+                  className="text-xs text-red-400 hover:text-red-300"
+                >
+                  Clear key
+                </button>
+              </div>
+            )}
+          </div>
+        </SettingsContainer>
+      </CollapsibleCard>
+
+      {/* ================================================================
+          Feedback & Save
+          ================================================================ */}
       {feedback && (
         <div
           className={clsx(
@@ -509,7 +969,6 @@ export function SettingsPage() {
         </div>
       )}
 
-      {/* Save */}
       <button
         type="button"
         onClick={handleSave}
@@ -517,80 +976,12 @@ export function SettingsPage() {
         className={clsx(
           "w-full rounded-lg py-2.5 text-sm font-semibold transition-colors",
           saving
-            ? "bg-gray-800 text-gray-500 cursor-not-allowed"
+            ? "cursor-not-allowed bg-gray-800 text-gray-500"
             : "bg-blue-600 text-white hover:bg-blue-500",
         )}
       >
         {saving ? "Saving..." : "Save Settings"}
       </button>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Model toggle section sub-component
-// ---------------------------------------------------------------------------
-
-interface ModelSectionProps {
-  title: string;
-  models: { id: string; label: string }[];
-  enabled: string[];
-  onToggle: (id: string) => void;
-  defaultModel: string | null;
-  onDefaultChange: (id: string | null) => void;
-}
-
-function ModelSection({ title, models, enabled, onToggle, defaultModel, onDefaultChange }: ModelSectionProps) {
-  const enabledModels = models.filter((m) => enabled.includes(m.id));
-
-  return (
-    <section className="space-y-3">
-      <h2 className="text-lg font-semibold text-white">{title}</h2>
-      <div className="space-y-2">
-        {models.map((m) => {
-          const isEnabled = enabled.includes(m.id);
-          return (
-            <div key={m.id} className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-2.5">
-              <span className={clsx("text-sm font-medium", isEnabled ? "text-gray-200" : "text-gray-500")}>
-                {m.label}
-                <span className="ml-2 text-xs text-gray-600">{m.id}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => onToggle(m.id)}
-                className={clsx(
-                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                  isEnabled ? "bg-blue-600" : "bg-gray-700",
-                )}
-              >
-                <span
-                  className={clsx(
-                    "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-                    isEnabled ? "translate-x-6" : "translate-x-1",
-                  )}
-                />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Default model dropdown */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm text-gray-400">Default:</label>
-        <select
-          value={defaultModel ?? ""}
-          onChange={(e) => onDefaultChange(e.target.value || null)}
-          className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
-        >
-          <option value="">None</option>
-          {enabledModels.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-      </div>
-    </section>
   );
 }

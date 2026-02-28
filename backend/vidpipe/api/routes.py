@@ -3481,6 +3481,8 @@ class UserSettingsResponse(BaseModel):
     ollama_models: Optional[list] = None
     # Display preferences
     show_cost: bool = True
+    # ElevenLabs configuration
+    has_elevenlabs_key: bool = False
 
 
 class UserSettingsUpdate(BaseModel):
@@ -3507,6 +3509,9 @@ class UserSettingsUpdate(BaseModel):
     ollama_models: Optional[list] = None
     # Display preferences
     show_cost: Optional[bool] = None
+    # ElevenLabs configuration
+    elevenlabs_api_key: Optional[str] = None
+    clear_elevenlabs_key: bool = False
 
 
 class EnabledModelsResponse(BaseModel):
@@ -3552,6 +3557,7 @@ async def get_settings() -> UserSettingsResponse:
             ollama_endpoint=settings.ollama_endpoint,
             ollama_models=settings.ollama_models,
             show_cost=bool(settings.show_cost),
+            has_elevenlabs_key=bool(settings.elevenlabs_api_key),
         )
 
 
@@ -3626,6 +3632,12 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
         if body.show_cost is not None:
             settings.show_cost = body.show_cost
 
+        # ElevenLabs fields
+        if body.clear_elevenlabs_key:
+            settings.elevenlabs_api_key = None
+        elif body.elevenlabs_api_key:
+            settings.elevenlabs_api_key = body.elevenlabs_api_key
+
         await session.commit()
         await session.refresh(settings)
 
@@ -3647,6 +3659,7 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             ollama_endpoint=settings.ollama_endpoint,
             ollama_models=settings.ollama_models,
             show_cost=bool(settings.show_cost),
+            has_elevenlabs_key=bool(settings.elevenlabs_api_key),
         )
 
 

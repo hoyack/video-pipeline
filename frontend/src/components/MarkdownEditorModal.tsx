@@ -37,14 +37,16 @@ export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        // Let CodeMirror handle Escape when its search panel is open
+        // Check BEFORE CodeMirror processes the event (capture phase)
         const searchPanel = document.querySelector(".cm-search");
-        if (searchPanel) return;
+        if (searchPanel) return; // let CodeMirror close search panel
         onClose();
       }
     }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    // Use capture phase so we check search panel existence before
+    // CodeMirror's bubble-phase handler removes it
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [onClose]);
 
   const handleUpdate = useCallback((update: ViewUpdate) => {

@@ -65,3 +65,4 @@ frontend/dist/
 Thumbs.db
 
 .playwright-mcp/
+.temp/

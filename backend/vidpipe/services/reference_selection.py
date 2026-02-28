@@ -285,11 +285,13 @@ async def resolve_asset_image_bytes(
 
     Checks for a clean sheet override first, then falls back to
     asset.reference_image_url.  Resolves ``/api/assets/...`` URLs to
-    local files under ``tmp/manifests/{manifest_id}/{uploads|crops}/``.
+    local files or S3 keys depending on storage backend.
 
     Returns None on any failure (soft failure — caller should skip).
     """
     try:
+        from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
+
         # Prefer clean sheet override
         clean_ref = await get_primary_clean_reference(session, asset.id)
         img_url = clean_ref.clean_image_url if clean_ref else asset.reference_image_url
@@ -297,40 +299,56 @@ async def resolve_asset_image_bytes(
         if not img_url:
             return None
 
+        storage = get_storage_backend()
+
+        # S3 key (not an API path or absolute path) — read directly from storage
+        if not img_url.startswith("/") and not img_url.startswith("http"):
+            return await storage.get(img_url)
+
         # Resolve /api/assets/... URLs to local file paths
         if img_url.startswith("/api/assets/"):
-            # Extract the primary asset UUID from the URL pattern:
-            # /api/assets/{uuid}/image  (or /api/assets/{uuid}/clean-image)
-            # This is needed because duplicate asset rows share the same
-            # reference_image_url pointing to the primary asset's file,
-            # but asset.id may differ from the primary.
-            url_match = re.search(
-                r"/api/assets/([0-9a-f-]{36})/", img_url
-            )
-            file_asset_id = url_match.group(1) if url_match else str(asset.id)
+            if isinstance(storage, LocalStorageBackend):
+                # Local backend: find file on disk
+                url_match = re.search(
+                    r"/api/assets/([0-9a-f-]{36})/", img_url
+                )
+                file_asset_id = url_match.group(1) if url_match else str(asset.id)
 
-            manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
-            resolved = None
-            for subdir in ("uploads", "crops"):
-                d = manifest_dir / subdir
-                if d.exists():
-                    matches = list(d.glob(f"{file_asset_id}_*"))
-                    if matches:
-                        resolved = matches[0]
-                        break
-            if not resolved:
+                manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+                resolved = None
+                for subdir in ("uploads", "crops"):
+                    d = manifest_dir / subdir
+                    if d.exists():
+                        matches = list(d.glob(f"{file_asset_id}_*"))
+                        if matches:
+                            resolved = matches[0]
+                            break
+                if not resolved:
+                    logger.warning(
+                        f"Reference image not found on disk for asset {asset.id} "
+                        f"(file_id={file_asset_id})"
+                    )
+                    return None
+                return resolved.read_bytes()
+            else:
+                # S3 backend: /api/assets/ shouldn't exist, but try to resolve
                 logger.warning(
-                    f"Reference image not found on disk for asset {asset.id} "
-                    f"(file_id={file_asset_id})"
+                    f"Asset {asset.id} has /api/assets/ URL but using S3 backend"
                 )
                 return None
-            return resolved.read_bytes()
         else:
+            # Absolute path or other
             p = Path(img_url)
             if p.exists():
                 return p.read_bytes()
-            logger.warning(f"Reference image path does not exist: {img_url}")
-            return None
+            # Try storage backend
+            try:
+                from vidpipe.services.file_manager import FileManager
+                file_mgr = FileManager()
+                return await file_mgr.read_bytes(img_url)
+            except FileNotFoundError:
+                logger.warning(f"Reference image path does not exist: {img_url}")
+                return None
 
     except Exception as e:
         logger.warning(f"Failed to resolve reference image for asset {asset.id}: {e}")

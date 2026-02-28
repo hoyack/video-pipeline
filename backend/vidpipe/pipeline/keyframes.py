@@ -487,8 +487,7 @@ async def generate_keyframes(
 
         # If both keyframes exist, skip entire shot (fork or user upload)
         if existing_start_kf and existing_end_kf:
-            from pathlib import Path as _Path
-            previous_end_frame_bytes = _Path(existing_end_kf.file_path).read_bytes()
+            previous_end_frame_bytes = await file_mgr.read_bytes(existing_end_kf.file_path)
             # Don't downgrade shots that already have completed clips
             if shot.status != "video_done":
                 shot.status = "keyframes_done"
@@ -502,9 +501,8 @@ async def generate_keyframes(
         # KEYF-03 continuity: if shot has an uploaded start keyframe,
         # use it as previous_end for daisy-chain conditioning
         if existing_start_kf:
-            from pathlib import Path as _Path
             # The uploaded start keyframe serves as "previous end" for conditioning
-            _existing_start_bytes = _Path(existing_start_kf.file_path).read_bytes()
+            _existing_start_bytes = await file_mgr.read_bytes(existing_start_kf.file_path)
 
         try:
             # Set generation_status for the shot (VGED-05)
@@ -662,8 +660,7 @@ async def generate_keyframes(
             # ---- START FRAME: Generate or inherit (skip if existing) ----
             if existing_start_kf:
                 # Gap-filling: start keyframe already exists (user upload or fork)
-                from pathlib import Path as _Path2
-                start_frame_bytes = _Path2(existing_start_kf.file_path).read_bytes()
+                start_frame_bytes = await file_mgr.read_bytes(existing_start_kf.file_path)
                 start_source = existing_start_kf.source
                 logger.info(
                     f"Shot {shot.shot_index}: start keyframe exists, skipping generation"
@@ -715,8 +712,8 @@ async def generate_keyframes(
                         break  # No verification needed or final attempt
                 start_source = "generated"
 
-                # Save start keyframe to filesystem
-                start_file_path = file_mgr.save_keyframe(
+                # Save start keyframe
+                start_stored_path = await file_mgr.save_keyframe_async(
                     scene.id, shot.shot_index, "start", start_frame_bytes
                 )
 
@@ -724,7 +721,7 @@ async def generate_keyframes(
                 start_keyframe = Keyframe(
                     shot_id=shot.id,
                     position="start",
-                    file_path=str(start_file_path),
+                    file_path=start_stored_path,
                     mime_type="image/png",
                     source=start_source,
                     prompt_used=shot.start_frame_prompt,
@@ -735,8 +732,8 @@ async def generate_keyframes(
                 start_frame_bytes = previous_end_frame_bytes
                 start_source = "inherited"
 
-                # Save start keyframe to filesystem
-                start_file_path = file_mgr.save_keyframe(
+                # Save start keyframe
+                start_stored_path = await file_mgr.save_keyframe_async(
                     scene.id, shot.shot_index, "start", start_frame_bytes
                 )
 
@@ -744,7 +741,7 @@ async def generate_keyframes(
                 start_keyframe = Keyframe(
                     shot_id=shot.id,
                     position="start",
-                    file_path=str(start_file_path),
+                    file_path=start_stored_path,
                     mime_type="image/png",
                     source=start_source,
                     prompt_used=shot.start_frame_prompt,
@@ -754,8 +751,7 @@ async def generate_keyframes(
             # ---- END FRAME: Generate with conditioning (skip if existing) ----
             if existing_end_kf:
                 # Gap-filling: end keyframe already exists (user upload or fork)
-                from pathlib import Path as _Path3
-                end_frame_bytes = _Path3(existing_end_kf.file_path).read_bytes()
+                end_frame_bytes = await file_mgr.read_bytes(existing_end_kf.file_path)
                 logger.info(
                     f"Shot {shot.shot_index}: end keyframe exists, skipping generation"
                 )
@@ -819,8 +815,8 @@ async def generate_keyframes(
                     else:
                         break
 
-                # Save end keyframe to filesystem
-                end_file_path = file_mgr.save_keyframe(
+                # Save end keyframe
+                end_stored_path = await file_mgr.save_keyframe_async(
                     scene.id, shot.shot_index, "end", end_frame_bytes
                 )
 
@@ -828,7 +824,7 @@ async def generate_keyframes(
                 end_keyframe = Keyframe(
                     shot_id=shot.id,
                     position="end",
-                    file_path=str(end_file_path),
+                    file_path=end_stored_path,
                     mime_type="image/png",
                     source="generated",
                     prompt_used=shot.end_frame_prompt,

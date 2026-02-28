@@ -75,6 +75,10 @@ class StorageConfig(BaseModel):
 
     database_url: str
     tmp_dir: Path
+    storage_backend: str = "local"  # "local" or "s3"
+    s3_endpoint: str = "http://localhost:8000/storage/v1"  # Supabase Storage API via Kong
+    s3_bucket: str = "vidpipe-master"
+    s3_service_key: str = ""  # Supabase service_role JWT
 
     @field_validator("tmp_dir", mode="before")
     @classmethod

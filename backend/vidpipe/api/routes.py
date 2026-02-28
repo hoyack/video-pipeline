@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_ as sa_and, case, func as sa_func, select, update
 from sqlalchemy.orm import selectinload
@@ -23,6 +23,7 @@ from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import ShotSchema
 from vidpipe.schemas.storyboard_enhanced import EnhancedShotSchema
 from vidpipe.services.file_manager import FileManager
+from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
 from vidpipe.services import manifest_service
 from vidpipe.workers.processing_tasks import process_manifest_task, extract_video_frames_task, TASK_STATUS
 
@@ -1068,23 +1069,30 @@ async def upload_final_video(scene_id: uuid.UUID, file: UploadFile = File(...)):
         if not scene:
             raise HTTPException(status_code=404, detail="Scene not found")
 
-        # Save file using same path convention as stitcher: tmp/{scene_id}/output/final.mp4
+        content = await file.read()
         file_mgr = FileManager()
-        output_path = file_mgr.get_output_path(scene.id, "final.mp4")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        storage = get_storage_backend()
 
-        with open(output_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+        if isinstance(storage, LocalStorageBackend):
+            # Local: write to disk
+            output_path = file_mgr.get_output_path(scene.id, "final.mp4")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "wb") as f:
+                f.write(content)
+            scene.output_path = str(output_path)
+        else:
+            # S3: upload to storage
+            key = f"{scene.id}/output/final.mp4"
+            await storage.put(key, content, "video/mp4")
+            scene.output_path = key
 
-        scene.output_path = str(output_path)
         await session.commit()
 
-        logger.info(f"Uploaded final video for scene {scene_id}: {output_path}")
+        logger.info(f"Uploaded final video for scene {scene_id}: {scene.output_path}")
 
         return {
             "scene_id": str(scene_id),
-            "output_path": str(output_path),
+            "output_path": scene.output_path,
             "status": scene.status,
         }
 
@@ -2196,20 +2204,29 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
                     kf_result = await session.execute(
                         select(Keyframe).where(Keyframe.shot_id == src_shot.id)
                     )
+                    storage = get_storage_backend()
                     for kf in kf_result.scalars().all():
-                        src_path = Path(kf.file_path)
-                        if src_path.exists():
+                        try:
+                            src_data = await file_mgr.read_bytes(kf.file_path)
+                        except FileNotFoundError:
+                            continue
+                        if isinstance(storage, LocalStorageBackend):
                             dst_path = file_mgr.get_scene_dir(new_id) / "keyframes" / f"shot_{new_idx}_{kf.position}.png"
-                            shutil.copy2(str(src_path), str(dst_path))
-                            new_kf = Keyframe(
-                                shot_id=new_shot.id,
-                                position=kf.position,
-                                prompt_used=kf.prompt_used,
-                                file_path=str(dst_path),
-                                mime_type=kf.mime_type,
-                                source="inherited",
-                            )
-                            session.add(new_kf)
+                            dst_path.write_bytes(src_data)
+                            stored_path = str(dst_path)
+                        else:
+                            kf_key = f"{new_id}/keyframes/shot_{new_idx}_{kf.position}.png"
+                            await storage.put(kf_key, src_data, kf.mime_type or "image/png")
+                            stored_path = kf_key
+                        new_kf = Keyframe(
+                            shot_id=new_shot.id,
+                            position=kf.position,
+                            prompt_used=kf.prompt_used,
+                            file_path=stored_path,
+                            mime_type=kf.mime_type,
+                            source="inherited",
+                        )
+                        session.add(new_kf)
 
                 # Copy clip
                 if copy_clip:
@@ -2218,15 +2235,25 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
                     )
                     clip = clip_result.scalar_one_or_none()
                     if clip and clip.local_path:
-                        src_clip_path = Path(clip.local_path)
-                        if src_clip_path.exists():
-                            dst_clip_path = file_mgr.get_scene_dir(new_id) / "clips" / f"shot_{new_idx}.mp4"
-                            shutil.copy2(str(src_clip_path), str(dst_clip_path))
+                        try:
+                            src_clip_data = await file_mgr.read_bytes(clip.local_path)
+                        except FileNotFoundError:
+                            src_clip_data = None
+                        if src_clip_data:
+                            storage = get_storage_backend()
+                            if isinstance(storage, LocalStorageBackend):
+                                dst_clip_path = file_mgr.get_scene_dir(new_id) / "clips" / f"shot_{new_idx}.mp4"
+                                dst_clip_path.write_bytes(src_clip_data)
+                                stored_clip_path = str(dst_clip_path)
+                            else:
+                                clip_key = f"{new_id}/clips/shot_{new_idx}.mp4"
+                                await storage.put(clip_key, src_clip_data, "video/mp4")
+                                stored_clip_path = clip_key
                             new_clip = VideoClip(
                                 shot_id=new_shot.id,
                                 source="inherited",
                                 status="complete",
-                                local_path=str(dst_clip_path),
+                                local_path=stored_clip_path,
                                 gcs_uri=clip.gcs_uri,
                                 duration_seconds=clip.duration_seconds,
                             )
@@ -2598,28 +2625,37 @@ async def download_video(scene_id: uuid.UUID, dl: int = 0):
         if not scene.output_path:
             raise HTTPException(status_code=404, detail="Output file path not set")
 
-        output_path = Path(scene.output_path)
-        if not output_path.exists():
-            raise HTTPException(status_code=404, detail="Output file not found on disk")
-
+        storage = get_storage_backend()
         filename = f"video_{scene_id}.mp4"
         disposition = "attachment" if dl else "inline"
-        return FileResponse(
-            path=str(output_path),
-            media_type="video/mp4",
-            filename=filename,
-            headers={
-                "Content-Disposition": f'{disposition}; filename="{filename}"'
-            }
-        )
+
+        if isinstance(storage, LocalStorageBackend):
+            output_path = Path(scene.output_path)
+            if not output_path.exists():
+                raise HTTPException(status_code=404, detail="Output file not found on disk")
+            return FileResponse(
+                path=str(output_path),
+                media_type="video/mp4",
+                filename=filename,
+                headers={
+                    "Content-Disposition": f'{disposition}; filename="{filename}"'
+                }
+            )
+        else:
+            file_mgr = FileManager()
+            data = await file_mgr.read_bytes(scene.output_path)
+            return Response(
+                content=data,
+                media_type="video/mp4",
+                headers={
+                    "Content-Disposition": f'{disposition}; filename="{filename}"'
+                },
+            )
 
 
 @router.get("/keyframes/{keyframe_id}")
 async def get_keyframe_image(keyframe_id: uuid.UUID):
-    """Serve a keyframe image by its database ID.
-
-    Returns the PNG image file from disk.
-    """
+    """Serve a keyframe image by its database ID."""
     async with async_session() as session:
         result = await session.execute(
             select(Keyframe).where(Keyframe.id == keyframe_id)
@@ -2629,22 +2665,24 @@ async def get_keyframe_image(keyframe_id: uuid.UUID):
         if not keyframe:
             raise HTTPException(status_code=404, detail="Keyframe not found")
 
-        file_path = Path(keyframe.file_path)
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Keyframe file not found on disk")
-
-        return FileResponse(
-            path=str(file_path),
-            media_type=keyframe.mime_type,
-        )
+        storage = get_storage_backend()
+        if isinstance(storage, LocalStorageBackend):
+            file_path = Path(keyframe.file_path)
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="Keyframe file not found on disk")
+            return FileResponse(
+                path=str(file_path),
+                media_type=keyframe.mime_type,
+            )
+        else:
+            file_mgr = FileManager()
+            data = await file_mgr.read_bytes(keyframe.file_path)
+            return Response(content=data, media_type=keyframe.mime_type)
 
 
 @router.get("/clips/{clip_id}")
 async def get_clip_video(clip_id: uuid.UUID):
-    """Serve a video clip by its database ID.
-
-    Returns the MP4 video file from disk.
-    """
+    """Serve a video clip by its database ID."""
     async with async_session() as session:
         result = await session.execute(
             select(VideoClip).where(VideoClip.id == clip_id)
@@ -2657,14 +2695,19 @@ async def get_clip_video(clip_id: uuid.UUID):
         if not clip.local_path:
             raise HTTPException(status_code=404, detail="Clip file path not set")
 
-        file_path = Path(clip.local_path)
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Clip file not found on disk")
-
-        return FileResponse(
-            path=str(file_path),
-            media_type="video/mp4",
-        )
+        storage = get_storage_backend()
+        if isinstance(storage, LocalStorageBackend):
+            file_path = Path(clip.local_path)
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="Clip file not found on disk")
+            return FileResponse(
+                path=str(file_path),
+                media_type="video/mp4",
+            )
+        else:
+            file_mgr = FileManager()
+            data = await file_mgr.read_bytes(clip.local_path)
+            return Response(content=data, media_type="video/mp4")
 
 
 @router.get("/metrics", response_model=MetricsResponse)
@@ -3120,17 +3163,27 @@ async def upload_asset_image(asset_id: uuid.UUID, file: UploadFile = File(...)):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-        # Save file (wrap in asyncio.to_thread since save_asset_image is sync)
-        file_path = await asyncio.to_thread(
-            manifest_service.save_asset_image,
-            asset.manifest_id,
-            asset_id,
-            content,
-            file.filename or "upload.png",
-        )
+        storage = get_storage_backend()
+        filename = file.filename or "upload.png"
 
-        # Update asset reference_image_url to HTTP-serveable path
-        asset.reference_image_url = f"/api/assets/{asset_id}/image"
+        if isinstance(storage, LocalStorageBackend):
+            # Local: write to disk (sync)
+            file_path = await asyncio.to_thread(
+                manifest_service.save_asset_image,
+                asset.manifest_id,
+                asset_id,
+                content,
+                filename,
+            )
+            # reference_image_url stays as API path for local
+            asset.reference_image_url = f"/api/assets/{asset_id}/image"
+        else:
+            # S3: upload to storage
+            key = f"manifests/{asset.manifest_id}/uploads/{asset_id}_{filename}"
+            await storage.put(key, content, file.content_type or "image/png")
+            # Store the S3 key — GET endpoint will resolve to public URL
+            asset.reference_image_url = key
+
         await session.commit()
         await session.refresh(asset)
 
@@ -3145,24 +3198,47 @@ async def get_asset_image(asset_id: uuid.UUID):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-        # Find file in uploads or crops directory
-        manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
-        matches = []
-        for subdir in ("uploads", "crops"):
-            d = manifest_dir / subdir
-            if d.exists():
-                matches = list(d.glob(f"{asset_id}_*"))
-                if matches:
-                    break
-        if not matches:
-            raise HTTPException(status_code=404, detail="Asset image not found on disk")
+        storage = get_storage_backend()
 
-        file_path = matches[0]
-        suffix = file_path.suffix.lower()
-        media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-        media_type = media_types.get(suffix, "image/png")
+        if isinstance(storage, LocalStorageBackend):
+            # Local backend: find file in uploads or crops directory
+            manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+            matches = []
+            for subdir in ("uploads", "crops"):
+                d = manifest_dir / subdir
+                if d.exists():
+                    matches = list(d.glob(f"{asset_id}_*"))
+                    if matches:
+                        break
+            if not matches:
+                raise HTTPException(status_code=404, detail="Asset image not found on disk")
 
-        return FileResponse(path=str(file_path), media_type=media_type)
+            file_path = matches[0]
+            suffix = file_path.suffix.lower()
+            media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+            media_type = media_types.get(suffix, "image/png")
+
+            return FileResponse(path=str(file_path), media_type=media_type)
+        else:
+            # S3 backend: search for asset key in storage
+            for subdir in ("uploads", "crops"):
+                key_prefix = f"manifests/{asset.manifest_id}/{subdir}/{asset_id}_"
+                # Try common extensions
+                for ext in ("png", "jpg", "jpeg", "webp"):
+                    # We don't know exact filename, but we stored it with asset_id prefix
+                    # Use the reference_image_url if it's an S3 key
+                    pass
+
+            # Best approach: if reference_image_url is set and is an S3 key, use it
+            if asset.reference_image_url and not asset.reference_image_url.startswith("/api/"):
+                data = await storage.get(asset.reference_image_url)
+                # Determine media type from extension
+                ext = asset.reference_image_url.rsplit(".", 1)[-1].lower()
+                media_types = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+                media_type = media_types.get(ext, "application/octet-stream")
+                return Response(content=data, media_type=media_type)
+
+            raise HTTPException(status_code=404, detail="Asset image not found")
 
 
 # ============================================================================
@@ -4591,11 +4667,17 @@ async def _run_shot_regeneration(
                             )
                             new_end_kf = new_end_kf_result.scalar_one_or_none()
                             if new_end_kf:
-                                from pathlib import Path
-                                end_bytes = Path(new_end_kf.file_path).read_bytes()
-                                inherited_path = file_mgr.save_keyframe_versioned(
-                                    scene.id, shot_idx + 1, "start", end_bytes,
-                                )
+                                end_bytes = await file_mgr.read_bytes(new_end_kf.file_path)
+                                storage = get_storage_backend()
+                                if isinstance(storage, LocalStorageBackend):
+                                    inherited_path = file_mgr.save_keyframe_versioned(
+                                        scene.id, shot_idx + 1, "start", end_bytes,
+                                    )
+                                    stored_path = str(inherited_path)
+                                else:
+                                    stored_path = await file_mgr.save_keyframe_versioned_async(
+                                        scene.id, shot_idx + 1, "start", end_bytes,
+                                    )
                                 # Replace next shot's start keyframe
                                 old_next_start_result = await session.execute(
                                     select(Keyframe).where(
@@ -4611,7 +4693,7 @@ async def _run_shot_regeneration(
                                     shot_id=next_shot.id,
                                     position="start",
                                     prompt_used=next_shot.start_frame_prompt,
-                                    file_path=str(inherited_path),
+                                    file_path=stored_path,
                                     mime_type="image/png",
                                     source="inherited",
                                 )
@@ -4780,9 +4862,14 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
                 )
                 prev_end_kf = prev_kf_result.scalar_one_or_none()
 
-            if prev_end_kf and Path(prev_end_kf.file_path).exists():
-                prev_end_bytes = Path(prev_end_kf.file_path).read_bytes()
+            prev_end_bytes = None
+            if prev_end_kf:
+                try:
+                    prev_end_bytes = await file_mgr.read_bytes(prev_end_kf.file_path)
+                except FileNotFoundError:
+                    pass
 
+            if prev_end_bytes is not None:
                 if prompt_override:
                     # Extra direction provided — conditioned generation from prev end frame
                     style_label = scene.style.replace("_", " ")
@@ -4831,10 +4918,13 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
         )
         start_kf = start_kf_result.scalar_one_or_none()
 
-        if not start_kf or not Path(start_kf.file_path).exists():
+        if not start_kf:
             raise ValueError(f"No start keyframe available for shot {shot.shot_index} — generate start keyframe first")
 
-        conditioning_bytes = Path(start_kf.file_path).read_bytes()
+        try:
+            conditioning_bytes = await file_mgr.read_bytes(start_kf.file_path)
+        except FileNotFoundError:
+            raise ValueError(f"Start keyframe file not found for shot {shot.shot_index}")
 
         if prompt_override:
             conditioning_prompt = prompt_override
@@ -4871,7 +4961,12 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
         prompt_used = prompt_override or edited_end or shot.end_frame_prompt
 
     # Save with versioned path
-    filepath = file_mgr.save_keyframe_versioned(scene.id, shot.shot_index, position, image_bytes)
+    storage = get_storage_backend()
+    if isinstance(storage, LocalStorageBackend):
+        filepath = file_mgr.save_keyframe_versioned(scene.id, shot.shot_index, position, image_bytes)
+        stored_path = str(filepath)
+    else:
+        stored_path = await file_mgr.save_keyframe_versioned_async(scene.id, shot.shot_index, position, image_bytes)
 
     # Delete old keyframe for this position
     old_kf_result = await session.execute(
@@ -4887,7 +4982,7 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
         shot_id=shot.id,
         position=position,
         prompt_used=prompt_used,
-        file_path=str(filepath),
+        file_path=stored_path,
         mime_type="image/png",
         source="generated",
     )
@@ -4929,8 +5024,8 @@ async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None,
     if not start_kf:
         raise ValueError(f"No start keyframe for shot {shot.shot_index}")
 
-    start_bytes = Path(start_kf.file_path).read_bytes()
-    end_bytes = Path(end_kf.file_path).read_bytes() if end_kf else start_bytes
+    start_bytes = await file_mgr.read_bytes(start_kf.file_path)
+    end_bytes = await file_mgr.read_bytes(end_kf.file_path) if end_kf else start_bytes
 
     # Submit video generation
     video_model = video_model_override or scene.video_model or app_settings.models.video_generator
@@ -5019,7 +5114,12 @@ async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None,
             raise ValueError("No generated videos in response")
 
     # Save with versioned path
-    filepath = file_mgr.save_clip_versioned(scene.id, shot.shot_index, video_bytes)
+    storage = get_storage_backend()
+    if isinstance(storage, LocalStorageBackend):
+        filepath = file_mgr.save_clip_versioned(scene.id, shot.shot_index, video_bytes)
+        stored_path = str(filepath)
+    else:
+        stored_path = await file_mgr.save_clip_versioned_async(scene.id, shot.shot_index, video_bytes)
 
     # Delete old clip
     old_clip_result = await session.execute(
@@ -5034,7 +5134,7 @@ async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None,
     clip = VideoClip(
         shot_id=shot.id,
         status="complete",
-        local_path=str(filepath),
+        local_path=stored_path,
         source="generated",
         prompt_used=video_prompt,
     )
@@ -5595,7 +5695,13 @@ async def upload_keyframe(
 
         from vidpipe.services.file_manager import FileManager
         file_mgr = FileManager()
-        filepath = file_mgr.save_keyframe_versioned(scene.id, shot_idx, position, data)
+        storage = get_storage_backend()
+
+        if isinstance(storage, LocalStorageBackend):
+            filepath = file_mgr.save_keyframe_versioned(scene.id, shot_idx, position, data)
+            stored_path = str(filepath)
+        else:
+            stored_path = await file_mgr.save_keyframe_versioned_async(scene.id, shot_idx, position, data)
 
         # Delete old keyframe
         old_kf_result = await session.execute(
@@ -5611,7 +5717,7 @@ async def upload_keyframe(
             shot_id=shot.id,
             position=position,
             prompt_used="uploaded",
-            file_path=str(filepath),
+            file_path=stored_path,
             mime_type=file.content_type or "image/png",
             source="uploaded",
         )
@@ -5624,7 +5730,7 @@ async def upload_keyframe(
         )
         await session.commit()
 
-        return {"status": "uploaded", "file_path": str(filepath), "keyframe_id": str(kf.id)}
+        return {"status": "uploaded", "file_path": stored_path, "keyframe_id": str(kf.id)}
 
 
 @router.put("/scenes/{scene_id}/shots/{shot_idx}/clip")
@@ -5651,7 +5757,13 @@ async def upload_clip(
 
         from vidpipe.services.file_manager import FileManager
         file_mgr = FileManager()
-        filepath = file_mgr.save_clip_versioned(scene.id, shot_idx, data)
+        storage = get_storage_backend()
+
+        if isinstance(storage, LocalStorageBackend):
+            filepath = file_mgr.save_clip_versioned(scene.id, shot_idx, data)
+            stored_path = str(filepath)
+        else:
+            stored_path = await file_mgr.save_clip_versioned_async(scene.id, shot_idx, data)
 
         # Delete old clip
         old_clip_result = await session.execute(
@@ -5665,7 +5777,7 @@ async def upload_clip(
         clip = VideoClip(
             shot_id=shot.id,
             status="complete",
-            local_path=str(filepath),
+            local_path=stored_path,
             source="uploaded",
             prompt_used="uploaded",
         )
@@ -5678,7 +5790,7 @@ async def upload_clip(
         )
         await session.commit()
 
-        return {"status": "uploaded", "file_path": str(filepath), "clip_id": str(clip.id)}
+        return {"status": "uploaded", "file_path": stored_path, "clip_id": str(clip.id)}
 
 
 @router.delete("/scenes/{scene_id}/shots/{shot_idx}/clip")

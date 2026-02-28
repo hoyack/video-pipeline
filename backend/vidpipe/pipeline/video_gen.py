@@ -307,11 +307,11 @@ async def _regenerate_end_keyframe_safe(
                 image_model,
             )
 
-        # Save to disk (overwrites existing file)
-        end_file_path = file_mgr.save_keyframe(
+        # Save (overwrites existing file)
+        end_stored_path = await file_mgr.save_keyframe_async(
             scene.id, shot.shot_index, "end", end_frame_bytes,
         )
-        end_kf.file_path = str(end_file_path)
+        end_kf.file_path = end_stored_path
         end_kf.prompt_used = conditioning_prompt
         end_kf.source = "generated"
         await session.commit()
@@ -394,10 +394,10 @@ async def _poll_video_operation(
                     return "failed"
 
                 # Save video clip (VGEN-06)
-                file_path = file_mgr.save_clip(
+                clip_stored_path = await file_mgr.save_clip_async(
                     scene.id, shot.shot_index, video_bytes,
                 )
-                clip.local_path = str(file_path)
+                clip.local_path = clip_stored_path
                 clip.status = "complete"
                 clip.duration_seconds = scene.target_clip_duration
                 clip.source = "generated"
@@ -596,18 +596,28 @@ async def _handle_quality_mode_candidates(
     clips_dir = file_mgr.base_dir / str(scene.id) / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
 
+    from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
+    storage = get_storage_backend()
+
     candidate_records: list[GenerationCandidate] = []
 
     # Step 1 & 2: Save each candidate and create DB records
     for i, video_bytes in enumerate(video_bytes_list):
         candidate_path = clips_dir / f"shot_{shot.shot_index}_candidate_{i}.mp4"
-        candidate_path.write_bytes(video_bytes)
+        candidate_path.write_bytes(video_bytes)  # Always write locally for CV analysis
+
+        if isinstance(storage, LocalStorageBackend):
+            stored_path = str(candidate_path)
+        else:
+            key = f"{scene.id}/clips/shot_{shot.shot_index}_candidate_{i}.mp4"
+            await storage.put(key, video_bytes, "video/mp4")
+            stored_path = key
 
         candidate = GenerationCandidate(
             scene_id=scene.id,
             shot_index=shot.shot_index,
             candidate_number=i,
-            local_path=str(candidate_path),
+            local_path=stored_path,
         )
         session.add(candidate)
         candidate_records.append(candidate)
@@ -726,11 +736,21 @@ async def _run_post_generation_analysis(
             .order_by(Keyframe.position)
         )
         keyframes = kf_result.scalars().all()
-        keyframe_paths = [
-            kf.file_path
-            for kf in keyframes
-            if kf.file_path and Path(kf.file_path).exists()
-        ]
+        from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
+        storage = get_storage_backend()
+        if isinstance(storage, LocalStorageBackend):
+            keyframe_paths = [
+                kf.file_path
+                for kf in keyframes
+                if kf.file_path and Path(kf.file_path).exists()
+            ]
+        else:
+            # For S3, resolve to local temp copies (base_dir has them)
+            keyframe_paths = [
+                str(file_mgr.base_dir / kf.file_path)
+                for kf in keyframes
+                if kf.file_path and (file_mgr.base_dir / kf.file_path).exists()
+            ]
 
         # Use a savepoint so that if CV analysis fails partway through
         # (after adding appearances/entities to the session), only the
@@ -941,8 +961,8 @@ async def _generate_video_comfyui(
                 f"keyframe(s) — cannot generate video"
             )
 
-    start_frame_bytes = Path(start_kf.file_path).read_bytes()
-    end_frame_bytes = Path(end_kf.file_path).read_bytes() if end_kf else None
+    start_frame_bytes = await file_mgr.read_bytes(start_kf.file_path)
+    end_frame_bytes = await file_mgr.read_bytes(end_kf.file_path) if end_kf else None
 
     # Load shot manifest for prompt rewriting and char refs
     shot_manifest_row = None
@@ -1042,11 +1062,11 @@ async def _generate_video_comfyui(
                 logger.error("Shot %d: ComfyUI download failed: %s", shot.shot_index, e)
                 return
 
-            # Save clip to disk
-            file_path = file_mgr.save_clip(
+            # Save clip
+            clip_stored_path = await file_mgr.save_clip_async(
                 scene.id, shot.shot_index, video_bytes,
             )
-            clip.local_path = str(file_path)
+            clip.local_path = clip_stored_path
             clip.status = "complete"
             clip.duration_seconds = duration
             clip.source = "generated"
@@ -1178,8 +1198,8 @@ async def _generate_video_for_shot(
             f"keyframe(s) — cannot generate video"
         )
 
-    start_frame_bytes = Path(start_kf.file_path).read_bytes()
-    end_frame_bytes = Path(end_kf.file_path).read_bytes()
+    start_frame_bytes = await file_mgr.read_bytes(start_kf.file_path)
+    end_frame_bytes = await file_mgr.read_bytes(end_kf.file_path)
 
     # Load shot manifest and select references (Phase 8)
     from vidpipe.db.models import ShotManifest as ShotManifestModel

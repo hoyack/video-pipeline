@@ -97,7 +97,9 @@ async def generate_tier2_clean_sheet(
         from PIL import Image
         import io
 
-        original_bytes = Path(asset.reference_image_url).read_bytes()
+        from vidpipe.services.file_manager import FileManager
+        file_mgr = FileManager()
+        original_bytes = await file_mgr.read_bytes(asset.reference_image_url)
 
         # Run rembg in thread pool (CPU-bound operation)
         removed_bytes = await asyncio.to_thread(rembg_remove, original_bytes)
@@ -219,7 +221,9 @@ async def generate_tier3_clean_sheet(
         return None
 
     # Load reference image
-    reference_bytes = Path(asset.reference_image_url).read_bytes()
+    from vidpipe.services.file_manager import FileManager
+    file_mgr = FileManager()
+    reference_bytes = await file_mgr.read_bytes(asset.reference_image_url)
 
     # Build conditioning prompt
     conditioning_prompt = (

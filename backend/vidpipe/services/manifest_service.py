@@ -179,12 +179,25 @@ async def create_manifest_from_scene(
 
         # Copy keyframe image if available
         src_path = keyframe_map.get(i)
-        if src_path and Path(src_path).exists():
-            dest_dir = Path("tmp/manifests") / str(manifest.id) / "uploads"
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = dest_dir / f"{asset.id}_{Path(src_path).name}"
-            shutil.copy2(src_path, dest_path)
-            asset.reference_image_url = f"/api/assets/{asset.id}/image"
+        if src_path:
+            from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
+            from vidpipe.services.file_manager import FileManager
+            storage = get_storage_backend()
+            file_mgr = FileManager()
+            try:
+                src_data = await file_mgr.read_bytes(src_path)
+                if isinstance(storage, LocalStorageBackend):
+                    dest_dir = Path("tmp/manifests") / str(manifest.id) / "uploads"
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    dest_path = dest_dir / f"{asset.id}_{Path(src_path).name}"
+                    dest_path.write_bytes(src_data)
+                    asset.reference_image_url = f"/api/assets/{asset.id}/image"
+                else:
+                    key = f"manifests/{manifest.id}/uploads/{asset.id}_{Path(src_path).name}"
+                    await storage.put(key, src_data, "image/png")
+                    asset.reference_image_url = key
+            except FileNotFoundError:
+                pass  # Source keyframe not available
 
         assets_list.append(asset)
 
@@ -599,9 +612,10 @@ def save_asset_image(
     file_content: bytes,
     filename: str,
 ) -> str:
-    """Save uploaded image to disk.
+    """Save uploaded image to disk (local backend only).
 
     NOT async - pure filesystem I/O. Caller should wrap in asyncio.to_thread().
+    For S3 backend, caller should use storage.put() directly instead.
 
     Args:
         manifest_id: Parent manifest UUID

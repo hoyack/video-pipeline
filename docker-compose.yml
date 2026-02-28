@@ -7,8 +7,12 @@ services:
     environment:
       - VIDPIPE_STORAGE__DATABASE_URL=postgresql+asyncpg://postgres.your-tenant-id:your-super-secret-and-long-postgres-password@supabase-pooler:6543/vidpipe_master
       - VIDPIPE_STORAGE__TMP_DIR=/app/tmp
+      - VIDPIPE_STORAGE__STORAGE_BACKEND=s3
+      - VIDPIPE_STORAGE__S3_ENDPOINT=http://supabase-kong:8000/storage/v1
+      - VIDPIPE_STORAGE__S3_BUCKET=vidpipe-master
+      - VIDPIPE_STORAGE__S3_SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
     volumes:
-      - vidpipe-tmp:/app/tmp
+      - ./tmp:/app/tmp
       - ${GOOGLE_APPLICATION_CREDENTIALS:-./.gcp-credentials.json}:/app/credentials.json:ro
     ports:
       - "${VIDPIPE_PORT:-8100}:8000"
@@ -27,9 +31,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  vidpipe-tmp:
 
 networks:
   supabase_default:

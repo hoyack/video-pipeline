@@ -43,6 +43,8 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
         - STCH-05: ffmpeg validated at startup (handled by validate_dependencies)
     """
     file_mgr = FileManager()
+    from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
+    storage = get_storage_backend()
 
     # Query completed clips in shot order (STCH-04)
     result = await session.execute(
@@ -62,8 +64,20 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
         await session.commit()
         return
 
-    # Get clip paths
-    clip_paths = [Path(clip.local_path) for clip in clips]
+    # Get clip paths — for S3, download to local temp if needed
+    clip_paths: list[Path] = []
+    for clip in clips:
+        if isinstance(storage, LocalStorageBackend):
+            clip_paths.append(Path(clip.local_path))
+        else:
+            # S3 mode: try local temp copy first, download if missing
+            local_path = file_mgr.base_dir / clip.local_path
+            if not local_path.exists():
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                clip_data = await storage.get(clip.local_path)
+                local_path.write_bytes(clip_data)
+            clip_paths.append(local_path)
+
     logger.info(f"Scene {scene.id}: Stitching {len(clip_paths)} clips")
 
     # Verify all clip files exist
@@ -75,7 +89,7 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
         await session.commit()
         return
 
-    # Get output path (STCH-04)
+    # Get output path (STCH-04) — always local for ffmpeg
     output_path = file_mgr.get_output_path(scene.id, "final.mp4")
 
     # Choose stitching mode based on crossfade setting
@@ -98,10 +112,15 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
                 scene.target_clip_duration,
             )
 
-        # Update scene on success
-        scene.output_path = str(output_path)
+        # Upload to S3 if needed, then update scene
+        if isinstance(storage, LocalStorageBackend):
+            scene.output_path = str(output_path)
+        else:
+            output_key = await file_mgr.save_output_async(scene.id, "final.mp4")
+            scene.output_path = output_key
+
         scene.status = "complete"
-        logger.info(f"Scene {scene.id}: Stitching complete -> {output_path}")
+        logger.info(f"Scene {scene.id}: Stitching complete -> {scene.output_path}")
         await session.commit()
 
         from vidpipe.services.event_bus import event_bus

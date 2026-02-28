@@ -1548,6 +1548,16 @@ async def delete_scene(scene_id: uuid.UUID):
     except Exception:
         logger.warning(f"Failed to remove disk assets for scene {scene_id}", exc_info=True)
 
+    # Remove S3 objects under this scene's prefix
+    storage = get_storage_backend()
+    if not storage.is_local():
+        try:
+            count = await storage.delete_prefix(str(scene_id))
+            if count:
+                logger.info(f"Removed {count} S3 objects for scene {scene_id}")
+        except Exception:
+            logger.warning(f"Failed to remove S3 objects for scene {scene_id}", exc_info=True)
+
     return {"status": "deleted", "scene_id": str(scene_id)}
 
 
@@ -4973,9 +4983,17 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
         select(Keyframe).where(Keyframe.shot_id == shot.id, Keyframe.position == position)
     )
     old_kf = old_kf_result.scalar_one_or_none()
+    old_kf_path = old_kf.file_path if old_kf else None
     if old_kf:
         await session.delete(old_kf)
         await session.flush()
+
+    # Clean up old S3 file (different key than the new versioned one)
+    if old_kf_path and old_kf_path != stored_path and not storage.is_local():
+        try:
+            await storage.delete(old_kf_path)
+        except Exception:
+            logger.warning(f"Failed to delete old S3 keyframe {old_kf_path}")
 
     # Create new keyframe row
     kf = Keyframe(
@@ -5126,9 +5144,17 @@ async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None,
         select(VideoClip).where(VideoClip.shot_id == shot.id)
     )
     old_clip = old_clip_result.scalar_one_or_none()
+    old_clip_path = old_clip.local_path if old_clip else None
     if old_clip:
         await session.delete(old_clip)
         await session.flush()
+
+    # Clean up old S3 file (different key than the new versioned one)
+    if old_clip_path and old_clip_path != stored_path and not storage.is_local():
+        try:
+            await storage.delete(old_clip_path)
+        except Exception:
+            logger.warning(f"Failed to delete old S3 clip {old_clip_path}")
 
     # Create new clip row
     clip = VideoClip(
@@ -5708,6 +5734,7 @@ async def upload_keyframe(
             select(Keyframe).where(Keyframe.shot_id == shot.id, Keyframe.position == position)
         )
         old_kf = old_kf_result.scalar_one_or_none()
+        old_kf_path = old_kf.file_path if old_kf else None
         if old_kf:
             await session.delete(old_kf)
             await session.flush()
@@ -5729,6 +5756,13 @@ async def upload_keyframe(
             f"Uploaded {position} keyframe for shot {shot_idx + 1}",
         )
         await session.commit()
+
+        # Clean up old S3 file after commit
+        if old_kf_path and old_kf_path != stored_path and not storage.is_local():
+            try:
+                await storage.delete(old_kf_path)
+            except Exception:
+                logger.warning(f"Failed to delete old S3 keyframe {old_kf_path}")
 
         return {"status": "uploaded", "file_path": stored_path, "keyframe_id": str(kf.id)}
 
@@ -5770,6 +5804,7 @@ async def upload_clip(
             select(VideoClip).where(VideoClip.shot_id == shot.id)
         )
         old_clip = old_clip_result.scalar_one_or_none()
+        old_clip_path = old_clip.local_path if old_clip else None
         if old_clip:
             await session.delete(old_clip)
             await session.flush()
@@ -5790,12 +5825,19 @@ async def upload_clip(
         )
         await session.commit()
 
+        # Clean up old S3 file after commit
+        if old_clip_path and old_clip_path != stored_path and not storage.is_local():
+            try:
+                await storage.delete(old_clip_path)
+            except Exception:
+                logger.warning(f"Failed to delete old S3 clip {old_clip_path}")
+
         return {"status": "uploaded", "file_path": stored_path, "clip_id": str(clip.id)}
 
 
 @router.delete("/scenes/{scene_id}/shots/{shot_idx}/clip")
 async def delete_clip(scene_id: uuid.UUID, shot_idx: int):
-    """Delete a shot's video clip (file remains on disk)."""
+    """Delete a shot's video clip and its S3/local file."""
     async with async_session() as session:
         result = await session.execute(select(Scene).where(Scene.id == scene_id))
         scene = result.scalar_one_or_none()
@@ -5816,6 +5858,7 @@ async def delete_clip(scene_id: uuid.UUID, shot_idx: int):
         if not clip:
             raise HTTPException(status_code=404, detail="No clip found")
 
+        old_path = clip.local_path
         await session.delete(clip)
 
         from vidpipe.services.checkpoint_service import create_checkpoint
@@ -5825,12 +5868,21 @@ async def delete_clip(scene_id: uuid.UUID, shot_idx: int):
         )
         await session.commit()
 
-        return {"status": "deleted", "shot_index": shot_idx}
+    # Clean up file from S3 after commit
+    if old_path:
+        storage = get_storage_backend()
+        if not storage.is_local():
+            try:
+                await storage.delete(old_path)
+            except Exception:
+                logger.warning(f"Failed to delete S3 clip {old_path}")
+
+    return {"status": "deleted", "shot_index": shot_idx}
 
 
 @router.delete("/scenes/{scene_id}/shots/{shot_idx}/keyframes/{position}")
 async def delete_keyframe(scene_id: uuid.UUID, shot_idx: int, position: str):
-    """Delete a shot's keyframe (file remains on disk)."""
+    """Delete a shot's keyframe and its S3/local file."""
     if position not in ("start", "end"):
         raise HTTPException(status_code=400, detail="Position must be 'start' or 'end'")
 
@@ -5854,6 +5906,7 @@ async def delete_keyframe(scene_id: uuid.UUID, shot_idx: int, position: str):
         if not kf:
             raise HTTPException(status_code=404, detail="Keyframe not found")
 
+        old_path = kf.file_path
         await session.delete(kf)
 
         from vidpipe.services.checkpoint_service import create_checkpoint
@@ -5863,7 +5916,16 @@ async def delete_keyframe(scene_id: uuid.UUID, shot_idx: int, position: str):
         )
         await session.commit()
 
-        return {"status": "deleted", "shot_index": shot_idx, "position": position}
+    # Clean up file from S3 after commit
+    if old_path:
+        storage = get_storage_backend()
+        if not storage.is_local():
+            try:
+                await storage.delete(old_path)
+            except Exception:
+                logger.warning(f"Failed to delete S3 keyframe {old_path}")
+
+    return {"status": "deleted", "shot_index": shot_idx, "position": position}
 
 
 # ---------------------------------------------------------------------------
@@ -6042,6 +6104,33 @@ async def add_scene_to_production(production_id: uuid.UUID, scene_id: uuid.UUID)
         scene.production_id = prod.id
         await session.commit()
         return {"status": "added", "production_id": str(production_id), "scene_id": str(scene_id)}
+
+# ---------------------------------------------------------------------------
+# Maintenance
+# ---------------------------------------------------------------------------
+
+@router.post("/maintenance/cleanup-cache")
+async def cleanup_local_cache():
+    """Remove local file cache. S3 remains the source of truth.
+
+    Safe to call — stitcher/pipeline will re-download from S3 as needed.
+    """
+    file_mgr = FileManager()
+    tmp_dir = file_mgr.base_dir
+    count = 0
+    for child in tmp_dir.iterdir():
+        if child.name.startswith("."):
+            continue
+        try:
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+            count += 1
+        except Exception:
+            logger.warning(f"Failed to remove {child}", exc_info=True)
+    return {"cleared": count, "tmp_dir": str(tmp_dir)}
+
 
 @router.delete("/productions/{production_id}/scenes/{scene_id}")
 async def remove_scene_from_production(production_id: uuid.UUID, scene_id: uuid.UUID):

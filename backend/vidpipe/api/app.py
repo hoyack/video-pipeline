@@ -14,6 +14,9 @@ from vidpipe.db import init_database, shutdown
 from vidpipe.services.comfyui_client import close_comfyui_client
 from vidpipe.api.routes import router
 
+# Configure root logger so application logs (pipeline stages, S3, etc.) reach stdout
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+
 logger = logging.getLogger(__name__)
 
 

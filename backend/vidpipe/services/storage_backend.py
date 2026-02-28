@@ -47,6 +47,10 @@ class StorageBackend(ABC):
         """Delete a key from storage."""
 
     @abstractmethod
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete all objects under a prefix. Returns count deleted."""
+
+    @abstractmethod
     def is_local(self) -> bool:
         """Return True if this backend serves files from local disk."""
 
@@ -85,6 +89,10 @@ class LocalStorageBackend(StorageBackend):
         filepath = self.base_dir / key
         if filepath.exists():
             filepath.unlink()
+
+    async def delete_prefix(self, prefix: str) -> int:
+        # Local cleanup is handled by shutil.rmtree; no-op here.
+        return 0
 
     def is_local(self) -> bool:
         return True
@@ -169,6 +177,28 @@ class S3StorageBackend(StorageBackend):
         )
         if resp.status_code not in (200, 204):
             logger.warning(f"S3 DELETE failed: {resp.status_code} for key={key}")
+
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete all S3 objects under a prefix. Returns count deleted."""
+        client = self._get_client()
+        resp = await client.post(
+            f"{self.endpoint}/object/list/{self.bucket}",
+            headers={"Content-Type": "application/json"},
+            json={"prefix": prefix, "limit": 10000},
+        )
+        if resp.status_code != 200:
+            logger.warning(f"S3 list failed for prefix={prefix}: {resp.status_code}")
+            return 0
+        objects = resp.json()
+        if not objects:
+            return 0
+        keys = [f"{prefix}/{obj['name']}" for obj in objects]
+        await client.delete(
+            f"{self.endpoint}/object/{self.bucket}",
+            json={"prefixes": keys},
+        )
+        logger.info(f"S3 delete_prefix({prefix}): removed {len(keys)} objects")
+        return len(keys)
 
     def is_local(self) -> bool:
         return False

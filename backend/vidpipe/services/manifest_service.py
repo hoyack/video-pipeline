@@ -5,11 +5,14 @@ Handles manifest and asset lifecycle management including creation, updates,
 deletion, duplication, and asset tagging. All functions accept an AsyncSession
 parameter for transaction management by the caller.
 """
+import logging
 import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -570,6 +573,8 @@ async def delete_asset(
 ) -> None:
     """Hard delete an asset and update parent manifest asset_count.
 
+    Also removes associated files from S3 storage if applicable.
+
     Args:
         session: Active database session
         asset_id: Asset UUID
@@ -577,11 +582,24 @@ async def delete_asset(
     Raises:
         ValueError: If asset not found
     """
+    from vidpipe.services.storage_backend import get_storage_backend
+
     asset = await get_asset(session, asset_id)
     if not asset:
         raise ValueError(f"Asset {asset_id} not found")
 
     manifest_id = asset.manifest_id
+
+    # Collect S3 keys to delete (parent + children)
+    s3_keys_to_delete: list[str] = []
+    storage = get_storage_backend()
+
+    def _collect_s3_key(url: str | None) -> None:
+        """Collect an S3 key if it's not a local API path."""
+        if url and not url.startswith("/api/") and not storage.is_local():
+            s3_keys_to_delete.append(url)
+
+    _collect_s3_key(asset.reference_image_url)
 
     # Delete child assets first (extracted crops referencing this asset)
     # Must flush children before deleting parent to satisfy FK constraints
@@ -591,6 +609,7 @@ async def delete_asset(
     child_list = list(children.scalars().all())
     if child_list:
         for child in child_list:
+            _collect_s3_key(child.reference_image_url)
             await session.delete(child)
         await session.flush()
 
@@ -604,6 +623,13 @@ async def delete_asset(
     if manifest:
         manifest.asset_count = max(0, manifest.asset_count - deleted_count)
         await session.flush()
+
+    # Clean up S3 files after DB operations
+    for key in s3_keys_to_delete:
+        try:
+            await storage.delete(key)
+        except Exception:
+            logger.warning(f"Failed to delete S3 asset file {key}")
 
 
 def save_asset_image(

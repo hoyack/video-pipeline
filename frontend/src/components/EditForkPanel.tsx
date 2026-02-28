@@ -264,8 +264,8 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
 
     // Only include changed scene-level fields
     if (prompt !== detail.prompt) req.prompt = prompt;
-    if (style !== detail.style) req.style = style;
-    if (aspectRatio !== detail.aspect_ratio) req.aspect_ratio = aspectRatio;
+    if (style !== detail.style) req.style = style ?? undefined;
+    if (aspectRatio !== detail.aspect_ratio) req.aspect_ratio = aspectRatio ?? undefined;
     if (clipDuration !== (detail.clip_duration ?? 6)) req.clip_duration = clipDuration;
     const origClip = detail.clip_duration ?? 6;
     const origSnapped = Math.ceil((detail.total_duration ?? 15) / origClip) * origClip;

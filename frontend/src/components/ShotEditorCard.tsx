@@ -4,7 +4,6 @@ import type { ShotDetail } from "../api/types.ts";
 import {
   regenerateShot,
   regenerateShotText,
-  generateShotFields,
   uploadKeyframe,
   uploadClip,
   deleteShotKeyframe,
@@ -230,7 +229,7 @@ export function ShotEditorCard({
   textModel,
   videoModel,
   imageModel,
-  allShotEdits,
+  allShotEdits: _allShotEdits,
   prompt,
   onGenerateShot,
   isGeneratingAssets,

@@ -1,6 +1,10 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import Markdown from "react-markdown";
+import CodeMirror from "@uiw/react-codemirror";
+import type { ViewUpdate } from "@codemirror/view";
 import { CopyButton } from "./CopyButton.tsx";
+import { vidpipeEditorTheme } from "./codemirror/VidpipeEditorTheme.ts";
+import { createEditorExtensions } from "./codemirror/editorExtensions.ts";
 
 interface MarkdownEditorModalProps {
   label: string;
@@ -25,41 +29,34 @@ function Spinner({ className }: { className?: string }) {
 export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, regenerating, extraContext, onExtraContextChange }: MarkdownEditorModalProps) {
   const [showPreview, setShowPreview] = useState(true);
   const [showContext, setShowContext] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const [cursorLine, setCursorLine] = useState(1);
+  const [cursorCol, setCursorCol] = useState(1);
+
+  const extensions = useMemo(() => createEditorExtensions(), []);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        // Let CodeMirror handle Escape when its search panel is open
+        const searchPanel = document.querySelector(".cm-search");
+        if (searchPanel) return;
+        onClose();
+      }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  // Sync line numbers scroll with textarea
-  const handleScroll = useCallback(() => {
-    if (textareaRef.current && lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
+  const handleUpdate = useCallback((update: ViewUpdate) => {
+    if (update.selectionSet) {
+      const pos = update.state.selection.main.head;
+      const line = update.state.doc.lineAt(pos);
+      setCursorLine(line.number);
+      setCursorCol(pos - line.from + 1);
     }
   }, []);
 
   const lineCount = value.split("\n").length;
-
-  // Handle Tab key for indentation
-  function handleKeyDownTextarea(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const ta = e.currentTarget;
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const newValue = value.substring(0, start) + "  " + value.substring(end);
-      onChange(newValue);
-      // Restore cursor position after React re-render
-      requestAnimationFrame(() => {
-        ta.selectionStart = ta.selectionEnd = start + 2;
-      });
-    }
-  }
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-950">
@@ -156,34 +153,23 @@ export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, 
             </div>
           </div>
 
-          {/* Code area with line numbers */}
-          <div className="relative flex flex-1 overflow-hidden">
-            {/* Line numbers gutter */}
-            <div
-              ref={lineNumbersRef}
-              className="select-none overflow-hidden bg-gray-900/80 py-2 text-right font-mono text-xs leading-relaxed text-gray-600 border-r border-gray-800"
-              style={{ minWidth: `${Math.max(3, String(lineCount).length + 1)}ch`, paddingLeft: "0.5rem", paddingRight: "0.75rem" }}
-            >
-              {Array.from({ length: lineCount }, (_, i) => (
-                <div key={i}>{i + 1}</div>
-              ))}
-            </div>
-
-            {/* Textarea */}
-            <textarea
-              ref={textareaRef}
+          {/* CodeMirror editor */}
+          <div className="relative flex-1 overflow-hidden">
+            <CodeMirror
               value={value}
-              onChange={(e) => onChange(e.target.value)}
-              onScroll={handleScroll}
-              onKeyDown={handleKeyDownTextarea}
-              spellCheck={false}
-              className="flex-1 resize-none overflow-auto bg-gray-950 py-2 pl-4 pr-4 font-mono text-sm leading-relaxed text-gray-300 caret-indigo-400 focus:outline-none"
+              onChange={onChange}
+              onUpdate={handleUpdate}
+              theme={vidpipeEditorTheme}
+              extensions={extensions}
               autoFocus
+              basicSetup={false}
+              height="100%"
+              style={{ height: "100%", overflow: "auto" }}
             />
 
             {/* Regen overlay */}
             {regenerating && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-950/60">
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-950/60">
                 <div className="flex items-center gap-2 rounded-lg border border-indigo-800 bg-gray-900 px-4 py-2 text-sm text-indigo-400">
                   <Spinner className="h-4 w-4 text-indigo-400" />
                   <span>Regenerating...</span>
@@ -196,7 +182,7 @@ export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, 
           <div className="flex items-center justify-between border-t border-gray-800 bg-gray-900/50 px-4 py-1">
             <span className="text-[10px] text-gray-600">Markdown</span>
             <span className="text-[10px] text-gray-600">
-              Ln {lineCount}, Col {value.length - value.lastIndexOf("\n")}
+              Ln {cursorLine}, Col {cursorCol}
             </span>
           </div>
         </div>
@@ -216,7 +202,7 @@ export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, 
             </div>
 
             {/* Preview content */}
-            <div className="flex-1 overflow-auto bg-gray-950 px-6 py-4 text-sm leading-relaxed text-gray-300 prose prose-invert prose-sm max-w-none prose-headings:text-gray-200 prose-p:text-gray-300 prose-a:text-indigo-400 prose-strong:text-gray-200 prose-code:text-indigo-300 prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-800">
+            <div className="markdown-preview flex-1 overflow-auto bg-gray-950 px-6 py-4 text-sm leading-relaxed text-gray-300">
               {value ? (
                 <Markdown>{value}</Markdown>
               ) : (

@@ -33,7 +33,7 @@ export function SortableShotCard({ id, ...rest }: SortableShotCardProps) {
       <ShotEditorCard
         {...rest}
         dragHandleListeners={listeners}
-        dragHandleAttributes={attributes}
+        dragHandleAttributes={attributes as unknown as Record<string, unknown>}
       />
     </div>
   );

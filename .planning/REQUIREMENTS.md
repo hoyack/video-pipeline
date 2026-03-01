@@ -9,79 +9,86 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Foundation
 
-- [ ] **FOUND-01**: Project uses Python 3.11+ with SQLAlchemy 2.0, Pydantic 2.0, and async-first patterns
-- [ ] **FOUND-02**: SQLite database with WAL mode stores all pipeline state (projects, scenes, keyframes, clips, runs)
-- [ ] **FOUND-03**: Configuration loaded from config.yaml/.env with typed validation via pydantic-settings
-- [ ] **FOUND-04**: Local filesystem stores binary artifacts in tmp/{project_id}/ with structured subdirectories
+- [x] **FOUND-01**: Project uses Python 3.11+ with SQLAlchemy 2.0, Pydantic 2.0, and async-first patterns
+- [x] **FOUND-02**: SQLite database with WAL mode stores all pipeline state (projects, scenes, keyframes, clips, runs)
+- [x] **FOUND-03**: Configuration loaded from config.yaml/.env with typed validation via pydantic-settings
+- [x] **FOUND-04**: Local filesystem stores binary artifacts in tmp/{project_id}/ with structured subdirectories
 
 ### Storyboard
 
-- [ ] **STOR-01**: User submits text prompt and receives structured storyboard with scenes, keyframe prompts, and motion descriptions
-- [ ] **STOR-02**: Storyboard uses Gemini 3 Pro with JSON schema structured output (responseMimeType: application/json)
-- [ ] **STOR-03**: Each scene includes scene_description, start_frame_prompt, end_frame_prompt, video_motion_prompt, and transition_notes
-- [ ] **STOR-04**: Storyboard generates a style guide (visual_style, color_palette, camera_style) for cross-scene consistency
-- [ ] **STOR-05**: Invalid JSON from LLM is retried up to 3 times with temperature adjustment before failing
+- [x] **STOR-01**: User submits text prompt and receives structured storyboard with scenes, keyframe prompts, and motion descriptions
+- [x] **STOR-02**: Storyboard uses Gemini 3 Pro with JSON schema structured output (responseMimeType: application/json)
+- [x] **STOR-03**: Each scene includes scene_description, start_frame_prompt, end_frame_prompt, video_motion_prompt, and transition_notes
+- [x] **STOR-04**: Storyboard generates a style guide (visual_style, color_palette, camera_style) for cross-scene consistency
+- [x] **STOR-05**: Invalid JSON from LLM is retried up to 3 times with temperature adjustment before failing
 
 ### Keyframe Generation
 
-- [ ] **KEYF-01**: Start keyframe for scene 0 is generated from start_frame_prompt using Nano Banana Pro
-- [ ] **KEYF-02**: End keyframe for each scene is generated using start keyframe image + end_frame_prompt (image-conditioned)
-- [ ] **KEYF-03**: Scene N+1's start keyframe is inherited from scene N's end keyframe (visual continuity)
-- [ ] **KEYF-04**: Keyframe generation is sequential to maintain continuity across scenes
-- [ ] **KEYF-05**: Rate limiting with exponential backoff (max 5 retries, configurable delay between calls)
-- [ ] **KEYF-06**: Keyframe images saved as PNG to tmp/{project_id}/keyframes/
+- [x] **KEYF-01**: Start keyframe for scene 0 is generated from start_frame_prompt using Nano Banana Pro
+- [x] **KEYF-02**: End keyframe for each scene is generated using start keyframe image + end_frame_prompt (image-conditioned)
+- [x] **KEYF-03**: Scene N+1's start keyframe is inherited from scene N's end keyframe (visual continuity)
+- [x] **KEYF-04**: Keyframe generation is sequential to maintain continuity across scenes
+- [x] **KEYF-05**: Rate limiting with exponential backoff (max 5 retries, configurable delay between calls)
+- [x] **KEYF-06**: Keyframe images saved as PNG to tmp/{project_id}/keyframes/
 
 ### Video Generation
 
-- [ ] **VGEN-01**: Each scene's video clip is generated using Veo 3.1 with first-frame + last-frame interpolation
-- [ ] **VGEN-02**: Long-running Veo operations are polled with configurable interval (default 15s) and timeout (default ~10min)
-- [ ] **VGEN-03**: Operation ID is persisted to database before polling begins (idempotent resume)
-- [ ] **VGEN-04**: RAI-filtered clips are marked as rai_filtered and pipeline continues with remaining scenes
-- [ ] **VGEN-05**: Timed-out operations are marked as timed_out after max polls exceeded
-- [ ] **VGEN-06**: Video clips saved as MP4 to tmp/{project_id}/clips/
+- [x] **VGEN-01**: Each scene's video clip is generated using Veo 3.1 with first-frame + last-frame interpolation
+- [x] **VGEN-02**: Long-running Veo operations are polled with configurable interval (default 15s) and timeout (default ~10min)
+- [x] **VGEN-03**: Operation ID is persisted to database before polling begins (idempotent resume)
+- [x] **VGEN-04**: RAI-filtered clips are marked as rai_filtered and pipeline continues with remaining scenes
+- [x] **VGEN-05**: Timed-out operations are marked as timed_out after max polls exceeded
+- [x] **VGEN-06**: Video clips saved as MP4 to tmp/{project_id}/clips/
 
 ### Stitching
 
-- [ ] **STCH-01**: All completed clips are concatenated into a single MP4 using ffmpeg concat demuxer (hard cuts)
-- [ ] **STCH-02**: Optional crossfade transitions supported via ffmpeg xfade filter with configurable duration
-- [ ] **STCH-03**: Audio streams from Veo 3.1 are preserved during concatenation
-- [ ] **STCH-04**: Final output saved to tmp/{project_id}/output/final.mp4
-- [ ] **STCH-05**: ffmpeg availability is validated at startup with clear error if missing
+- [x] **STCH-01**: All completed clips are concatenated into a single MP4 using ffmpeg concat demuxer (hard cuts)
+- [x] **STCH-02**: Optional crossfade transitions supported via ffmpeg xfade filter with configurable duration
+- [x] **STCH-03**: Audio streams from Veo 3.1 are preserved during concatenation
+- [x] **STCH-04**: Final output saved to tmp/{project_id}/output/final.mp4
+- [x] **STCH-05**: ffmpeg availability is validated at startup with clear error if missing
 
 ### Pipeline Orchestration
 
-- [ ] **ORCH-01**: Pipeline follows state machine: STORYBOARD → KEYFRAMES → VIDEO_GEN → STITCH → COMPLETE
-- [ ] **ORCH-02**: Each step checks database before executing and skips already-completed work (resume capability)
-- [ ] **ORCH-03**: Pipeline run metadata tracked (start time, duration, cost estimate, step log)
-- [ ] **ORCH-04**: Failed pipeline can be resumed from last completed step via resume command
+- [x] **ORCH-01**: Pipeline follows state machine: STORYBOARD → KEYFRAMES → VIDEO_GEN → STITCH → COMPLETE
+- [x] **ORCH-02**: Each step checks database before executing and skips already-completed work (resume capability)
+- [x] **ORCH-03**: Pipeline run metadata tracked (start time, duration, cost estimate, step log)
+- [x] **ORCH-04**: Failed pipeline can be resumed from last completed step via resume command
 
 ### CLI Interface
 
-- [ ] **CLI-01**: User can generate video from prompt via `python -m vidpipe generate "prompt"` with style, aspect-ratio, clip-duration options
-- [ ] **CLI-02**: User can resume a failed/incomplete project via `python -m vidpipe resume <project_id>`
-- [ ] **CLI-03**: User can check project status via `python -m vidpipe status <project_id>`
-- [ ] **CLI-04**: User can list all projects via `python -m vidpipe list`
-- [ ] **CLI-05**: User can re-stitch with crossfade via `python -m vidpipe stitch <project_id> --crossfade 0.5`
+- [x] **CLI-01**: User can generate video from prompt via `python -m vidpipe generate "prompt"` with style, aspect-ratio, clip-duration options
+- [x] **CLI-02**: User can resume a failed/incomplete project via `python -m vidpipe resume <project_id>`
+- [x] **CLI-03**: User can check project status via `python -m vidpipe status <project_id>`
+- [x] **CLI-04**: User can list all projects via `python -m vidpipe list`
+- [x] **CLI-05**: User can re-stitch with crossfade via `python -m vidpipe stitch <project_id> --crossfade 0.5`
 
 ### HTTP API
 
-- [ ] **API-01**: POST /api/generate starts new pipeline run in background and returns project_id immediately
-- [ ] **API-02**: GET /api/projects/{id}/status returns lightweight status for polling
-- [ ] **API-03**: GET /api/projects/{id} returns full project detail with scenes and clips
-- [ ] **API-04**: GET /api/projects lists all projects
-- [ ] **API-05**: POST /api/projects/{id}/resume resumes a failed pipeline
-- [ ] **API-06**: GET /api/projects/{id}/download serves final MP4 file
-- [ ] **API-07**: GET /api/health returns health check
+- [x] **API-01**: POST /api/generate starts new pipeline run in background and returns project_id immediately
+- [x] **API-02**: GET /api/projects/{id}/status returns lightweight status for polling
+- [x] **API-03**: GET /api/projects/{id} returns full project detail with scenes and clips
+- [x] **API-04**: GET /api/projects lists all projects
+- [x] **API-05**: POST /api/projects/{id}/resume resumes a failed pipeline
+- [x] **API-06**: GET /api/projects/{id}/download serves final MP4 file
+- [x] **API-07**: GET /api/health returns health check
 
 ## LLM Provider Abstraction
 
-- [ ] **LLMA-01**: Abstract base `LLMAdapter` class with `generate_text(prompt, schema, temperature, retries)` and `analyze_image(image_bytes, prompt, schema, temperature)` methods
-- [ ] **LLMA-02**: `VertexAIAdapter` wraps existing Gemini calls — storyboard, prompt rewriting, reverse-prompting, CV semantic analysis, candidate scoring all route through it
-- [ ] **LLMA-03**: `OllamaAdapter` implements text generation (with JSON mode for structured output) and vision analysis using Ollama REST API (`/api/generate`, `/api/chat`)
-- [ ] **LLMA-04**: Settings UI Ollama section: API key input, cloud vs local toggle (local hides API key, uses `localhost:11434`; cloud uses `ollama.com`), custom endpoint URL override
-- [ ] **LLMA-05**: Model management: input box to add custom Ollama model names, toggle models on/off in settings, remove models from list entirely; added models appear in GenerateForm dropdowns
-- [ ] **LLMA-06**: GenerateForm supports text_model and vision_model selection; storyboard/prompt-rewriting uses text_model adapter; reverse-prompting/CV-analysis/candidate-scoring uses vision_model adapter
-- [ ] **LLMA-07**: Provider routing: model ID → adapter mapping via provider registry; Gemini models → VertexAIAdapter, Ollama models → OllamaAdapter; future providers (Anthropic, OpenAI, Grok) can register without modifying core pipeline
+- [x] **LLMA-01**: Abstract base `LLMAdapter` class with `generate_text(prompt, schema, temperature, retries)` and `analyze_image(image_bytes, prompt, schema, temperature)` methods
+- [x] **LLMA-02**: `VertexAIAdapter` wraps existing Gemini calls — storyboard, prompt rewriting, reverse-prompting, CV semantic analysis, candidate scoring all route through it
+- [x] **LLMA-03**: `OllamaAdapter` implements text generation (with JSON mode for structured output) and vision analysis using Ollama REST API (`/api/generate`, `/api/chat`)
+- [x] **LLMA-04**: Settings UI Ollama section: API key input, cloud vs local toggle (local hides API key, uses `localhost:11434`; cloud uses `ollama.com`), custom endpoint URL override
+- [x] **LLMA-05**: Model management: input box to add custom Ollama model names, toggle models on/off in settings, remove models from list entirely; added models appear in GenerateForm dropdowns
+- [x] **LLMA-06**: GenerateForm supports text_model and vision_model selection; storyboard/prompt-rewriting uses text_model adapter; reverse-prompting/CV-analysis/candidate-scoring uses vision_model adapter
+- [x] **LLMA-07**: Provider routing: model ID → adapter mapping via provider registry; Gemini models → VertexAIAdapter, Ollama models → OllamaAdapter; future providers (Anthropic, OpenAI, Grok) can register without modifying core pipeline
+
+## Storyboard Asset Binding
+
+- [x] **SBIND-01**: Storyboard prompt mandates using existing CHARACTER tags from asset registry; `new_asset_declarations` restricted to non-CHARACTER types only
+- [x] **SBIND-02**: Post-storyboard deterministic remapping catches any LLM-invented CHARACTER tags and maps them to existing manifest CHARACTER assets
+- [x] **SBIND-03**: Prompt rewriter falls back to marking ALL manifest CHARACTER assets as MUST SELECT when scene manifest placements reference non-existent tags
+- [x] **SBIND-04**: Keyframe enforcement falls back to all manifest CHARACTER assets with reference images when `placed_char_tags` resolves empty
 
 ## Video Generation Editor
 
@@ -97,6 +104,22 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **VGED-10**: Real-time asset population via polling with visual feedback (highlight flash on new assets)
 - [x] **VGED-11**: Pause/resume at per-scene granularity; stop flag checked between individual scene operations
 - [x] **VGED-12**: App.tsx navigation merges "generate" + "progress" views into single "editor" view
+
+## Production Bible Foundation
+
+- [x] **PBIB-01**: `production_bibles` table exists with all data migrated from `manifests`; all FK columns renamed to `production_bible_id`
+- [x] **PBIB-02**: All API endpoints respond at `/api/production-bibles/*` with 301 redirects from legacy `/api/manifests/*` paths
+- [x] **PBIB-03**: Frontend uses "Production Bible" terminology everywhere; routes updated to `/production-bibles/*`
+- [x] **PBIB-04**: Production Bible detail view has three department tabs: Casting, Art Department, Sound — with existing assets sorted into correct tabs
+- [x] **PBIB-05**: `sequences` table stores optional grouping layer with title, description, order, act, and color fields
+- [x] **PBIB-06**: Scene model has optional `sequence_id` FK; scenes with null sequence_id remain in flat list
+
+## Sequences
+
+- [x] **SEQ-01**: Sequence CRUD API under `/api/productions/{id}/sequences` with create, list, update, delete endpoints
+- [x] **SEQ-02**: Sequence drag-and-drop reorder support via PATCH endpoint
+- [x] **SEQ-03**: Frontend renders scenes grouped by sequence when sequences exist, with collapsible sections
+- [x] **SEQ-04**: Scenes can be assigned to or moved between sequences
 
 ## Production Bible Entity Expansion
 
@@ -224,33 +247,87 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-05 | Phase 3 | Complete |
 | API-06 | Phase 3 | Complete |
 | API-07 | Phase 3 | Complete |
-| LLMA-01 | Phase 13 | Planned |
-| LLMA-02 | Phase 13 | Planned |
-| LLMA-03 | Phase 13 | Planned |
-| LLMA-04 | Phase 13 | Planned |
-| LLMA-05 | Phase 13 | Planned |
-| LLMA-06 | Phase 13 | Planned |
-| LLMA-07 | Phase 13 | Planned |
-| VGED-01 | Phase 15 | Planned |
-| VGED-02 | Phase 15 | Planned |
-| VGED-03 | Phase 15 | Planned |
-| VGED-04 | Phase 15 | Planned |
-| VGED-05 | Phase 15 | Planned |
-| VGED-06 | Phase 15 | Planned |
-| VGED-07 | Phase 15 | Planned |
-| VGED-08 | Phase 15 | Planned |
-| VGED-09 | Phase 15 | Planned |
-| VGED-10 | Phase 15 | Planned |
-| VGED-11 | Phase 15 | Planned |
-| VGED-12 | Phase 15 | Planned |
+| LLMA-01 | Phase 13 | Complete |
+| LLMA-02 | Phase 13 | Complete |
+| LLMA-03 | Phase 13 | Complete |
+| LLMA-04 | Phase 13 | Complete |
+| LLMA-05 | Phase 13 | Complete |
+| LLMA-06 | Phase 13 | Complete |
+| LLMA-07 | Phase 13 | Complete |
+| SBIND-01 | Phase 14 | Complete |
+| SBIND-02 | Phase 14 | Complete |
+| SBIND-03 | Phase 14 | Complete |
+| SBIND-04 | Phase 14 | Complete |
+| VGED-01 | Phase 15 | Complete |
+| VGED-02 | Phase 15 | Complete |
+| VGED-03 | Phase 15 | Complete |
+| VGED-04 | Phase 15 | Complete |
+| VGED-05 | Phase 15 | Complete |
+| VGED-06 | Phase 15 | Complete |
+| VGED-07 | Phase 15 | Complete |
+| VGED-08 | Phase 15 | Complete |
+| VGED-09 | Phase 15 | Complete |
+| VGED-10 | Phase 15 | Complete |
+| VGED-11 | Phase 15 | Complete |
+| VGED-12 | Phase 15 | Complete |
+| PBIB-01 | Phase 16 | Complete |
+| PBIB-02 | Phase 16 | Complete |
+| PBIB-03 | Phase 16 | Complete |
+| PBIB-04 | Phase 16 | Complete |
+| PBIB-05 | Phase 16 | Complete |
+| PBIB-06 | Phase 16 | Complete |
+| SEQ-01 | Phase 16 | Complete |
+| SEQ-02 | Phase 16 | Complete |
+| SEQ-03 | Phase 16 | Complete |
+| SEQ-04 | Phase 16 | Complete |
+| PBEX-01 | Phase 17 | Complete |
+| PBEX-02 | Phase 17 | Complete |
+| PBEX-03 | Phase 17 | Complete |
+| PBEX-04 | Phase 17 | Complete |
+| PBEX-05 | Phase 17 | Complete |
+| PBEX-06 | Phase 17 | Complete |
+| PBEX-07 | Phase 17 | Complete |
+| PBEX-08 | Phase 17 | Complete |
+| PBEX-09 | Phase 17 | Complete |
+| PBEX-10 | Phase 17 | Complete |
+| PBEX-11 | Phase 17 | Complete |
+| PBEX-12 | Phase 17 | Complete |
+| PBEX-13 | Phase 17 | Complete |
+| PBEX-14 | Phase 17 | Complete |
+| PBEX-15 | Phase 17 | Complete |
+| PBEX-16 | Phase 17 | Complete |
+| PBEX-17 | Phase 17 | Complete |
+| PBEX-18 | Phase 17 | Complete |
+| PBEX-19 | Phase 17 | Complete |
+| PBEX-20 | Phase 17 | Complete |
+| SCRN-01 | Phase 18 | Complete |
+| SCRN-02 | Phase 18 | Complete |
+| SCRN-03 | Phase 18 | Complete |
+| SCRN-04 | Phase 18 | Complete |
+| SCRN-05 | Phase 18 | Complete |
+| SCRN-06 | Phase 18 | Complete |
+| SCRN-07 | Phase 18 | Complete |
+| SCRN-08 | Phase 18 | Complete |
+| SCRN-09 | Phase 18 | Complete |
+| SCRN-10 | Phase 18 | Complete |
+| SCRN-11 | Phase 18 | Complete |
+| SCRN-12 | Phase 18 | Complete |
+| SCRN-13 | Phase 18 | Complete |
+| SCRN-14 | Phase 18 | Complete |
+| SCRN-15 | Phase 18 | Complete |
 
 **Coverage:**
 - v1 requirements: 41 total (all complete)
-- v3 requirements (LLM abstraction): 7 total
-- Video Generation Editor: 12 total
-- Mapped to phases: 60
+- LLM Provider Abstraction: 7 total (all complete)
+- Storyboard Asset Binding: 4 total (all complete)
+- Video Generation Editor: 12 total (all complete)
+- Production Bible Foundation: 6 total (all complete)
+- Sequences: 4 total (all complete)
+- Production Bible Entity Expansion: 20 total (all complete)
+- Screenplay System: 15 total (all complete)
+- **Total mapped: 109 requirements across 18 phases**
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-14*
-*Last updated: 2026-02-21 after adding Video Generation Editor requirements*
+*Last updated: 2026-03-01 after v1.0 milestone audit gap closure*

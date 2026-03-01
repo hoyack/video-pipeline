@@ -32,6 +32,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 16: Production Bible Foundation** - Rename Manifest → Production Bible across stack, department tab structure, Sequence grouping layer above Scenes (Issues #7, #24) (completed 2026-03-01)
 - [x] **Phase 17: Production Bible Entity Expansion** - Full Character, Set, Prop entities with sub-entities (Wardrobe, VoiceProfile, SonicIdentity), Score Themes and SFX Library in Sound Department (Issues #8, #9, #10, #11) (completed 2026-03-01)
 - [x] **Phase 18: Screenplay System** - Screenplay data model and editor, Screenwriter CrewAI agent for LLM generation chain, Scene Breakdown → pipeline wiring (Issues #12, #13, #14) (completed 2026-03-01)
+- [ ] **Phase 19: Bible Context Fix + Code Cleanup** - Fix load_bible_context indirect lookup, remove dead manifest strings/orphan files/dead code (Gap Closure)
+- [ ] **Phase 20: Entity Media Uploads** - Missing upload endpoints and UI for actor refs, wardrobe, audio, props across Production Bible entities (Issues #8, #9, #10, #11) (Gap Closure)
+- [ ] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure)
 
 ## Phase Details
 
@@ -113,6 +116,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 16. Production Bible Foundation | 4/4 | Complete    | 2026-03-01 |
 | 17. PB Entity Expansion | 4/4 | Complete    | 2026-03-01 |
 | 18. Screenplay System | 3/3 | Complete    | 2026-03-01 |
+| 19. Bible Context Fix + Cleanup | 0/0 | ○ Planned | — |
+| 20. Entity Media Uploads | 0/0 | ○ Planned | — |
+| 21. Sequence UI Polish | 0/0 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -402,3 +408,42 @@ Plans:
 - [ ] 18-01-PLAN.md — Screenplay ORM model + Scene columns + Pydantic schemas + ScreenwriterService (6-step LLM chain with entity validation)
 - [ ] 18-02-PLAN.md — Screenplay CRUD API (11 endpoints), generate-scenes endpoint, storyboard.py enrichment hook
 - [ ] 18-03-PLAN.md — Frontend: TypeScript types, API client, ScreenplayEditor (6 tabs), ProductionDetail integration
+
+### Phase 19: Bible Context Fix + Code Cleanup
+**Goal**: Fix the `load_bible_context` indirect lookup so Production Bible context is available to the Screenwriter even before any Scenes exist, and remove dead code/orphan files left over from the manifest→Production Bible rename
+**Depends on**: Phase 18
+**Requirements**: SCRN-10
+**Gap Closure**: Closes integration gap `SCRN-10-bible-context` and flow gap `bible-before-scenes` from v1.0 audit
+**Success Criteria** (what must be TRUE):
+  1. `load_bible_context` looks up Production Bible directly via `Production.production_bible_id` rather than indirectly through Scene FK; returns bible context even when no scenes exist yet
+  2. "Bible → Screenplay → Generate Full" flow provides bible context to all Screenwriter generation steps
+  3. User-facing "manifest" strings removed from ShotCard.tsx and EditForkPanel.tsx
+  4. Orphan files deleted: ManifestLibrary.tsx, ManifestCreator.tsx, ManifestCard.tsx, ManifestSelector.tsx
+  5. Dead `sound_router` try/except guard removed from app.py
+
+### Phase 20: Entity Media Uploads
+**Goal**: Add missing upload endpoints and frontend UI for reference images and audio files across all Production Bible entity types
+**Depends on**: Phase 17
+**Requirements**: PBEX-01, PBEX-02, PBEX-07, PBEX-08, PBEX-13, PBEX-16, PBEX-17
+**GitHub Issues**: #8, #9, #10, #11
+**Gap Closure**: Closes 8 tech debt items from v1.0 audit
+**Success Criteria** (what must be TRUE):
+  1. Actor reference image upload endpoint and UI functional (`POST /api/characters/:id/actor-refs`)
+  2. Generate Base Appearance endpoint functional (`POST /api/characters/:id/generate-appearance`)
+  3. Wardrobe reference image upload endpoint and UI functional
+  4. Standalone generate-reverse-prompt endpoint functional (`POST /api/generate-reverse-prompt`)
+  5. SonicIdentity reference audio upload UI functional
+  6. Prop reference image upload button in frontend works
+  7. Audio upload endpoints for ScoreTheme and SFXItem functional
+  8. Inline audio playback component renders for entities with audio files
+
+### Phase 21: Sequence UI Polish
+**Goal**: Wire up the remaining Sequence frontend features so users can fully manage narrative sequences — reorder them, assign acts, see duration, and reorder scenes within sequences
+**Depends on**: Phase 16
+**GitHub Issues**: #24
+**Gap Closure**: Closes 4 tech debt items from v1.0 audit
+**Success Criteria** (what must be TRUE):
+  1. Sequence drag-and-drop reordering updates `sort_order` via API call
+  2. Act field UI allows setting/changing act on sequences
+  3. Total duration displayed in sequence header (sum of scene durations)
+  4. Within-sequence scene reordering calls API and updates UI

@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Keyframe, Manifest, ManifestSnapshot, Scene, Shot
+from vidpipe.db.models import Asset, Keyframe, ProductionBible, ManifestSnapshot, Scene, Shot
+
+# Backwards-compat alias used internally in this module
+Manifest = ProductionBible
 
 # Valid enum constants
 VALID_CATEGORIES = {"CHARACTERS", "ENVIRONMENT", "FULL_PRODUCTION", "STYLE_KIT", "BRAND_KIT", "CUSTOM"}
@@ -340,9 +343,9 @@ async def delete_manifest(
     if not manifest:
         raise ValueError(f"Manifest {manifest_id} not found")
 
-    # Check if any scenes reference this manifest
+    # Check if any scenes reference this production bible
     result = await session.execute(
-        select(func.count(Scene.id)).where(Scene.manifest_id == manifest_id)
+        select(func.count(Scene.id)).where(Scene.production_bible_id == manifest_id)
     )
     scene_count = result.scalar()
 
@@ -377,27 +380,27 @@ async def duplicate_manifest(
 
     # Create new manifest
     copy_name = new_name or f"{source.name} (Copy)"
-    new_manifest = Manifest(
+    new_manifest = ProductionBible(
         name=copy_name,
         description=source.description,
         category=source.category,
         tags=source.tags,
         status="DRAFT",
         version=1,
-        parent_manifest_id=source.id,
+        parent_production_bible_id=source.id,
     )
     session.add(new_manifest)
     await session.flush()
 
     # Copy all assets
     assets_result = await session.execute(
-        select(Asset).where(Asset.manifest_id == manifest_id)
+        select(Asset).where(Asset.production_bible_id == manifest_id)
     )
     assets = assets_result.scalars().all()
 
     for asset in assets:
         new_asset = Asset(
-            manifest_id=new_manifest.id,
+            production_bible_id=new_manifest.id,
             asset_type=asset.asset_type,
             name=asset.name,
             manifest_tag=asset.manifest_tag,
@@ -449,7 +452,7 @@ async def create_asset(
     # Auto-generate manifest_tag by counting existing assets of same type
     result = await session.execute(
         select(func.count(Asset.id)).where(
-            Asset.manifest_id == manifest_id,
+            Asset.production_bible_id == manifest_id,
             Asset.asset_type == asset_type
         )
     )
@@ -458,7 +461,7 @@ async def create_asset(
     manifest_tag = f"{prefix}_{count + 1:02d}"
 
     asset = Asset(
-        manifest_id=manifest_id,
+        production_bible_id=manifest_id,
         asset_type=asset_type,
         name=name,
         manifest_tag=manifest_tag,
@@ -488,7 +491,7 @@ async def list_assets(
     """
     result = await session.execute(
         select(Asset)
-        .where(Asset.manifest_id == manifest_id)
+        .where(Asset.production_bible_id == manifest_id)
         .order_by(Asset.sort_order, Asset.created_at)
     )
     return list(result.scalars().all())
@@ -548,7 +551,7 @@ async def update_asset(
         if new_type != asset.asset_type:
             result = await session.execute(
                 select(func.count(Asset.id)).where(
-                    Asset.manifest_id == asset.manifest_id,
+                    Asset.production_bible_id == asset.production_bible_id,
                     Asset.asset_type == new_type
                 )
             )
@@ -588,7 +591,7 @@ async def delete_asset(
     if not asset:
         raise ValueError(f"Asset {asset_id} not found")
 
-    manifest_id = asset.manifest_id
+    manifest_id = asset.production_bible_id
 
     # Collect S3 keys to delete (parent + children)
     s3_keys_to_delete: list[str] = []
@@ -731,7 +734,7 @@ async def create_snapshot(
 
     # Create snapshot
     snapshot = ManifestSnapshot(
-        manifest_id=manifest_id,
+        production_bible_id=manifest_id,
         scene_id=scene_id,
         version_at_snapshot=manifest.version,
         snapshot_data=snapshot_data,
@@ -786,7 +789,7 @@ async def load_manifest_assets(
     """
     result = await session.execute(
         select(Asset)
-        .where(Asset.manifest_id == manifest_id, Asset.is_inherited == False)
+        .where(Asset.production_bible_id == manifest_id, Asset.is_inherited == False)
         .order_by(Asset.quality_score.desc().nullslast())
     )
     return list(result.scalars().all())

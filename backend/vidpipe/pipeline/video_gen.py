@@ -714,7 +714,7 @@ async def _run_post_generation_analysis(
     """
     try:
         # Guard 1: non-manifest scenes skip CV analysis entirely
-        if not scene.manifest_id:
+        if not scene.production_bible_id:
             return
 
         # Guard 2: no video clip path to analyze
@@ -726,7 +726,7 @@ async def _run_post_generation_analysis(
 
         # Load all manifest assets for face matching and entity extraction
         all_assets = await manifest_service.load_manifest_assets(
-            session, scene.manifest_id
+            session, scene.production_bible_id
         )
 
         # Collect keyframe paths (start and end frames for this shot)
@@ -780,7 +780,7 @@ async def _run_post_generation_analysis(
                 await extract_and_register_new_entities(
                     session,
                     scene.id,
-                    scene.manifest_id,
+                    scene.production_bible_id,
                     shot.shot_index,
                     new_entities,
                     source="CLIP_EXTRACT",
@@ -966,7 +966,7 @@ async def _generate_video_comfyui(
 
     # Load shot manifest for prompt rewriting and char refs
     shot_manifest_row = None
-    if scene.manifest_id:
+    if scene.production_bible_id:
         sm_result = await session.execute(
             select(ShotManifestModel).where(
                 ShotManifestModel.scene_id == scene.id,
@@ -1009,7 +1009,7 @@ async def _generate_video_comfyui(
 
         # Load character reference images (if manifest scene)
         char_ref_bytes: list[bytes] = []
-        if scene.manifest_id:
+        if scene.production_bible_id:
             char_ref_bytes = await _load_char_ref_images(session, scene)
 
         operation_id = await adapter.submit(
@@ -1116,13 +1116,13 @@ async def _load_char_ref_images(
 
     Returns a list of image bytes (0-2 items).
     """
-    if not scene.manifest_id:
+    if not scene.production_bible_id:
         return []
 
     from vidpipe.db.models import Asset
     result = await session.execute(
         select(Asset).where(
-            Asset.manifest_id == scene.manifest_id,
+            Asset.production_bible_id == scene.production_bible_id,
             Asset.asset_type == "CHARACTER",
             Asset.reference_image_url != None,
             Asset.is_inherited == False,
@@ -1150,7 +1150,7 @@ def _resolve_asset_image_path(asset) -> Optional[Path]:
     The reference_image_url is an API route (/api/assets/{id}/image), not a
     filesystem path, so we locate the file using the same logic as the API route.
     """
-    manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+    manifest_dir = Path("tmp/manifests") / str(asset.production_bible_id)
     for subdir in ("uploads", "crops"):
         d = manifest_dir / subdir
         if d.exists():
@@ -1212,7 +1212,7 @@ async def _generate_video_for_shot(
     shot_manifest_row = None
     selected_refs = []
     all_assets: list = []
-    if scene.manifest_id:
+    if scene.production_bible_id:
         # Query shot manifest
         sm_result = await session.execute(
             select(ShotManifestModel).where(
@@ -1224,7 +1224,7 @@ async def _generate_video_for_shot(
 
         if shot_manifest_row and shot_manifest_row.manifest_json:
             # Load all manifest assets
-            all_assets = await manifest_service.load_manifest_assets(session, scene.manifest_id)
+            all_assets = await manifest_service.load_manifest_assets(session, scene.production_bible_id)
             selected_refs = select_references_for_shot(
                 shot_manifest_row.manifest_json,
                 all_assets
@@ -1242,7 +1242,7 @@ async def _generate_video_for_shot(
 
     # Phase 10: Adaptive Prompt Rewriting for manifest scenes
     base_video_prompt = None  # Will hold rewritten or original prompt
-    if scene.manifest_id and shot_manifest_row and shot_manifest_row.manifest_json:
+    if scene.production_bible_id and shot_manifest_row and shot_manifest_row.manifest_json:
         try:
             from vidpipe.services.prompt_rewriter import PromptRewriterService
             from vidpipe.db.models import ShotAudioManifest as ShotAudioManifestModel

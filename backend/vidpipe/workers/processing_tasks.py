@@ -11,7 +11,10 @@ import uuid
 from pathlib import Path
 
 from vidpipe.db import async_session
-from vidpipe.db.models import Asset, Manifest
+from vidpipe.db.models import Asset, ProductionBible
+
+# Backwards-compat alias
+Manifest = ProductionBible
 from vidpipe.services.manifesting_engine import ManifestingEngine
 
 logger = logging.getLogger(__name__)
@@ -111,7 +114,7 @@ async def extract_video_frames_task(manifest_id: str, video_path: str) -> None:
                 # Auto-generate manifest_tag
                 result = await session.execute(
                     select(sa_func.count(Asset.id)).where(
-                        Asset.manifest_id == uuid.UUID(manifest_id),
+                        Asset.production_bible_id == uuid.UUID(manifest_id),
                         Asset.asset_type == "CHARACTER",
                     )
                 )
@@ -119,7 +122,7 @@ async def extract_video_frames_task(manifest_id: str, video_path: str) -> None:
                 manifest_tag = f"CHAR_{count + 1:02d}"
 
                 asset = Asset(
-                    manifest_id=uuid.UUID(manifest_id),
+                    production_bible_id=uuid.UUID(manifest_id),
                     asset_type="CHARACTER",
                     name=f"Frame {i + 1}",
                     manifest_tag=manifest_tag,

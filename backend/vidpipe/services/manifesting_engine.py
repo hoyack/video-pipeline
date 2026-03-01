@@ -19,7 +19,10 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Manifest
+from vidpipe.db.models import Asset, ProductionBible
+
+# Backwards-compat alias for internal usage
+Manifest = ProductionBible
 from vidpipe.services.cv_detection import CVDetectionService
 from vidpipe.services.entity_extraction import _yolo_class_to_asset_type
 from vidpipe.services.face_matching import FaceMatchingService
@@ -188,7 +191,7 @@ class ManifestingEngine:
         # Get all uploadable assets (uploaded images + video frames with reference_image_url)
         result = await self.session.execute(
             select(Asset).where(
-                Asset.manifest_id == manifest_id,
+                Asset.production_bible_id == manifest_id,
                 Asset.source.in_(["uploaded", "video_frame"]),
                 Asset.reference_image_url.isnot(None),
             ).order_by(Asset.sort_order, Asset.created_at)
@@ -203,7 +206,7 @@ class ManifestingEngine:
         contact_sheet_path = await asyncio.to_thread(
             self.assemble_contact_sheet, manifest_id, uploaded_assets
         )
-        manifest.contact_sheet_url = f"/api/manifests/{manifest_id}/contact-sheet"
+        manifest.contact_sheet_url = f"/api/production-bibles/{manifest_id}/contact-sheet"
         await self.session.flush()
 
         # Step 2: YOLO detection and crop extraction
@@ -213,7 +216,7 @@ class ManifestingEngine:
         # Find which uploads already have extracted children (incremental processing)
         existing_extracted = await self.session.execute(
             select(Asset.source_asset_id).where(
-                Asset.manifest_id == manifest_id,
+                Asset.production_bible_id == manifest_id,
                 Asset.source == "extracted",
                 Asset.source_asset_id.isnot(None),
             )
@@ -233,7 +236,7 @@ class ManifestingEngine:
         # Load existing extracted assets (kept from previous runs)
         prev_extracted_result = await self.session.execute(
             select(Asset).where(
-                Asset.manifest_id == manifest_id,
+                Asset.production_bible_id == manifest_id,
                 Asset.source == "extracted",
             )
         )
@@ -275,7 +278,7 @@ class ManifestingEngine:
 
                 # Create new Asset record
                 new_asset = Asset(
-                    manifest_id=manifest_id,
+                    production_bible_id=manifest_id,
                     asset_type=_yolo_class_to_asset_type(det["class"]),
                     name=f"{asset.name} - {det['class']}",
                     manifest_tag="",  # Will be reassigned in finalization
@@ -318,7 +321,7 @@ class ManifestingEngine:
                 )
 
                 scene_asset = Asset(
-                    manifest_id=manifest_id,
+                    production_bible_id=manifest_id,
                     asset_type="ENVIRONMENT",
                     name=f"{asset.name} - scene",
                     manifest_tag="",
@@ -519,7 +522,7 @@ class ManifestingEngine:
         # Get all assets for this manifest, ordered by parent sort_order then confidence
         all_manifest_assets = await self.session.execute(
             select(Asset)
-            .where(Asset.manifest_id == manifest_id)
+            .where(Asset.production_bible_id == manifest_id)
             .order_by(Asset.sort_order, Asset.detection_confidence.desc())
         )
         all_manifest_assets = list(all_manifest_assets.scalars().all())
@@ -590,7 +593,7 @@ class ManifestingEngine:
 
         # --- Step 1: Determine max tag numbers per type across ALL existing assets ---
         existing_result = await self.session.execute(
-            select(Asset).where(Asset.manifest_id == manifest_id)
+            select(Asset).where(Asset.production_bible_id == manifest_id)
         )
         existing_assets = list(existing_result.scalars().all())
 
@@ -642,7 +645,7 @@ class ManifestingEngine:
 
             # Create Asset row
             new_asset = Asset(
-                manifest_id=manifest_id,
+                production_bible_id=manifest_id,
                 asset_type=upload.asset_type,
                 name=upload.name,
                 manifest_tag=manifest_tag,
@@ -711,7 +714,7 @@ class ManifestingEngine:
                 crop_tag = _next_tag(detected_type)
 
                 crop_asset = Asset(
-                    manifest_id=manifest_id,
+                    production_bible_id=manifest_id,
                     asset_type=detected_type,
                     name=f"{asset.name} - {det['class']}",
                     manifest_tag=crop_tag,
@@ -758,7 +761,7 @@ class ManifestingEngine:
                     scene_tag = _next_tag("ENVIRONMENT")
 
                     scene_asset = Asset(
-                        manifest_id=manifest_id,
+                        production_bible_id=manifest_id,
                         asset_type="ENVIRONMENT",
                         name=f"{asset.name} - scene",
                         manifest_tag=scene_tag,
@@ -1002,7 +1005,7 @@ class ManifestingEngine:
             raise ValueError(f"Asset {asset_id} not found")
 
         # Resolve image path
-        manifest_id = asset.manifest_id
+        manifest_id = asset.production_bible_id
         if asset.source == "uploaded":
             pattern = f"tmp/manifests/{manifest_id}/uploads/{asset.id}_*"
         else:

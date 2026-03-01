@@ -83,7 +83,7 @@ async def build_snapshot(session: AsyncSession, scene: Scene) -> dict:
         "video_model": scene.video_model,
         "audio_enabled": scene.audio_enabled,
         "seed": scene.seed,
-        "manifest_id": str(scene.manifest_id) if scene.manifest_id else None,
+        "manifest_id": str(scene.production_bible_id) if scene.production_bible_id else None,
         "quality_mode": scene.quality_mode,
         "candidate_count": scene.candidate_count,
         "vision_model": scene.vision_model,
@@ -192,9 +192,9 @@ async def build_snapshot(session: AsyncSession, scene: Scene) -> dict:
 
     # Assets (if manifest scene)
     assets_data = None
-    if scene.manifest_id:
+    if scene.production_bible_id:
         assets_result = await session.execute(
-            select(Asset).where(Asset.manifest_id == scene.manifest_id)
+            select(Asset).where(Asset.production_bible_id == scene.production_bible_id)
         )
         assets = assets_result.scalars().all()
         assets_data = []

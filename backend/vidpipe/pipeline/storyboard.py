@@ -336,12 +336,12 @@ async def generate_storyboard(
         await session.commit()
         return
 
-    # Determine if manifest-aware mode
-    use_manifests = scene.manifest_id is not None
+    # Determine if production-bible-aware mode
+    use_manifests = scene.production_bible_id is not None
 
     if use_manifests:
         # Load asset registry for LLM context
-        assets = await load_manifest_assets(session, scene.manifest_id)
+        assets = await load_manifest_assets(session, scene.production_bible_id)
         asset_registry_block = format_asset_registry(assets)
         asset_tags_set = {a.manifest_tag for a in assets}
         logger.info(

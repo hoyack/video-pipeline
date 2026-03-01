@@ -19,7 +19,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Manifest
+from vidpipe.db.models import Asset, ProductionBible
+
+# Backwards-compat alias
+Manifest = ProductionBible
 from vidpipe.services.clip_embedding_service import CLIPEmbeddingService
 from vidpipe.services.cv_analysis_service import CVAnalysisResult, FaceMatchResult
 from vidpipe.services.face_matching import FaceMatchingService
@@ -254,7 +257,7 @@ async def extract_and_register_new_entities(
         """Count existing assets of given type in this manifest."""
         result = await session.execute(
             select(func.count(Asset.id)).where(
-                Asset.manifest_id == manifest_id,
+                Asset.production_bible_id == manifest_id,
                 Asset.asset_type == asset_type,
             )
         )
@@ -340,7 +343,7 @@ async def extract_and_register_new_entities(
             # Step 5: Create Asset record
             sort_order = existing_count + same_type_in_batch
             asset = Asset(
-                manifest_id=manifest_id,
+                production_bible_id=manifest_id,
                 asset_type=asset_type,
                 name=asset_name,
                 manifest_tag=manifest_tag,

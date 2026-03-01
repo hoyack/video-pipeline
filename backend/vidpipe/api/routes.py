@@ -10,14 +10,17 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_ as sa_and, case, func as sa_func, select, update
 from sqlalchemy.orm import selectinload
 
 from vidpipe.db import async_session
-from vidpipe.db.models import Scene, Shot, Keyframe, VideoClip, Manifest, Asset, ShotManifest as ShotManifestModel, ShotAudioManifest as ShotAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID, SceneCheckpoint, AssetAppearance, Production
+from vidpipe.db.models import Scene, Shot, Keyframe, VideoClip, ProductionBible, Asset, ShotManifest as ShotManifestModel, ShotAudioManifest as ShotAudioManifestModel, GenerationCandidate, UserSettings, DEFAULT_USER_ID, SceneCheckpoint, AssetAppearance, Production
+
+# Backwards-compat alias (used in upload-video handler that calls session.get(Manifest, ...))
+Manifest = ProductionBible
 from vidpipe.orchestrator.pipeline import run_pipeline
 from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import ShotSchema
@@ -208,7 +211,7 @@ class GenerateRequest(BaseModel):
     image_model: str = "gemini-2.5-flash-image"
     video_model: str = "veo-3.1-fast-generate-001"
     enable_audio: bool = True
-    manifest_id: Optional[str] = None
+    production_bible_id: Optional[str] = None
     # Phase 11: Multi-Candidate Quality Mode
     quality_mode: bool = False
     candidate_count: int = 1
@@ -296,7 +299,7 @@ class SceneDetail(BaseModel):
     video_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
     forked_from: Optional[str] = None
-    manifest_id: Optional[str] = None
+    production_bible_id: Optional[str] = None
     # Phase 11: Multi-Candidate Quality Mode
     quality_mode: bool = False
     candidate_count: int = 1
@@ -330,7 +333,7 @@ class EditSceneRequest(BaseModel):
     video_model: Optional[str] = None
     vision_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
-    manifest_id: Optional[str] = None
+    production_bible_id: Optional[str] = None
     shot_edits: Optional[dict[int, ShotEditPayload]] = None
     removed_shots: Optional[list[int]] = None
     shot_order: Optional[list[int]] = None
@@ -475,33 +478,43 @@ class MetricsResponse(BaseModel):
     avg_clip_duration: Optional[float] = None
 
 
-# Manifest System Schemas
+# Production Bible System Schemas
 
-class CreateManifestRequest(BaseModel):
-    """Request schema for POST /api/manifests."""
+class CreateProductionBibleRequest(BaseModel):
+    """Request schema for POST /api/production-bibles."""
     name: str
     description: Optional[str] = None
     category: str = "CUSTOM"
     tags: Optional[list[str]] = Field(default=None)
 
 
-class UpdateManifestRequest(BaseModel):
-    """Request schema for PUT /api/manifests/{id}."""
+# Backwards-compat aliases for internal use
+CreateManifestRequest = CreateProductionBibleRequest
+
+
+class UpdateProductionBibleRequest(BaseModel):
+    """Request schema for PUT /api/production-bibles/{id}."""
     name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
     tags: Optional[list[str]] = None
 
 
-class CreateManifestFromSceneRequest(BaseModel):
-    """Request schema for POST /api/manifests/from-scene."""
+UpdateManifestRequest = UpdateProductionBibleRequest
+
+
+class CreateProductionBibleFromSceneRequest(BaseModel):
+    """Request schema for POST /api/production-bibles/from-scene."""
     scene_id: str
     name: Optional[str] = None
 
 
-class ManifestListItem(BaseModel):
-    """Item in list response for GET /api/manifests."""
-    manifest_id: str
+CreateManifestFromSceneRequest = CreateProductionBibleFromSceneRequest
+
+
+class ProductionBibleListItem(BaseModel):
+    """Item in list response for GET /api/production-bibles."""
+    production_bible_id: str
     name: str
     description: Optional[str]
     thumbnail_url: Optional[str]
@@ -516,9 +529,12 @@ class ManifestListItem(BaseModel):
     updated_at: str
 
 
-class ManifestDetailResponse(BaseModel):
-    """Response schema for GET /api/manifests/{id}."""
-    manifest_id: str
+ManifestListItem = ProductionBibleListItem
+
+
+class ProductionBibleDetailResponse(BaseModel):
+    """Response schema for GET /api/production-bibles/{id}."""
+    production_bible_id: str
     name: str
     description: Optional[str]
     thumbnail_url: Optional[str]
@@ -532,22 +548,25 @@ class ManifestDetailResponse(BaseModel):
     times_used: int
     last_used_at: Optional[str]
     version: int
-    parent_manifest_id: Optional[str]
+    parent_production_bible_id: Optional[str]
     source_video_duration: Optional[float] = None
     created_at: str
     updated_at: str
     assets: list["AssetResponse"]
 
 
+ManifestDetailResponse = ProductionBibleDetailResponse
+
+
 class VideoUploadResponse(BaseModel):
-    """Response schema for POST /api/manifests/{id}/upload-video."""
+    """Response schema for POST /api/production-bibles/{id}/upload-video."""
     task_id: str
     status: str
-    manifest_id: str
+    production_bible_id: str
 
 
 class CreateAssetRequest(BaseModel):
-    """Request schema for POST /api/manifests/{id}/assets."""
+    """Request schema for POST /api/production-bibles/{id}/assets."""
     name: str
     asset_type: str
     description: Optional[str] = None
@@ -568,7 +587,7 @@ class UpdateAssetRequest(BaseModel):
 class AssetResponse(BaseModel):
     """Response schema for asset operations."""
     asset_id: str
-    manifest_id: str
+    production_bible_id: str
     asset_type: str
     name: str
     manifest_tag: str
@@ -630,7 +649,7 @@ class CreateSceneRequest(BaseModel):
     image_model: Optional[str] = None
     video_model: Optional[str] = None
     enable_audio: bool = False
-    manifest_id: Optional[str] = None
+    production_bible_id: Optional[str] = None
     quality_mode: bool = False
     candidate_count: int = 1
     vision_model: Optional[str] = None
@@ -760,33 +779,33 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
         session.add(scene)
         await session.flush()  # Get scene.id before snapshot creation
 
-        # Handle manifest_id if provided
-        if request.manifest_id:
-            manifest_uuid = uuid.UUID(request.manifest_id)
+        # Handle production_bible_id if provided
+        if request.production_bible_id:
+            pb_uuid = uuid.UUID(request.production_bible_id)
 
-            # Validate manifest exists
-            manifest = await manifest_service.get_manifest(session, manifest_uuid)
+            # Validate production bible exists
+            manifest = await manifest_service.get_manifest(session, pb_uuid)
             if not manifest:
-                raise HTTPException(status_code=404, detail=f"Manifest {request.manifest_id} not found")
+                raise HTTPException(status_code=404, detail=f"Production Bible {request.production_bible_id} not found")
 
-            # Set scene manifest fields
-            scene.manifest_id = manifest_uuid
-            scene.manifest_version = manifest.version
+            # Set scene production bible fields
+            scene.production_bible_id = pb_uuid
+            scene.production_bible_version = manifest.version
 
             # Create snapshot
-            await manifest_service.create_snapshot(session, manifest_uuid, scene.id)
+            await manifest_service.create_snapshot(session, pb_uuid, scene.id)
 
             # Increment usage tracking
-            await manifest_service.increment_usage(session, manifest_uuid)
+            await manifest_service.increment_usage(session, pb_uuid)
 
-            logger.info(f"Scene {scene.id} using manifest {request.manifest_id}, snapshot created")
+            logger.info(f"Scene {scene.id} using production bible {request.production_bible_id}, snapshot created")
 
             # Note: Conditional manifesting skip (Phase 6 success criteria #5) is achieved
-            # by the presence of manifest_id on the scene. When manifest_id is set, the
-            # pipeline knows assets are pre-processed (snapshot exists). The pipeline's
-            # manifesting step (to be added in Phase 7+) will check scene.manifest_id
+            # by the presence of production_bible_id on the scene. When production_bible_id is set,
+            # the pipeline knows assets are pre-processed (snapshot exists). The pipeline's
+            # manifesting step (to be added in Phase 7+) will check scene.production_bible_id
             # and skip if present. For now, the pipeline has no manifesting step, so the
-            # skip is implicit — pre-built manifests just bypass the need for one.
+            # skip is implicit — pre-built production bibles just bypass the need for one.
 
         await session.commit()
         await session.refresh(scene)
@@ -885,17 +904,17 @@ async def create_draft_scene(request: CreateSceneRequest):
         session.add(scene)
         await session.flush()
 
-        # Handle manifest_id if provided (reuse same snapshot logic as POST /api/generate)
-        if request.manifest_id:
-            manifest_uuid = uuid.UUID(request.manifest_id)
-            manifest = await manifest_service.get_manifest(session, manifest_uuid)
+        # Handle production_bible_id if provided (reuse same snapshot logic as POST /api/generate)
+        if request.production_bible_id:
+            pb_uuid = uuid.UUID(request.production_bible_id)
+            manifest = await manifest_service.get_manifest(session, pb_uuid)
             if not manifest:
-                raise HTTPException(status_code=404, detail=f"Manifest {request.manifest_id} not found")
-            scene.manifest_id = manifest_uuid
-            scene.manifest_version = manifest.version
-            await manifest_service.create_snapshot(session, manifest_uuid, scene.id)
-            await manifest_service.increment_usage(session, manifest_uuid)
-            logger.info(f"Draft scene {scene.id} using manifest {request.manifest_id}, snapshot created")
+                raise HTTPException(status_code=404, detail=f"Production Bible {request.production_bible_id} not found")
+            scene.production_bible_id = pb_uuid
+            scene.production_bible_version = manifest.version
+            await manifest_service.create_snapshot(session, pb_uuid, scene.id)
+            await manifest_service.increment_usage(session, pb_uuid)
+            logger.info(f"Draft scene {scene.id} using production bible {request.production_bible_id}, snapshot created")
 
         # Create empty Shot rows
         for i in range(request.shot_count):
@@ -1195,11 +1214,11 @@ async def get_scene_detail(scene_id: uuid.UUID):
             sm.shot_index: sm for sm in sm_result.scalars().all()
         }
 
-        # If scene has manifest, load assets for reference resolution
+        # If scene has production bible, load assets for reference resolution
         ref_assets_by_tag = {}
-        if scene.manifest_id:
+        if scene.production_bible_id:
             assets_result = await session.execute(
-                select(Asset).where(Asset.manifest_id == scene.manifest_id)
+                select(Asset).where(Asset.production_bible_id == scene.production_bible_id)
             )
             ref_assets_by_tag = {
                 a.manifest_tag: a for a in assets_result.scalars().all()
@@ -1276,7 +1295,7 @@ async def get_scene_detail(scene_id: uuid.UUID):
             video_model=scene.video_model,
             audio_enabled=scene.audio_enabled,
             forked_from=str(scene.forked_from_id) if scene.forked_from_id else None,
-            manifest_id=str(scene.manifest_id) if scene.manifest_id else None,
+            production_bible_id=str(scene.production_bible_id) if scene.production_bible_id else None,
             quality_mode=scene.quality_mode,
             candidate_count=scene.candidate_count,
             vision_model=scene.vision_model,
@@ -1688,7 +1707,7 @@ async def _copy_assets_for_fork(
     # cascading duplication when forking a scene that was itself forked
     result = await session.execute(
         select(Asset).where(
-            Asset.manifest_id == source_manifest_id,
+            Asset.production_bible_id == source_manifest_id,
             Asset.is_inherited == False,
         )
     )
@@ -2030,9 +2049,9 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
         if deleted_set and len(deleted_set) >= src_shot_count:
             raise HTTPException(status_code=422, detail="Cannot delete all shots; at least 1 must remain")
 
-        # Validate asset_changes requires a manifest on the source scene
-        if request.asset_changes is not None and source.manifest_id is None:
-            raise HTTPException(status_code=422, detail="Cannot apply asset_changes to a scene without a manifest")
+        # Validate asset_changes requires a production bible on the source scene
+        if request.asset_changes is not None and source.production_bible_id is None:
+            raise HTTPException(status_code=422, detail="Cannot apply asset_changes to a scene without a production bible")
 
         # Compute invalidation point
         resume_from, shot_boundary = _compute_invalidation(
@@ -2044,12 +2063,12 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
         # Phase 12: Asset modification invalidation
         # If asset_changes has modified assets, check which shots use them
         # and potentially tighten the invalidation boundary.
-        if request.asset_changes is not None and source.manifest_id is not None:
+        if request.asset_changes is not None and source.production_bible_id is not None:
             modified_asset_ids = list((request.asset_changes.modified_assets or {}).keys())
             if modified_asset_ids:
                 # Load parent assets to find their manifest_tags
                 parent_assets_result = await session.execute(
-                    select(Asset).where(Asset.manifest_id == source.manifest_id)
+                    select(Asset).where(Asset.production_bible_id == source.production_bible_id)
                 )
                 parent_assets_map = {
                     str(a.id): a.manifest_tag for a in parent_assets_result.scalars().all()
@@ -2113,10 +2132,10 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
         new_scene.storyboard_raw = source.storyboard_raw
         new_scene.style_guide = source.style_guide
 
-        # Phase 12: Inherit manifest_id and manifest_version from source
-        if source.manifest_id is not None:
-            new_scene.manifest_id = source.manifest_id
-            new_scene.manifest_version = source.manifest_version
+        # Phase 12: Inherit production_bible_id and production_bible_version from source
+        if source.production_bible_id is not None:
+            new_scene.production_bible_id = source.production_bible_id
+            new_scene.production_bible_version = source.production_bible_version
 
         session.add(new_scene)
         await session.commit()
@@ -2295,12 +2314,12 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
                             shot_data["shot_index"] = new_idx_sb
                     new_scene.storyboard_raw = sb
 
-        # Phase 12: Copy manifest assets and shot manifests for forked scene
-        if source.manifest_id is not None:
+        # Phase 12: Copy production bible assets and shot manifests for forked scene
+        if source.production_bible_id is not None:
             # Copy assets with inheritance tracking
             _, modified_asset_tags = await _copy_assets_for_fork(
                 session,
-                source.manifest_id,
+                source.production_bible_id,
                 source.id,
                 new_id,
                 request.asset_changes,
@@ -2345,7 +2364,7 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
 
                 engine = ManifestingEngine(session)
                 await engine.process_new_uploads(
-                    manifest_id=source.manifest_id,
+                    manifest_id=source.production_bible_id,
                     new_uploads=request.asset_changes.new_uploads,
                     existing_face_embeddings=existing_face_embeddings,
                 )
@@ -2418,19 +2437,19 @@ async def edit_scene_in_place(scene_id: uuid.UUID, body: EditSceneRequest):
                     setattr(scene, attr, value)
                     changes.append({"type": "scene_field", "field": attr, "old": str(old_val), "new": str(value)})
 
-        # Handle manifest_id change (requires UUID parsing + snapshot)
-        if body.manifest_id is not None:
-            manifest_uuid = uuid.UUID(body.manifest_id)
-            old_manifest = scene.manifest_id
-            if old_manifest != manifest_uuid:
-                manifest = await manifest_service.get_manifest(session, manifest_uuid)
+        # Handle production_bible_id change (requires UUID parsing + snapshot)
+        if body.production_bible_id is not None:
+            pb_uuid = uuid.UUID(body.production_bible_id)
+            old_pb = scene.production_bible_id
+            if old_pb != pb_uuid:
+                manifest = await manifest_service.get_manifest(session, pb_uuid)
                 if not manifest:
-                    raise HTTPException(status_code=404, detail=f"Manifest {body.manifest_id} not found")
-                scene.manifest_id = manifest_uuid
-                scene.manifest_version = manifest.version
-                await manifest_service.create_snapshot(session, manifest_uuid, scene.id)
-                await manifest_service.increment_usage(session, manifest_uuid)
-                changes.append({"type": "scene_field", "field": "manifest_id", "old": str(old_manifest), "new": str(manifest_uuid)})
+                    raise HTTPException(status_code=404, detail=f"Production Bible {body.production_bible_id} not found")
+                scene.production_bible_id = pb_uuid
+                scene.production_bible_version = manifest.version
+                await manifest_service.create_snapshot(session, pb_uuid, scene.id)
+                await manifest_service.increment_usage(session, pb_uuid)
+                changes.append({"type": "scene_field", "field": "production_bible_id", "old": str(old_pb), "new": str(pb_uuid)})
 
         # Handle shot expansion (target_shot_count increase) — BEFORE shot edits
         # so that newly-created rows exist when shot_edits tries to find them.
@@ -2868,13 +2887,13 @@ async def health_check():
 
 
 # ============================================================================
-# Manifest API Endpoints
+# Production Bible API Endpoints
 # ============================================================================
 
-def _manifest_to_list_item(m: Manifest) -> ManifestListItem:
-    """Convert Manifest ORM model to ManifestListItem response."""
-    return ManifestListItem(
-        manifest_id=str(m.id),
+def _manifest_to_list_item(m: ProductionBible) -> ProductionBibleListItem:
+    """Convert ProductionBible ORM model to ProductionBibleListItem response."""
+    return ProductionBibleListItem(
+        production_bible_id=str(m.id),
         name=m.name,
         description=m.description,
         thumbnail_url=m.thumbnail_url,
@@ -2894,7 +2913,7 @@ def _asset_to_response(a: Asset) -> AssetResponse:
     """Convert Asset ORM model to AssetResponse."""
     return AssetResponse(
         asset_id=str(a.id),
-        manifest_id=str(a.manifest_id),
+        production_bible_id=str(a.production_bible_id),
         asset_type=a.asset_type,
         name=a.name,
         manifest_tag=a.manifest_tag,
@@ -2915,9 +2934,9 @@ def _asset_to_response(a: Asset) -> AssetResponse:
     )
 
 
-@router.post("/manifests", status_code=201, response_model=ManifestListItem)
-async def create_manifest(request: CreateManifestRequest):
-    """Create a new manifest in DRAFT status."""
+@router.post("/production-bibles", status_code=201, response_model=ProductionBibleListItem)
+async def create_production_bible(request: CreateProductionBibleRequest):
+    """Create a new production bible in DRAFT status."""
     async with async_session() as session:
         try:
             manifest = await manifest_service.create_manifest(
@@ -2934,9 +2953,9 @@ async def create_manifest(request: CreateManifestRequest):
             raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.post("/manifests/from-scene", status_code=201, response_model=ManifestDetailResponse)
-async def create_manifest_from_scene(request: CreateManifestFromSceneRequest):
-    """Create a manifest pre-populated from a scene's storyboard data."""
+@router.post("/production-bibles/from-scene", status_code=201, response_model=ProductionBibleDetailResponse)
+async def create_production_bible_from_scene(request: CreateProductionBibleFromSceneRequest):
+    """Create a production bible pre-populated from a scene's storyboard data."""
     try:
         scene_id = uuid.UUID(request.scene_id)
     except ValueError:
@@ -2954,8 +2973,8 @@ async def create_manifest_from_scene(request: CreateManifestFromSceneRequest):
             for a in assets:
                 await session.refresh(a)
 
-            return ManifestDetailResponse(
-                manifest_id=str(manifest.id),
+            return ProductionBibleDetailResponse(
+                production_bible_id=str(manifest.id),
                 name=manifest.name,
                 description=manifest.description,
                 thumbnail_url=manifest.thumbnail_url,
@@ -2969,7 +2988,7 @@ async def create_manifest_from_scene(request: CreateManifestFromSceneRequest):
                 times_used=manifest.times_used,
                 last_used_at=manifest.last_used_at.isoformat() if manifest.last_used_at else None,
                 version=manifest.version,
-                parent_manifest_id=str(manifest.parent_manifest_id) if manifest.parent_manifest_id else None,
+                parent_production_bible_id=str(manifest.parent_production_bible_id) if manifest.parent_production_bible_id else None,
                 source_video_duration=manifest.source_video_duration,
                 created_at=manifest.created_at.isoformat(),
                 updated_at=manifest.updated_at.isoformat(),
@@ -2981,14 +3000,14 @@ async def create_manifest_from_scene(request: CreateManifestFromSceneRequest):
             raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.get("/manifests", response_model=list[ManifestListItem])
-async def list_manifests(
+@router.get("/production-bibles", response_model=list[ProductionBibleListItem])
+async def list_production_bibles(
     category: Optional[str] = None,
     status: Optional[str] = None,
     sort_by: str = "updated_at",
     sort_order: str = "desc",
 ):
-    """List manifests with optional filters and sorting."""
+    """List production bibles with optional filters and sorting."""
     async with async_session() as session:
         manifests = await manifest_service.list_manifests(
             session,
@@ -3000,18 +3019,18 @@ async def list_manifests(
         return [_manifest_to_list_item(m) for m in manifests]
 
 
-@router.get("/manifests/{manifest_id}", response_model=ManifestDetailResponse)
-async def get_manifest_detail(manifest_id: uuid.UUID):
-    """Get manifest detail with assets."""
+@router.get("/production-bibles/{production_bible_id}", response_model=ProductionBibleDetailResponse)
+async def get_production_bible_detail(production_bible_id: uuid.UUID):
+    """Get production bible detail with assets."""
     async with async_session() as session:
-        manifest = await manifest_service.get_manifest(session, manifest_id)
+        manifest = await manifest_service.get_manifest(session, production_bible_id)
         if not manifest:
-            raise HTTPException(status_code=404, detail="Manifest not found")
+            raise HTTPException(status_code=404, detail="Production Bible not found")
 
-        assets = await manifest_service.list_assets(session, manifest_id)
+        assets = await manifest_service.list_assets(session, production_bible_id)
 
-        return ManifestDetailResponse(
-            manifest_id=str(manifest.id),
+        return ProductionBibleDetailResponse(
+            production_bible_id=str(manifest.id),
             name=manifest.name,
             description=manifest.description,
             thumbnail_url=manifest.thumbnail_url,
@@ -3025,7 +3044,7 @@ async def get_manifest_detail(manifest_id: uuid.UUID):
             times_used=manifest.times_used,
             last_used_at=manifest.last_used_at.isoformat() if manifest.last_used_at else None,
             version=manifest.version,
-            parent_manifest_id=str(manifest.parent_manifest_id) if manifest.parent_manifest_id else None,
+            parent_production_bible_id=str(manifest.parent_production_bible_id) if manifest.parent_production_bible_id else None,
             source_video_duration=manifest.source_video_duration,
             created_at=manifest.created_at.isoformat(),
             updated_at=manifest.updated_at.isoformat(),
@@ -3033,16 +3052,16 @@ async def get_manifest_detail(manifest_id: uuid.UUID):
         )
 
 
-@router.put("/manifests/{manifest_id}", response_model=ManifestListItem)
-async def update_manifest(manifest_id: uuid.UUID, request: UpdateManifestRequest):
-    """Update manifest fields."""
+@router.put("/production-bibles/{production_bible_id}", response_model=ProductionBibleListItem)
+async def update_production_bible(production_bible_id: uuid.UUID, request: UpdateProductionBibleRequest):
+    """Update production bible fields."""
     async with async_session() as session:
         try:
             # Build kwargs from non-None fields
             kwargs = {k: v for k, v in request.model_dump().items() if v is not None}
             manifest = await manifest_service.update_manifest(
                 session,
-                manifest_id,
+                production_bible_id,
                 **kwargs,
             )
             await session.commit()
@@ -3054,14 +3073,14 @@ async def update_manifest(manifest_id: uuid.UUID, request: UpdateManifestRequest
             raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.delete("/manifests/{manifest_id}")
-async def delete_manifest(manifest_id: uuid.UUID):
-    """Soft delete manifest. Returns 409 if referenced by scenes."""
+@router.delete("/production-bibles/{production_bible_id}")
+async def delete_production_bible(production_bible_id: uuid.UUID):
+    """Soft delete production bible. Returns 409 if referenced by scenes."""
     async with async_session() as session:
         try:
-            await manifest_service.delete_manifest(session, manifest_id)
+            await manifest_service.delete_manifest(session, production_bible_id)
             await session.commit()
-            return {"status": "deleted", "manifest_id": str(manifest_id)}
+            return {"status": "deleted", "production_bible_id": str(production_bible_id)}
         except ValueError as e:
             error_msg = str(e)
             if "not found" in error_msg:
@@ -3071,14 +3090,14 @@ async def delete_manifest(manifest_id: uuid.UUID):
             raise HTTPException(status_code=422, detail=error_msg)
 
 
-@router.post("/manifests/{manifest_id}/duplicate", status_code=201, response_model=ManifestListItem)
-async def duplicate_manifest(manifest_id: uuid.UUID, name: Optional[str] = None):
-    """Duplicate manifest with all assets."""
+@router.post("/production-bibles/{production_bible_id}/duplicate", status_code=201, response_model=ProductionBibleListItem)
+async def duplicate_production_bible(production_bible_id: uuid.UUID, name: Optional[str] = None):
+    """Duplicate production bible with all assets."""
     async with async_session() as session:
         try:
             new_manifest = await manifest_service.duplicate_manifest(
                 session,
-                manifest_id,
+                production_bible_id,
                 new_name=name,
             )
             await session.commit()
@@ -3088,14 +3107,14 @@ async def duplicate_manifest(manifest_id: uuid.UUID, name: Optional[str] = None)
             raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/manifests/{manifest_id}/assets", status_code=201, response_model=AssetResponse)
-async def create_asset(manifest_id: uuid.UUID, request: CreateAssetRequest):
-    """Create asset within manifest."""
+@router.post("/production-bibles/{production_bible_id}/assets", status_code=201, response_model=AssetResponse)
+async def create_asset(production_bible_id: uuid.UUID, request: CreateAssetRequest):
+    """Create asset within production bible."""
     async with async_session() as session:
         try:
             asset = await manifest_service.create_asset(
                 session,
-                manifest_id=manifest_id,
+                manifest_id=production_bible_id,
                 name=request.name,
                 asset_type=request.asset_type,
                 description=request.description,
@@ -3110,11 +3129,11 @@ async def create_asset(manifest_id: uuid.UUID, request: CreateAssetRequest):
             raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.get("/manifests/{manifest_id}/assets", response_model=list[AssetResponse])
-async def list_assets(manifest_id: uuid.UUID):
-    """List assets for manifest."""
+@router.get("/production-bibles/{production_bible_id}/assets", response_model=list[AssetResponse])
+async def list_production_bible_assets(production_bible_id: uuid.UUID):
+    """List assets for production bible."""
     async with async_session() as session:
-        assets = await manifest_service.list_assets(session, manifest_id)
+        assets = await manifest_service.list_assets(session, production_bible_id)
         return [_asset_to_response(a) for a in assets]
 
 
@@ -3180,7 +3199,7 @@ async def upload_asset_image(asset_id: uuid.UUID, file: UploadFile = File(...)):
             # Local: write to disk (sync)
             file_path = await asyncio.to_thread(
                 manifest_service.save_asset_image,
-                asset.manifest_id,
+                asset.production_bible_id,
                 asset_id,
                 content,
                 filename,
@@ -3189,7 +3208,7 @@ async def upload_asset_image(asset_id: uuid.UUID, file: UploadFile = File(...)):
             asset.reference_image_url = f"/api/assets/{asset_id}/image"
         else:
             # S3: upload to storage
-            key = f"manifests/{asset.manifest_id}/uploads/{asset_id}_{filename}"
+            key = f"manifests/{asset.production_bible_id}/uploads/{asset_id}_{filename}"
             await storage.put(key, content, file.content_type or "image/png")
             # Store the S3 key — GET endpoint will resolve to public URL
             asset.reference_image_url = key
@@ -3212,7 +3231,7 @@ async def get_asset_image(asset_id: uuid.UUID):
 
         if isinstance(storage, LocalStorageBackend):
             # Local backend: find file in uploads or crops directory
-            manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+            manifest_dir = Path("tmp/manifests") / str(asset.production_bible_id)
             matches = []
             for subdir in ("uploads", "crops"):
                 d = manifest_dir / subdir
@@ -3232,7 +3251,7 @@ async def get_asset_image(asset_id: uuid.UUID):
         else:
             # S3 backend: search for asset key in storage
             for subdir in ("uploads", "crops"):
-                key_prefix = f"manifests/{asset.manifest_id}/{subdir}/{asset_id}_"
+                key_prefix = f"manifests/{asset.production_bible_id}/{subdir}/{asset_id}_"
                 # Try common extensions
                 for ext in ("png", "jpg", "jpeg", "webp"):
                     # We don't know exact filename, but we stored it with asset_id prefix
@@ -3255,22 +3274,23 @@ async def get_asset_image(asset_id: uuid.UUID):
 # Phase 5: Manifesting Engine Endpoints
 # ============================================================================
 
-@router.post("/manifests/{manifest_id}/process", status_code=202)
-async def process_manifest(manifest_id: uuid.UUID):
-    """Trigger manifesting pipeline for a manifest.
+@router.post("/production-bibles/{production_bible_id}/process", status_code=202)
+async def process_production_bible(production_bible_id: uuid.UUID):
+    """Trigger manifesting pipeline for a production bible.
 
     Returns 202 Accepted immediately and runs processing in background.
     """
+    manifest_id = production_bible_id
     async with async_session() as session:
         manifest = await manifest_service.get_manifest(session, manifest_id)
         if not manifest:
-            raise HTTPException(status_code=404, detail="Manifest not found")
+            raise HTTPException(status_code=404, detail="Production Bible not found")
 
         # Verify status allows processing (DRAFT, READY, or ERROR for retry)
         if manifest.status not in ("DRAFT", "READY", "ERROR"):
             raise HTTPException(
                 status_code=422,
-                detail=f"Cannot process manifest in status {manifest.status}. Must be DRAFT, READY, or ERROR."
+                detail=f"Cannot process production bible in status {manifest.status}. Must be DRAFT, READY, or ERROR."
             )
 
         # Set status to PROCESSING
@@ -3283,13 +3303,14 @@ async def process_manifest(manifest_id: uuid.UUID):
     return {
         "task_id": f"manifest_{manifest_id}",
         "status": "started",
-        "manifest_id": str(manifest_id),
+        "production_bible_id": str(manifest_id),
     }
 
 
-@router.get("/manifests/{manifest_id}/progress", response_model=ProcessingProgressResponse)
-async def get_manifest_progress(manifest_id: uuid.UUID):
-    """Get processing progress for a manifest."""
+@router.get("/production-bibles/{production_bible_id}/progress", response_model=ProcessingProgressResponse)
+async def get_production_bible_progress(production_bible_id: uuid.UUID):
+    """Get processing progress for a production bible."""
+    manifest_id = production_bible_id
     task_id = f"manifest_{manifest_id}"
 
     # Check in-memory task status
@@ -3300,7 +3321,7 @@ async def get_manifest_progress(manifest_id: uuid.UUID):
     async with async_session() as session:
         manifest = await manifest_service.get_manifest(session, manifest_id)
         if not manifest:
-            raise HTTPException(status_code=404, detail="Manifest not found")
+            raise HTTPException(status_code=404, detail="Production Bible not found")
 
         if manifest.status == "READY":
             return ProcessingProgressResponse(
@@ -3326,29 +3347,30 @@ ALLOWED_VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm"}
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
 
 
-@router.post("/manifests/{manifest_id}/upload-video", status_code=202, response_model=VideoUploadResponse)
-async def upload_video_for_manifest(
-    manifest_id: uuid.UUID,
+@router.post("/production-bibles/{production_bible_id}/upload-video", status_code=202, response_model=VideoUploadResponse)
+async def upload_video_for_production_bible(
+    production_bible_id: uuid.UUID,
     file: UploadFile = File(...),
 ):
-    """Upload a video file to extract frames for manifest creation.
+    """Upload a video file to extract frames for production bible creation.
 
     Accepts MP4, MOV, WebM up to 200MB. Returns 202 and runs extraction
     in background.
     """
     from vidpipe.config import settings
 
+    manifest_id = production_bible_id
     max_size = settings.cv_analysis.max_video_file_size_mb * 1024 * 1024
 
-    # Validate manifest exists and is DRAFT
+    # Validate production bible exists and is DRAFT
     async with async_session() as session:
         manifest = await manifest_service.get_manifest(session, manifest_id)
         if not manifest:
-            raise HTTPException(status_code=404, detail="Manifest not found")
+            raise HTTPException(status_code=404, detail="Production Bible not found")
         if manifest.status not in ("DRAFT", "READY", "ERROR"):
             raise HTTPException(
                 status_code=422,
-                detail=f"Cannot upload video to manifest in status {manifest.status}. Must be DRAFT, READY, or ERROR."
+                detail=f"Cannot upload video to production bible in status {manifest.status}. Must be DRAFT, READY, or ERROR."
             )
 
     # Validate file type
@@ -3375,12 +3397,12 @@ async def upload_video_for_manifest(
     video_path = video_dir / f"source_video{video_ext}"
     video_path.write_bytes(content)
 
-    # Update manifest status
+    # Update production bible status
     async with async_session() as session:
-        manifest = await session.get(Manifest, manifest_id)
-        if manifest:
-            manifest.status = "EXTRACTING"
-            manifest.source_video_path = str(video_path)
+        pb = await session.get(ProductionBible, manifest_id)
+        if pb:
+            pb.status = "EXTRACTING"
+            pb.source_video_path = str(video_path)
             await session.commit()
 
     # Spawn background task
@@ -3389,13 +3411,23 @@ async def upload_video_for_manifest(
     return VideoUploadResponse(
         task_id=f"extract_{manifest_id}",
         status="started",
-        manifest_id=str(manifest_id),
+        production_bible_id=str(manifest_id),
     )
 
 
-@router.get("/manifests/{manifest_id}/extraction-progress", response_model=ProcessingProgressResponse)
-async def get_extraction_progress(manifest_id: uuid.UUID):
-    """Get video frame extraction progress for a manifest."""
+@router.get("/production-bibles/{production_bible_id}/contact-sheet")
+async def get_production_bible_contact_sheet(production_bible_id: uuid.UUID):
+    """Serve the contact sheet image for a production bible."""
+    contact_sheet_path = Path("tmp/manifests") / str(production_bible_id) / "contact_sheet.jpg"
+    if not contact_sheet_path.exists():
+        raise HTTPException(status_code=404, detail="Contact sheet not found. Run /process first.")
+    return FileResponse(path=str(contact_sheet_path), media_type="image/jpeg")
+
+
+@router.get("/production-bibles/{production_bible_id}/extraction-progress", response_model=ProcessingProgressResponse)
+async def get_production_bible_extraction_progress(production_bible_id: uuid.UUID):
+    """Get video frame extraction progress for a production bible."""
+    manifest_id = production_bible_id
     task_id = f"extract_{manifest_id}"
 
     if task_id in TASK_STATUS:
@@ -3411,7 +3443,7 @@ async def get_extraction_progress(manifest_id: uuid.UUID):
     async with async_session() as session:
         manifest = await manifest_service.get_manifest(session, manifest_id)
         if not manifest:
-            raise HTTPException(status_code=404, detail="Manifest not found")
+            raise HTTPException(status_code=404, detail="Production Bible not found")
 
         if manifest.status == "EXTRACTING":
             return ProcessingProgressResponse(
@@ -4792,13 +4824,13 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
     sm = sm_result.scalar_one_or_none()
     rewritten_prompt = sm.rewritten_keyframe_prompt if sm else None
 
-    # Resolve asset reference images (for manifest scenes)
+    # Resolve asset reference images (for production-bible scenes)
     ref_image_bytes_list: list[bytes] = []
-    if scene.manifest_id and sm and sm.selected_reference_tags:
+    if scene.production_bible_id and sm and sm.selected_reference_tags:
         try:
             from vidpipe.services import manifest_service
             from vidpipe.services.reference_selection import resolve_asset_image_bytes
-            all_assets = await manifest_service.load_manifest_assets(session, scene.manifest_id)
+            all_assets = await manifest_service.load_manifest_assets(session, scene.production_bible_id)
             asset_map = {a.manifest_tag: a for a in all_assets}
             for tag in sm.selected_reference_tags:
                 asset = asset_map.get(tag)
@@ -5069,9 +5101,9 @@ async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None,
         comfy_client = await get_comfyui_client(host=comfy_host, api_key=comfy_key)
         adapter = ComfyUIVideoAdapter(comfy_client)
 
-        # Load character reference images (if manifest scene)
+        # Load character reference images (if production-bible scene)
         char_ref_bytes: list[bytes] = []
-        if scene.manifest_id:
+        if scene.production_bible_id:
             from vidpipe.pipeline.video_gen import _load_char_ref_images
             char_ref_bytes = await _load_char_ref_images(session, scene)
 
@@ -6143,3 +6175,31 @@ async def remove_scene_from_production(production_id: uuid.UUID, scene_id: uuid.
         scene.production_id = None
         await session.commit()
         return {"status": "removed", "production_id": str(production_id), "scene_id": str(scene_id)}
+
+
+# ============================================================================
+# Phase 16: Legacy /api/manifests/* → /api/production-bibles/* (301 Redirects)
+# ============================================================================
+
+def _legacy_manifest_redirect(request: Request) -> RedirectResponse:
+    """Redirect legacy /api/manifests/* to /api/production-bibles/*.
+
+    Returns HTTP 301 Moved Permanently so clients and search engines update
+    their bookmarks. Query string is preserved.
+    """
+    new_path = request.url.path.replace("/manifests", "/production-bibles", 1)
+    if request.url.query:
+        new_path += f"?{request.url.query}"
+    return RedirectResponse(url=new_path, status_code=301)
+
+
+@router.api_route("/manifests/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def legacy_manifest_path_redirect(request: Request, path: str):
+    """Redirect /api/manifests/{anything} to /api/production-bibles/{anything}."""
+    return _legacy_manifest_redirect(request)
+
+
+@router.api_route("/manifests", methods=["GET", "POST"])
+async def legacy_manifest_list_redirect(request: Request):
+    """Redirect /api/manifests to /api/production-bibles."""
+    return _legacy_manifest_redirect(request)

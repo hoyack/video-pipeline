@@ -84,11 +84,11 @@ async def _generate_expansion_if_needed(
     if scene.storyboard_raw and "shots" in scene.storyboard_raw:
         kept_sb_shots = scene.storyboard_raw["shots"]
 
-    # For manifest-aware scenes, load assets and use enhanced schema
+    # For production-bible-aware scenes, load assets and use enhanced schema
     asset_registry_block = None
-    if scene.manifest_id:
+    if scene.production_bible_id:
         from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry
-        assets = await load_manifest_assets(session, scene.manifest_id)
+        assets = await load_manifest_assets(session, scene.production_bible_id)
         if assets:
             asset_registry_block = format_asset_registry(assets)
 
@@ -194,9 +194,9 @@ async def run_pipeline(
     Runs all 4 pipeline steps (storyboard, keyframes, video_gen, stitcher) with
     state machine transitions, failure recovery, and PipelineRun metadata tracking.
 
-    Phase 6: If scene.manifest_id is set, manifesting is skipped
+    Phase 6: If scene.production_bible_id is set, manifesting is skipped
     (assets already processed via ManifestSnapshot). When a manifesting
-    pipeline step is added (Phase 7+), check scene.manifest_id here
+    pipeline step is added (Phase 7+), check scene.production_bible_id here
     and skip the manifesting step if present.
 
     Args:

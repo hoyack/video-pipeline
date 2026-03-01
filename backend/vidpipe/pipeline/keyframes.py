@@ -517,7 +517,7 @@ async def generate_keyframes(
             selected_ref_assets: list = []
             ref_image_bytes_list: list[bytes] = []
             placed_char_assets: list = []  # CHARACTER assets placed in shot (for face verification)
-            if scene.manifest_id:
+            if scene.production_bible_id:
                 try:
                     from vidpipe.services.prompt_rewriter import PromptRewriterService
                     from vidpipe.services.reference_selection import resolve_asset_image_bytes
@@ -535,7 +535,7 @@ async def generate_keyframes(
                     if shot_manifest_row and shot_manifest_row.manifest_json:
                         # Load assets
                         from vidpipe.services import manifest_service
-                        all_assets = await manifest_service.load_manifest_assets(session, scene.manifest_id)
+                        all_assets = await manifest_service.load_manifest_assets(session, scene.production_bible_id)
 
                         # Load previous shot CV analysis for continuity
                         previous_cv = None
@@ -587,7 +587,7 @@ async def generate_keyframes(
                         # to manifest characters, use ALL manifest CHARACTER assets
                         # with reference images. This guarantees reference images reach
                         # the image adapter even when storyboard tags were wrong.
-                        if not placed_char_tags and scene.manifest_id:
+                        if not placed_char_tags and scene.production_bible_id:
                             placed_char_tags = {
                                 a.manifest_tag
                                 for a in all_assets

@@ -314,7 +314,7 @@ async def resolve_asset_image_bytes(
                 )
                 file_asset_id = url_match.group(1) if url_match else str(asset.id)
 
-                manifest_dir = Path("tmp/manifests") / str(asset.manifest_id)
+                manifest_dir = Path("tmp/manifests") / str(asset.production_bible_id)
                 resolved = None
                 for subdir in ("uploads", "crops"):
                     d = manifest_dir / subdir

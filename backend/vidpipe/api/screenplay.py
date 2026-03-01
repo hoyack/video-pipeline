@@ -248,6 +248,10 @@ async def generate_scenes_from_screenplay(
                 await session.delete(s)
             await session.flush()
 
+        # Fetch the production's bible_id for propagation to new scenes
+        prod_obj = await session.get(Production, uuid.UUID(production_id))
+        prod_bible_id = prod_obj.production_bible_id if prod_obj else None
+
         # Create one Scene per breakdown entry
         created = []
         for idx, entry in enumerate(sp.scene_breakdown):
@@ -262,6 +266,7 @@ async def generate_scenes_from_screenplay(
                 screenplay_breakdown_index=entry.get("scene_number", idx + 1),
                 screenplay_context=entry,
                 scene_order=idx,
+                production_bible_id=prod_bible_id,
             )
             session.add(scene)
             created.append({"entry": entry, "scene": scene})

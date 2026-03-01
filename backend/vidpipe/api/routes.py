@@ -803,6 +803,13 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             # Increment usage tracking
             await manifest_service.increment_usage(session, pb_uuid)
 
+            # Also set Production.production_bible_id for direct lookup
+            if scene.production_id:
+                from vidpipe.db.models import Production as ProdModel
+                prod_obj = await session.get(ProdModel, scene.production_id)
+                if prod_obj and not prod_obj.production_bible_id:
+                    prod_obj.production_bible_id = pb_uuid
+
             logger.info(f"Scene {scene.id} using production bible {request.production_bible_id}, snapshot created")
 
             # Note: Conditional manifesting skip (Phase 6 success criteria #5) is achieved
@@ -919,6 +926,12 @@ async def create_draft_scene(request: CreateSceneRequest):
             scene.production_bible_version = manifest.version
             await manifest_service.create_snapshot(session, pb_uuid, scene.id)
             await manifest_service.increment_usage(session, pb_uuid)
+            # Also set Production.production_bible_id for direct lookup
+            if scene.production_id:
+                from vidpipe.db.models import Production as ProdModel
+                prod_obj = await session.get(ProdModel, scene.production_id)
+                if prod_obj and not prod_obj.production_bible_id:
+                    prod_obj.production_bible_id = pb_uuid
             logger.info(f"Draft scene {scene.id} using production bible {request.production_bible_id}, snapshot created")
 
         # Create empty Shot rows
@@ -6025,12 +6038,14 @@ class ProductionUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[list] = None
+    production_bible_id: Optional[str] = None
 
 class ProductionResponse(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
     tags: Optional[list] = None
+    production_bible_id: Optional[str] = None
     scene_count: int = 0
     created_at: str
     updated_at: str
@@ -6048,6 +6063,7 @@ async def create_production(body: ProductionCreate):
             name=prod.name,
             description=prod.description,
             tags=prod.tags,
+            production_bible_id=str(prod.production_bible_id) if prod.production_bible_id else None,
             scene_count=0,
             created_at=prod.created_at.isoformat(),
             updated_at=prod.updated_at.isoformat(),
@@ -6070,6 +6086,7 @@ async def list_productions():
                 name=p.name,
                 description=p.description,
                 tags=p.tags,
+                production_bible_id=str(p.production_bible_id) if p.production_bible_id else None,
                 scene_count=count,
                 created_at=p.created_at.isoformat(),
                 updated_at=p.updated_at.isoformat(),
@@ -6093,6 +6110,7 @@ async def get_production(production_id: uuid.UUID):
             name=prod.name,
             description=prod.description,
             tags=prod.tags,
+            production_bible_id=str(prod.production_bible_id) if prod.production_bible_id else None,
             scene_count=count,
             created_at=prod.created_at.isoformat(),
             updated_at=prod.updated_at.isoformat(),
@@ -6112,6 +6130,8 @@ async def update_production(production_id: uuid.UUID, body: ProductionUpdate):
             prod.description = body.description
         if body.tags is not None:
             prod.tags = body.tags
+        if body.production_bible_id is not None:
+            prod.production_bible_id = uuid.UUID(body.production_bible_id)
         await session.commit()
         await session.refresh(prod)
         count_result = await session.execute(
@@ -6123,6 +6143,7 @@ async def update_production(production_id: uuid.UUID, body: ProductionUpdate):
             name=prod.name,
             description=prod.description,
             tags=prod.tags,
+            production_bible_id=str(prod.production_bible_id) if prod.production_bible_id else None,
             scene_count=count,
             created_at=prod.created_at.isoformat(),
             updated_at=prod.updated_at.isoformat(),

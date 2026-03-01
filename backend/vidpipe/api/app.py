@@ -17,6 +17,7 @@ from vidpipe.api.sequences import sequence_router
 from vidpipe.api.characters import character_router
 from vidpipe.api.sets_props import sets_props_router
 from vidpipe.api.screenplay import screenplay_router
+from vidpipe.api.sound import sound_router
 
 # Configure root logger so application logs (pipeline stages, S3, etc.) reach stdout
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -72,12 +73,7 @@ app.include_router(character_router)
 app.include_router(sets_props_router)
 app.include_router(screenplay_router)
 
-# Phase 17-03: Sound router (may not exist yet)
-try:
-    from vidpipe.api.sound import sound_router
-    app.include_router(sound_router)
-except ImportError:
-    pass  # Plan 17-03 not yet executed; sound_router registered on next startup
+app.include_router(sound_router)
 
 # Serve frontend static files in production (after API routes take priority)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"

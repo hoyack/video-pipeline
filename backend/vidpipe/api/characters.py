@@ -86,7 +86,7 @@ def _character_to_dict(
     """Build response dict for a character with nested sub-entities."""
     wardrobe_list = [
         {
-            "id": str(w.id),
+            "wardrobe_id": str(w.id),
             "character_id": str(w.character_id),
             "label": w.label,
             "reference_images": w.reference_images,
@@ -101,7 +101,7 @@ def _character_to_dict(
     vp_dict = None
     if voice_profile is not None:
         vp_dict = {
-            "id": str(voice_profile.id),
+            "voice_profile_id": str(voice_profile.id),
             "character_id": str(voice_profile.character_id),
             "voice_id": voice_profile.voice_id,
             "adapter_type": voice_profile.adapter_type,
@@ -111,7 +111,7 @@ def _character_to_dict(
         }
 
     return {
-        "id": str(char.id),
+        "character_id": str(char.id),
         "production_bible_id": str(char.production_bible_id),
         "name": char.name,
         "role": char.role,
@@ -120,7 +120,7 @@ def _character_to_dict(
         "actor_refs": char.actor_refs,
         "base_appearance": char.base_appearance,
         "prompt_tags": char.prompt_tags,
-        "wardrobes": wardrobe_list,
+        "wardrobe": wardrobe_list,
         "voice_profile": vp_dict,
         "created_at": char.created_at.isoformat(),
         "updated_at": char.updated_at.isoformat(),
@@ -129,7 +129,7 @@ def _character_to_dict(
 
 def _wardrobe_to_dict(w: Wardrobe) -> dict:
     return {
-        "id": str(w.id),
+        "wardrobe_id": str(w.id),
         "character_id": str(w.character_id),
         "label": w.label,
         "reference_images": w.reference_images,
@@ -142,7 +142,7 @@ def _wardrobe_to_dict(w: Wardrobe) -> dict:
 
 def _voice_profile_to_dict(vp: VoiceProfile) -> dict:
     return {
-        "id": str(vp.id),
+        "voice_profile_id": str(vp.id),
         "character_id": str(vp.character_id),
         "voice_id": vp.voice_id,
         "adapter_type": vp.adapter_type,

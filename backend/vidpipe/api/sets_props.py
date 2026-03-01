@@ -79,7 +79,7 @@ def _set_to_dict(s: Set, sonic_identity: Optional[SonicIdentity] = None) -> dict
     si_dict = None
     if sonic_identity is not None:
         si_dict = {
-            "id": str(sonic_identity.id),
+            "sonic_identity_id": str(sonic_identity.id),
             "set_id": str(sonic_identity.set_id),
             "ambience_description": sonic_identity.ambience_description,
             "reference_audio": sonic_identity.reference_audio,
@@ -88,7 +88,7 @@ def _set_to_dict(s: Set, sonic_identity: Optional[SonicIdentity] = None) -> dict
         }
 
     return {
-        "id": str(s.id),
+        "set_id": str(s.id),
         "production_bible_id": str(s.production_bible_id),
         "name": s.name,
         "reference_image": s.reference_image,
@@ -104,7 +104,7 @@ def _set_to_dict(s: Set, sonic_identity: Optional[SonicIdentity] = None) -> dict
 
 def _sonic_identity_to_dict(si: SonicIdentity) -> dict:
     return {
-        "id": str(si.id),
+        "sonic_identity_id": str(si.id),
         "set_id": str(si.set_id),
         "ambience_description": si.ambience_description,
         "reference_audio": si.reference_audio,
@@ -115,7 +115,7 @@ def _sonic_identity_to_dict(si: SonicIdentity) -> dict:
 
 def _prop_to_dict(p: Prop) -> dict:
     return {
-        "id": str(p.id),
+        "prop_id": str(p.id),
         "production_bible_id": str(p.production_bible_id),
         "name": p.name,
         "reference_image": p.reference_image,

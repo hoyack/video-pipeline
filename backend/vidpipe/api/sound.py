@@ -89,7 +89,7 @@ async def list_score_themes(production_bible_id: str):
 
         return [
             {
-                "id": str(t.id),
+                "score_theme_id": str(t.id),
                 "production_bible_id": str(t.production_bible_id),
                 "name": t.name,
                 "mood_descriptors": t.mood_descriptors,
@@ -127,7 +127,7 @@ async def create_score_theme(production_bible_id: str, body: ScoreThemeCreate):
         await session.refresh(theme)
 
         return {
-            "id": str(theme.id),
+            "score_theme_id": str(theme.id),
             "production_bible_id": str(theme.production_bible_id),
             "name": theme.name,
             "mood_descriptors": theme.mood_descriptors,
@@ -150,7 +150,7 @@ async def get_score_theme(score_theme_id: str):
             raise HTTPException(status_code=404, detail="Score theme not found")
 
         return {
-            "id": str(theme.id),
+            "score_theme_id": str(theme.id),
             "production_bible_id": str(theme.production_bible_id),
             "name": theme.name,
             "mood_descriptors": theme.mood_descriptors,
@@ -191,7 +191,7 @@ async def update_score_theme(score_theme_id: str, body: ScoreThemeUpdate):
         await session.refresh(theme)
 
         return {
-            "id": str(theme.id),
+            "score_theme_id": str(theme.id),
             "production_bible_id": str(theme.production_bible_id),
             "name": theme.name,
             "mood_descriptors": theme.mood_descriptors,
@@ -248,7 +248,7 @@ async def list_sfx(production_bible_id: str, category: Optional[str] = None):
 
         return [
             {
-                "id": str(i.id),
+                "sfx_item_id": str(i.id),
                 "production_bible_id": str(i.production_bible_id),
                 "name": i.name,
                 "category": i.category,
@@ -288,7 +288,7 @@ async def create_sfx_item(production_bible_id: str, body: SFXItemCreate):
         await session.refresh(item)
 
         return {
-            "id": str(item.id),
+            "sfx_item_id": str(item.id),
             "production_bible_id": str(item.production_bible_id),
             "name": item.name,
             "category": item.category,
@@ -309,7 +309,7 @@ async def get_sfx_item(sfx_item_id: str):
             raise HTTPException(status_code=404, detail="SFX item not found")
 
         return {
-            "id": str(item.id),
+            "sfx_item_id": str(item.id),
             "production_bible_id": str(item.production_bible_id),
             "name": item.name,
             "category": item.category,
@@ -350,7 +350,7 @@ async def update_sfx_item(sfx_item_id: str, body: SFXItemUpdate):
         await session.refresh(item)
 
         return {
-            "id": str(item.id),
+            "sfx_item_id": str(item.id),
             "production_bible_id": str(item.production_bible_id),
             "name": item.name,
             "category": item.category,

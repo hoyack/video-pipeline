@@ -173,10 +173,10 @@ export function ManifestSelector({
         ) : (
           filteredManifests.map((m) => (
             <button
-              key={m.manifest_id}
+              key={m.production_bible_id}
               type="button"
               onClick={() => {
-                onManifestSelect(m.manifest_id);
+                onManifestSelect(m.production_bible_id);
                 setShowPicker(false);
               }}
               className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-800"

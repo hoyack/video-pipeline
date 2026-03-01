@@ -1149,14 +1149,38 @@ def _resolve_asset_image_path(asset) -> Optional[Path]:
     Asset images live at tmp/manifests/{manifest_id}/{uploads|crops}/{asset_id}_*.
     The reference_image_url is an API route (/api/assets/{id}/image), not a
     filesystem path, so we locate the file using the same logic as the API route.
+
+    Falls back to settings.storage.tmp_dir when the relative path doesn't match
+    (e.g. when running from a different working directory in S3 mode with local
+    dual-write copies).
     """
-    manifest_dir = Path("tmp/manifests") / str(asset.production_bible_id)
-    for subdir in ("uploads", "crops"):
-        d = manifest_dir / subdir
-        if d.exists():
-            matches = list(d.glob(f"{asset.id}_*"))
-            if matches:
-                return matches[0]
+    # If reference_image_url is an S3 key, check for local dual-write copy
+    ref_url = asset.reference_image_url
+    if ref_url and not ref_url.startswith("/"):
+        from vidpipe.config import settings
+        local = settings.storage.tmp_dir / ref_url
+        if local.exists():
+            return local
+
+    # Standard relative path search
+    search_dirs = [Path("tmp/manifests") / str(asset.production_bible_id)]
+
+    # Also check settings.storage.tmp_dir as fallback
+    try:
+        from vidpipe.config import settings
+        abs_dir = settings.storage.tmp_dir / "manifests" / str(asset.production_bible_id)
+        if abs_dir not in search_dirs and abs_dir.exists():
+            search_dirs.append(abs_dir)
+    except Exception:
+        pass
+
+    for manifest_dir in search_dirs:
+        for subdir in ("uploads", "crops"):
+            d = manifest_dir / subdir
+            if d.exists():
+                matches = list(d.glob(f"{asset.id}_*"))
+                if matches:
+                    return matches[0]
     return None
 
 

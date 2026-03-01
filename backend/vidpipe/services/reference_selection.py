@@ -331,9 +331,14 @@ async def resolve_asset_image_bytes(
                     return None
                 return resolved.read_bytes()
             else:
-                # S3 backend: /api/assets/ shouldn't exist, but try to resolve
+                # S3 backend: legacy /api/assets/ URL — search S3 by prefix
+                for subdir in ("uploads", "crops"):
+                    prefix = f"manifests/{asset.production_bible_id}/{subdir}/{asset.id}_"
+                    keys = await storage.list_prefix(prefix, limit=1)
+                    if keys:
+                        return await storage.get(keys[0])
                 logger.warning(
-                    f"Asset {asset.id} has /api/assets/ URL but using S3 backend"
+                    f"Asset {asset.id} has /api/assets/ URL but image not found in S3"
                 )
                 return None
         else:

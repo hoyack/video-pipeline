@@ -66,7 +66,7 @@ export function ManifestLibrary({
     setDeleteError(null);
     try {
       await deleteManifest(manifestId);
-      setManifests((prev) => prev.filter((m) => m.manifest_id !== manifestId));
+      setManifests((prev) => prev.filter((m) => m.production_bible_id !== manifestId));
       setDeleteConfirm(null);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Failed to delete manifest");
@@ -172,7 +172,7 @@ export function ManifestLibrary({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {manifests.map((manifest) => (
             <ManifestCard
-              key={manifest.manifest_id}
+              key={manifest.production_bible_id}
               manifest={manifest}
               onView={onViewManifest}
               onEdit={onEditManifest}

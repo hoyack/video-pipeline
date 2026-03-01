@@ -11,10 +11,16 @@ Keys follow the pattern:
 - manifests/{manifest_id}/uploads/{asset_id}_{filename}
 """
 
+import logging
+import mimetypes
+import os
+import re
 import uuid
 from pathlib import Path
 
 from vidpipe.services.storage_backend import StorageBackend, LocalStorageBackend, get_storage_backend
+
+logger = logging.getLogger(__name__)
 
 
 class FileManager:
@@ -285,3 +291,77 @@ class FileManager:
                     key = key[len(prefix):]
                     break
             return await self.backend.get_url(key)
+
+
+async def sync_manifest_dir_to_s3(manifest_id: str, session) -> None:
+    """Upload local manifest directory to S3 and update Asset reference_image_url values.
+
+    Walks ``tmp/manifests/{manifest_id}/`` recursively, uploads each file to S3
+    at key ``manifests/{manifest_id}/{relative_path}``, then updates any Asset
+    whose ``reference_image_url`` is a legacy ``/api/assets/`` URL to the
+    matched S3 key.
+
+    Idempotent: S3 upserts on every call.  Does NOT delete local files (dual-write).
+    No-op when the storage backend is local.
+    """
+    storage = get_storage_backend()
+    if storage.is_local():
+        return
+
+    from vidpipe.config import settings
+
+    local_dir = settings.storage.tmp_dir / "manifests" / manifest_id
+    if not local_dir.exists():
+        logger.debug(f"sync_manifest_dir_to_s3: no local dir for {manifest_id}")
+        return
+
+    uploaded_keys: list[str] = []
+    for root, _dirs, files in os.walk(local_dir):
+        for fname in files:
+            local_path = Path(root) / fname
+            rel = local_path.relative_to(settings.storage.tmp_dir)
+            key = str(rel)  # e.g. manifests/{id}/uploads/{asset_id}_{name}.png
+            content_type = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+            data = local_path.read_bytes()
+            await storage.put(key, data, content_type)
+            uploaded_keys.append(key)
+
+    if not uploaded_keys:
+        return
+
+    logger.info(f"sync_manifest_dir_to_s3({manifest_id}): uploaded {len(uploaded_keys)} files")
+
+    # Build a lookup: asset_id (from filename) → S3 key
+    # Filenames follow the pattern: {asset_id}_{rest}.ext
+    asset_key_map: dict[str, str] = {}
+    for key in uploaded_keys:
+        fname = key.rsplit("/", 1)[-1]
+        match = re.match(r"^([0-9a-f-]{36})_", fname)
+        if match:
+            asset_key_map[match.group(1)] = key
+
+    if not asset_key_map:
+        return
+
+    # Update Asset rows that still have legacy /api/ URLs
+    from vidpipe.db.models import Asset
+    from sqlalchemy import select
+
+    result = await session.execute(
+        select(Asset).where(
+            Asset.production_bible_id == uuid.UUID(manifest_id),
+            Asset.reference_image_url.isnot(None),
+        )
+    )
+    assets = result.scalars().all()
+    updated = 0
+    for asset in assets:
+        aid = str(asset.id)
+        if aid in asset_key_map:
+            s3_key = asset_key_map[aid]
+            if asset.reference_image_url != s3_key:
+                asset.reference_image_url = s3_key
+                updated += 1
+    if updated:
+        await session.flush()
+        logger.info(f"sync_manifest_dir_to_s3({manifest_id}): updated {updated} asset URLs")

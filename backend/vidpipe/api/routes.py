@@ -26,7 +26,7 @@ from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import ShotSchema
 from vidpipe.schemas.storyboard_enhanced import EnhancedShotSchema
 from vidpipe.services.file_manager import FileManager
-from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
+from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend, StorageBackend
 from vidpipe.services import manifest_service
 from vidpipe.workers.processing_tasks import process_manifest_task, extract_video_frames_task, TASK_STATUS
 
@@ -2376,6 +2376,11 @@ async def fork_scene(scene_id: uuid.UUID, request: ForkRequest, background_tasks
 
         await session.commit()
 
+        # Sync local manifest files to S3 (no-op for local backend)
+        from vidpipe.services.file_manager import sync_manifest_dir_to_s3
+        await sync_manifest_dir_to_s3(str(source.production_bible_id), session)
+        await session.commit()
+
     # Start pipeline in background
     background_tasks.add_task(run_pipeline_background, new_id)
 
@@ -2923,7 +2928,7 @@ def _asset_to_response(a: Asset) -> AssetResponse:
         name=a.name,
         manifest_tag=a.manifest_tag,
         user_tags=a.user_tags,
-        reference_image_url=a.reference_image_url,
+        reference_image_url=f"/api/assets/{a.id}/image" if a.reference_image_url else None,
         thumbnail_url=a.thumbnail_url,
         description=a.description,
         source=a.source,
@@ -3212,9 +3217,14 @@ async def upload_asset_image(asset_id: uuid.UUID, file: UploadFile = File(...)):
             # reference_image_url stays as API path for local
             asset.reference_image_url = f"/api/assets/{asset_id}/image"
         else:
-            # S3: upload to storage
+            # S3: upload to storage + dual-write local for pipeline reads
             key = f"manifests/{asset.production_bible_id}/uploads/{asset_id}_{filename}"
             await storage.put(key, content, file.content_type or "image/png")
+            # Keep local copy so pipeline (CV, ffmpeg) can read without S3 fetch
+            from vidpipe.config import settings as _settings
+            local_path = _settings.storage.tmp_dir / key
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            local_path.write_bytes(content)
             # Store the S3 key — GET endpoint will resolve to public URL
             asset.reference_image_url = key
 
@@ -3222,6 +3232,29 @@ async def upload_asset_image(asset_id: uuid.UUID, file: UploadFile = File(...)):
         await session.refresh(asset)
 
         return _asset_to_response(asset)
+
+
+async def _find_asset_s3_key(
+    storage: StorageBackend, pb_id: uuid.UUID, asset_id: uuid.UUID
+) -> str | None:
+    """Search S3 for an asset image by probing uploads/ and crops/ prefixes."""
+    for subdir in ("uploads", "crops"):
+        prefix = f"manifests/{pb_id}/{subdir}/{asset_id}_"
+        keys = await storage.list_prefix(prefix, limit=1)
+        if keys:
+            return keys[0]
+    return None
+
+
+def _media_type_from_key(key: str) -> str:
+    """Derive MIME type from a storage key's extension."""
+    ext = key.rsplit(".", 1)[-1].lower() if "." in key else ""
+    return {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+    }.get(ext, "image/png")
 
 
 @router.get("/assets/{asset_id}/image")
@@ -3248,29 +3281,29 @@ async def get_asset_image(asset_id: uuid.UUID):
                 raise HTTPException(status_code=404, detail="Asset image not found on disk")
 
             file_path = matches[0]
-            suffix = file_path.suffix.lower()
-            media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-            media_type = media_types.get(suffix, "image/png")
-
-            return FileResponse(path=str(file_path), media_type=media_type)
+            return FileResponse(
+                path=str(file_path),
+                media_type=_media_type_from_key(file_path.name),
+            )
         else:
-            # S3 backend: search for asset key in storage
-            for subdir in ("uploads", "crops"):
-                key_prefix = f"manifests/{asset.production_bible_id}/{subdir}/{asset_id}_"
-                # Try common extensions
-                for ext in ("png", "jpg", "jpeg", "webp"):
-                    # We don't know exact filename, but we stored it with asset_id prefix
-                    # Use the reference_image_url if it's an S3 key
-                    pass
+            # S3 backend: if reference_image_url is already an S3 key, use it directly
+            ref_url = asset.reference_image_url
+            if ref_url and not ref_url.startswith("/"):
+                try:
+                    data = await storage.get(ref_url)
+                    return Response(content=data, media_type=_media_type_from_key(ref_url))
+                except FileNotFoundError:
+                    pass  # Fall through to prefix search
 
-            # Best approach: if reference_image_url is set and is an S3 key, use it
-            if asset.reference_image_url and not asset.reference_image_url.startswith("/api/"):
-                data = await storage.get(asset.reference_image_url)
-                # Determine media type from extension
-                ext = asset.reference_image_url.rsplit(".", 1)[-1].lower()
-                media_types = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
-                media_type = media_types.get(ext, "application/octet-stream")
-                return Response(content=data, media_type=media_type)
+            # Legacy /api/assets/... URL or missing key — search S3 by prefix
+            s3_key = await _find_asset_s3_key(storage, asset.production_bible_id, asset_id)
+            if s3_key:
+                # Lazy-update the DB to the S3 key for future requests
+                if ref_url != s3_key:
+                    asset.reference_image_url = s3_key
+                    await session.commit()
+                data = await storage.get(s3_key)
+                return Response(content=data, media_type=_media_type_from_key(s3_key))
 
             raise HTTPException(status_code=404, detail="Asset image not found")
 
@@ -3424,9 +3457,20 @@ async def upload_video_for_production_bible(
 async def get_production_bible_contact_sheet(production_bible_id: uuid.UUID):
     """Serve the contact sheet image for a production bible."""
     contact_sheet_path = Path("tmp/manifests") / str(production_bible_id) / "contact_sheet.jpg"
-    if not contact_sheet_path.exists():
-        raise HTTPException(status_code=404, detail="Contact sheet not found. Run /process first.")
-    return FileResponse(path=str(contact_sheet_path), media_type="image/jpeg")
+    if contact_sheet_path.exists():
+        return FileResponse(path=str(contact_sheet_path), media_type="image/jpeg")
+
+    # S3 fallback: try storage backend
+    storage = get_storage_backend()
+    if not storage.is_local():
+        s3_key = f"manifests/{production_bible_id}/contact_sheet.jpg"
+        try:
+            data = await storage.get(s3_key)
+            return Response(content=data, media_type="image/jpeg")
+        except FileNotFoundError:
+            pass
+
+    raise HTTPException(status_code=404, detail="Contact sheet not found. Run /process first.")
 
 
 @router.get("/production-bibles/{production_bible_id}/extraction-progress", response_model=ProcessingProgressResponse)

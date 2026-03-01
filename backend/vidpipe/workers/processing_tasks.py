@@ -42,6 +42,12 @@ async def process_manifest_task(manifest_id: str) -> None:
             # Share progress reference so engine updates TASK_STATUS directly
             TASK_STATUS[task_id] = engine.progress
             await engine.process_manifest(uuid.UUID(manifest_id))
+
+            # Sync local manifest files to S3 (no-op for local backend)
+            from vidpipe.services.file_manager import sync_manifest_dir_to_s3
+            await sync_manifest_dir_to_s3(manifest_id, session)
+            await session.commit()
+
             TASK_STATUS[task_id]["status"] = "complete"
     except Exception as e:
         logger.error(f"Manifesting failed for {manifest_id}: {e}", exc_info=True)
@@ -140,6 +146,11 @@ async def extract_video_frames_task(manifest_id: str, video_path: str) -> None:
                 manifest.asset_count += 1
 
             manifest.status = "DRAFT"
+            await session.commit()
+
+            # Sync local manifest files to S3 (no-op for local backend)
+            from vidpipe.services.file_manager import sync_manifest_dir_to_s3
+            await sync_manifest_dir_to_s3(manifest_id, session)
             await session.commit()
 
         extractor.progress["status"] = "complete"

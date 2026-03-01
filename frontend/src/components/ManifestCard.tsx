@@ -25,14 +25,14 @@ export function ManifestCard({
 
   const handleCopyId = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(manifest.manifest_id);
+    navigator.clipboard.writeText(manifest.production_bible_id);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
   return (
     <div
-      onClick={onView ? () => onView(manifest.manifest_id) : undefined}
+      onClick={onView ? () => onView(manifest.production_bible_id) : undefined}
       className={
         compact
           ? "cursor-pointer rounded-lg border border-gray-800 bg-gray-900/50 p-3 transition-colors hover:border-gray-700"
@@ -71,7 +71,7 @@ export function ManifestCard({
       {!compact && (
         <div className="mb-2 flex items-center gap-1.5">
           <span className="font-mono text-xs text-gray-600">
-            {manifest.manifest_id.slice(0, 8)}...
+            {manifest.production_bible_id.slice(0, 8)}...
           </span>
           <button
             onClick={handleCopyId}
@@ -109,7 +109,7 @@ export function ManifestCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onView?.(manifest.manifest_id);
+                onView?.(manifest.production_bible_id);
               }}
               className="text-sm text-blue-400 transition-colors hover:text-blue-300"
             >
@@ -118,7 +118,7 @@ export function ManifestCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onEdit?.(manifest.manifest_id);
+                onEdit?.(manifest.production_bible_id);
               }}
               className="text-sm text-blue-400 transition-colors hover:text-blue-300"
             >
@@ -127,7 +127,7 @@ export function ManifestCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onDuplicate?.(manifest.manifest_id);
+                onDuplicate?.(manifest.production_bible_id);
               }}
               className="text-sm text-gray-400 transition-colors hover:text-gray-300"
             >
@@ -136,7 +136,7 @@ export function ManifestCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete?.(manifest.manifest_id);
+                onDelete?.(manifest.production_bible_id);
               }}
               className="text-sm text-red-400 transition-colors hover:text-red-300"
             >

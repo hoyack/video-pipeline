@@ -51,6 +51,10 @@ class StorageBackend(ABC):
         """Delete all objects under a prefix. Returns count deleted."""
 
     @abstractmethod
+    async def list_prefix(self, prefix: str, limit: int = 100) -> list[str]:
+        """List object keys matching a prefix. Returns list of full keys."""
+
+    @abstractmethod
     def is_local(self) -> bool:
         """Return True if this backend serves files from local disk."""
 
@@ -93,6 +97,22 @@ class LocalStorageBackend(StorageBackend):
     async def delete_prefix(self, prefix: str) -> int:
         # Local cleanup is handled by shutil.rmtree; no-op here.
         return 0
+
+    async def list_prefix(self, prefix: str, limit: int = 100) -> list[str]:
+        """List files matching prefix under base_dir."""
+        # Split prefix into directory part and filename prefix
+        prefix_path = Path(prefix)
+        parent = self.base_dir / prefix_path.parent
+        name_prefix = prefix_path.name
+        if not parent.exists():
+            return []
+        results = []
+        for f in sorted(parent.iterdir()):
+            if f.is_file() and f.name.startswith(name_prefix):
+                results.append(str(f.relative_to(self.base_dir)))
+                if len(results) >= limit:
+                    break
+        return results
 
     def is_local(self) -> bool:
         return True
@@ -199,6 +219,47 @@ class S3StorageBackend(StorageBackend):
         )
         logger.info(f"S3 delete_prefix({prefix}): removed {len(keys)} objects")
         return len(keys)
+
+    async def list_prefix(self, prefix: str, limit: int = 100) -> list[str]:
+        """List S3 objects whose full key starts with prefix.
+
+        The Supabase Storage list API takes a directory prefix and returns
+        objects within that directory.  We split the prefix into a directory
+        part and a filename prefix, using the ``search`` parameter for
+        server-side filtering.
+        """
+        client = self._get_client()
+        # Split into directory and name prefix
+        parts = prefix.rsplit("/", 1)
+        if len(parts) == 2:
+            directory, name_prefix = parts[0], parts[1]
+        else:
+            directory, name_prefix = "", parts[0]
+
+        payload: dict = {
+            "prefix": directory + "/" if directory else "",
+            "limit": limit,
+        }
+        if name_prefix:
+            payload["search"] = name_prefix
+
+        resp = await client.post(
+            f"{self.endpoint}/object/list/{self.bucket}",
+            headers={"Content-Type": "application/json"},
+            json=payload,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"S3 list_prefix failed for {prefix}: {resp.status_code}")
+            return []
+        objects = resp.json()
+        results = []
+        for obj in objects:
+            name = obj.get("name", "")
+            full_key = f"{directory}/{name}" if directory else name
+            results.append(full_key)
+            if len(results) >= limit:
+                break
+        return results
 
     def is_local(self) -> bool:
         return False

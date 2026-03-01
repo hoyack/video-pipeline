@@ -200,18 +200,18 @@ export function ManifestCreator({
 
   // Polling for Stage 2 (PROCESSING)
   useEffect(() => {
-    if (!processing || !manifest?.manifest_id) return;
+    if (!processing || !manifest?.production_bible_id) return;
 
     const pollInterval = setInterval(async () => {
       try {
-        const progressData = await getProcessingProgress(manifest.manifest_id);
+        const progressData = await getProcessingProgress(manifest.production_bible_id);
         setProgress(progressData);
 
         if (progressData.status === "complete") {
           clearInterval(pollInterval);
           setProcessing(false);
           // Reload manifest to get updated status and assets
-          const updated = await getManifestDetail(manifest.manifest_id);
+          const updated = await getManifestDetail(manifest.production_bible_id);
           setManifest(updated);
           setAssets(updated.assets);
         } else if (progressData.status === "error") {
@@ -227,15 +227,15 @@ export function ManifestCreator({
     }, 1500);
 
     return () => clearInterval(pollInterval);
-  }, [processing, manifest?.manifest_id]);
+  }, [processing, manifest?.production_bible_id]);
 
   // Polling for video frame extraction
   useEffect(() => {
-    if (!extracting || !manifest?.manifest_id) return;
+    if (!extracting || !manifest?.production_bible_id) return;
 
     const pollInterval = setInterval(async () => {
       try {
-        const progressData = await getExtractionProgress(manifest.manifest_id);
+        const progressData = await getExtractionProgress(manifest.production_bible_id);
         setExtractionProgress(progressData);
 
         if (progressData.status === "complete") {
@@ -243,7 +243,7 @@ export function ManifestCreator({
           setExtracting(false);
           setExtractionProgress(null);
           // Reload manifest to get extracted frame assets
-          const updated = await getManifestDetail(manifest.manifest_id);
+          const updated = await getManifestDetail(manifest.production_bible_id);
           setManifest(updated);
           setAssets(updated.assets);
         } else if (progressData.status === "error") {
@@ -252,7 +252,7 @@ export function ManifestCreator({
           setExtractionProgress(null);
           setError(progressData.error || "Video extraction failed");
           // Reload manifest to get current state
-          const updated = await getManifestDetail(manifest.manifest_id);
+          const updated = await getManifestDetail(manifest.production_bible_id);
           setManifest(updated);
         }
       } catch (err: unknown) {
@@ -262,11 +262,11 @@ export function ManifestCreator({
     }, 1500);
 
     return () => clearInterval(pollInterval);
-  }, [extracting, manifest?.manifest_id]);
+  }, [extracting, manifest?.production_bible_id]);
 
   // Lazy-create manifest helper (shared between image and video upload)
   const ensureManifestExists = async (): Promise<string | null> => {
-    const currentManifestId = manifestId || manifest?.manifest_id;
+    const currentManifestId = manifestId || manifest?.production_bible_id;
     if (currentManifestId) return currentManifestId;
 
     try {
@@ -287,10 +287,10 @@ export function ManifestCreator({
         processing_progress: null,
         contact_sheet_url: null,
         total_processing_cost: 0,
-        parent_manifest_id: null,
+        parent_production_bible_id: null,
         source_video_duration: null,
       });
-      return newManifest.manifest_id;
+      return newManifest.production_bible_id;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`Failed to create manifest: ${errorMessage}`);
@@ -418,13 +418,13 @@ export function ManifestCreator({
   };
 
   const handleProcess = async () => {
-    if (!manifest?.manifest_id) return;
+    if (!manifest?.production_bible_id) return;
 
     setProcessing(true);
     setError(null);
 
     try {
-      await processManifest(manifest.manifest_id);
+      await processManifest(manifest.production_bible_id);
       // Update local status to transition to Stage 2
       setManifest((prev) => (prev ? { ...prev, status: "PROCESSING" } : null));
     } catch (err: unknown) {
@@ -456,7 +456,7 @@ export function ManifestCreator({
   };
 
   const handleReprocessAll = async () => {
-    if (!manifest?.manifest_id) return;
+    if (!manifest?.production_bible_id) return;
     if (
       !confirm(
         "Re-run full processing pipeline? This will regenerate all asset descriptions."
@@ -468,7 +468,7 @@ export function ManifestCreator({
     setError(null);
 
     try {
-      await processManifest(manifest.manifest_id);
+      await processManifest(manifest.production_bible_id);
       setManifest((prev) => (prev ? { ...prev, status: "PROCESSING" } : null));
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -487,7 +487,7 @@ export function ManifestCreator({
     setError(null);
 
     try {
-      const currentManifestId = manifestId || manifest?.manifest_id;
+      const currentManifestId = manifestId || manifest?.production_bible_id;
 
       if (currentManifestId) {
         // Update existing manifest
@@ -516,7 +516,7 @@ export function ManifestCreator({
                 .filter(Boolean)
             : undefined,
         });
-        onSaved(newManifest.manifest_id);
+        onSaved(newManifest.production_bible_id);
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1200,7 +1200,7 @@ export function ManifestCreator({
               Cancel
             </button>
             <button
-              onClick={() => manifest?.manifest_id && onSaved(manifest.manifest_id)}
+              onClick={() => manifest?.production_bible_id && onSaved(manifest.production_bible_id)}
               className="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-6 py-2 text-sm font-medium"
             >
               Done

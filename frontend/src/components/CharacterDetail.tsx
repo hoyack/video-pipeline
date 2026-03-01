@@ -115,7 +115,7 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
       setCharacters((prev) =>
         prev.map((c) =>
           c.character_id === selectedCharacter.character_id
-            ? { ...c, wardrobe: [...c.wardrobe, w] }
+            ? { ...c, wardrobe: [...(c.wardrobe ?? []), w] }
             : c,
         ),
       );
@@ -135,7 +135,7 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
       setCharacters((prev) =>
         prev.map((c) =>
           c.character_id === selectedCharacter.character_id
-            ? { ...c, wardrobe: c.wardrobe.map((w) => (w.wardrobe_id === wId ? updated : w)) }
+            ? { ...c, wardrobe: (c.wardrobe ?? []).map((w) => (w.wardrobe_id === wId ? updated : w)) }
             : c,
         ),
       );
@@ -151,7 +151,7 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
       setCharacters((prev) =>
         prev.map((c) =>
           c.character_id === selectedCharacter.character_id
-            ? { ...c, wardrobe: c.wardrobe.filter((w) => w.wardrobe_id !== wId) }
+            ? { ...c, wardrobe: (c.wardrobe ?? []).filter((w) => w.wardrobe_id !== wId) }
             : c,
         ),
       );
@@ -323,7 +323,7 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
                     }`}
                   >
                     {tab.label}
-                    {tab.id === "wardrobe" && selectedCharacter.wardrobe.length > 0 && (
+                    {tab.id === "wardrobe" && (selectedCharacter.wardrobe?.length ?? 0) > 0 && (
                       <span className="ml-1 text-[10px] bg-gray-700 rounded-full px-1.5">{selectedCharacter.wardrobe.length}</span>
                     )}
                   </button>
@@ -381,11 +381,11 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
                     </div>
                   )}
 
-                  {selectedCharacter.wardrobe.length === 0 ? (
+                  {(selectedCharacter.wardrobe?.length ?? 0) === 0 ? (
                     <p className="text-xs text-gray-500 text-center py-6">No wardrobe items yet</p>
                   ) : (
                     <div className="space-y-2">
-                      {selectedCharacter.wardrobe.map((w) => (
+                      {(selectedCharacter.wardrobe ?? []).map((w) => (
                         <WardrobeItem
                           key={w.wardrobe_id}
                           wardrobe={w}

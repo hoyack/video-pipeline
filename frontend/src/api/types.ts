@@ -227,6 +227,7 @@ export interface SceneListItem {
   aspect_ratio?: string | null;
   thumbnail_url?: string | null;
   production_id?: string | null;
+  sequence_id?: string | null;
 }
 
 /** Paginated response envelope for GET /api/scenes */
@@ -571,6 +572,57 @@ export interface StartGenerationRequest {
 export interface StartGenerationResponse {
   scene_id: string;
   status: string;
+}
+
+// ============================================================================
+// Sequence types (Issue #24 — Sequence Grouping Layer)
+// ============================================================================
+
+/** Response from GET /api/productions/{id}/sequences */
+export interface SequenceResponse {
+  id: string;
+  production_id: string;
+  title: string;
+  description: string | null;
+  order: number;
+  act: string | null;  // ACT_1, ACT_2, ACT_3
+  color: string | null;  // hex color
+  scene_count: number;
+  total_duration: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response from GET /api/sequences/{id} with scenes */
+export interface SequenceWithScenes extends SequenceResponse {
+  scenes: SceneListItem[];
+}
+
+/** Request body for POST /api/productions/{id}/sequences */
+export interface SequenceCreate {
+  title: string;
+  description?: string;
+  act?: string | null;
+  color?: string | null;
+}
+
+/** Request body for PUT /api/sequences/{id} */
+export interface SequenceUpdate {
+  title?: string;
+  description?: string;
+  act?: string | null;
+  color?: string | null;
+}
+
+/** Request body for PUT /api/productions/{id}/sequences/reorder */
+export interface SequenceReorderRequest {
+  sequence_ids: string[];
+}
+
+/** Request body for PUT /api/scenes/{id}/sequence */
+export interface AssignSequenceRequest {
+  sequence_id: string | null;
+  scene_order?: number;
 }
 
 /** Processing progress response */

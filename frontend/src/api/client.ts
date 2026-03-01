@@ -37,6 +37,12 @@ import type {
   CreateDraftSceneResponse,
   StartGenerationRequest,
   StartGenerationResponse,
+  SequenceResponse,
+  SequenceWithScenes,
+  SequenceCreate,
+  SequenceUpdate,
+  SequenceReorderRequest,
+  AssignSequenceRequest,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -637,6 +643,69 @@ export function removeSceneFromProduction(productionId: string, sceneId: string)
   return request<{ status: string }>(`/api/productions/${productionId}/scenes/${sceneId}`, {
     method: "DELETE",
   });
+}
+
+// ============================================================================
+// Sequences API (Issue #24 — Sequence Grouping Layer)
+// ============================================================================
+
+/** GET /api/productions/{id}/sequences — list sequences for a production */
+export function listSequences(productionId: string): Promise<SequenceResponse[]> {
+  return request<SequenceResponse[]>(`/api/productions/${productionId}/sequences`);
+}
+
+/** POST /api/productions/{id}/sequences — create a new sequence */
+export function createSequence(productionId: string, body: SequenceCreate): Promise<SequenceResponse> {
+  return request<SequenceResponse>(`/api/productions/${productionId}/sequences`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** GET /api/sequences/{id} — get sequence with scenes */
+export function getSequence(sequenceId: string): Promise<SequenceWithScenes> {
+  return request<SequenceWithScenes>(`/api/sequences/${sequenceId}`);
+}
+
+/** PUT /api/sequences/{id} — update sequence */
+export function updateSequence(sequenceId: string, body: SequenceUpdate): Promise<SequenceResponse> {
+  return request<SequenceResponse>(`/api/sequences/${sequenceId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE /api/sequences/{id} — delete sequence (unsequences children) */
+export function deleteSequence(sequenceId: string): Promise<{ status: string; unsequenced_scenes: number }> {
+  return request<{ status: string; unsequenced_scenes: number }>(`/api/sequences/${sequenceId}`, {
+    method: "DELETE",
+  });
+}
+
+/** PUT /api/productions/{id}/sequences/reorder — bulk reorder sequences */
+export function reorderSequences(productionId: string, body: SequenceReorderRequest): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/productions/${productionId}/sequences/reorder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** PUT /api/scenes/{id}/sequence — assign/unassign scene to sequence */
+export function assignSceneToSequence(
+  sceneId: string,
+  body: AssignSequenceRequest,
+): Promise<{ status: string; sequence_id: string | null; scene_order: number }> {
+  return request<{ status: string; sequence_id: string | null; scene_order: number }>(
+    `/api/scenes/${sceneId}/sequence`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export { ApiError };

@@ -10,7 +10,7 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown, _is_sqlite
-from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, SceneCheckpoint, Production, Sequence, DEFAULT_USER_ID
+from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, SceneCheckpoint, Production, ProductionBible, Sequence, DEFAULT_USER_ID
 
 logger = logging.getLogger(__name__)
 

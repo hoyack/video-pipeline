@@ -227,8 +227,8 @@ async def load_bible_context(
 ) -> str:
     """Load Production Bible context for a production.
 
-    Finds scenes under the production that have a production_bible_id set,
-    loads the bible's assets, and returns a formatted asset registry string.
+    Queries Production.production_bible_id directly (not via Scene), so bible
+    context is available even before any Scenes exist.
 
     Args:
         session: Active database session.
@@ -237,23 +237,18 @@ async def load_bible_context(
     Returns:
         Formatted asset registry string, or empty string if no bible found.
     """
-    from vidpipe.db.models import Scene
+    from vidpipe.db.models import Production
 
-    # Find the first scene under this production with a production_bible_id
     result = await session.execute(
-        select(Scene.production_bible_id)
-        .where(
-            Scene.production_id == production_id,
-            Scene.production_bible_id.isnot(None),
-        )
-        .limit(1)
+        select(Production.production_bible_id)
+        .where(Production.id == production_id)
     )
-    row = result.scalar_one_or_none()
-    if not row:
+    bible_id = result.scalar_one_or_none()
+    if not bible_id:
         return ""
 
     try:
-        assets = await load_manifest_assets(session, row)
+        assets = await load_manifest_assets(session, bible_id)
         return format_asset_registry(assets)
     except Exception:
         logger.warning("Failed to load bible context for production %s", production_id)
@@ -520,16 +515,11 @@ class ScreenwriterService:
 
         # Post-LLM entity validation (SCRN-06)
         if production_id is not None:
-            # Find the production bible for this production
-            from vidpipe.db.models import Scene as SceneModel
+            from vidpipe.db.models import Production as ProductionModel
 
             pb_result = await session.execute(
-                select(SceneModel.production_bible_id)
-                .where(
-                    SceneModel.production_id == production_id,
-                    SceneModel.production_bible_id.isnot(None),
-                )
-                .limit(1)
+                select(ProductionModel.production_bible_id)
+                .where(ProductionModel.id == production_id)
             )
             pb_id = pb_result.scalar_one_or_none()
             if pb_id:

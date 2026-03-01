@@ -24,6 +24,9 @@ class Production(Base):
     name: Mapped[str] = mapped_column(Text)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    production_bible_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("production_bibles.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),

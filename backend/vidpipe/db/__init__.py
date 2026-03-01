@@ -200,6 +200,8 @@ async def _run_migrations(conn) -> None:
         # Phase 18: Unique index on screenplays.production_id for existing DBs
         # (create_all() handles this for new DBs via unique=True on the column)
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_screenplays_production_id ON screenplays(production_id)",
+        # Phase 19: Direct Production → Production Bible FK
+        "ALTER TABLE productions ADD COLUMN production_bible_id {uuid_type} REFERENCES production_bibles(id)",
     ]
     for i, raw_sql in enumerate(migrations):
         sql = raw_sql.format(uuid_type=uuid_type) if "{uuid_type}" in raw_sql else raw_sql

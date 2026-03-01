@@ -69,6 +69,10 @@ class ReorderRequest(BaseModel):
     sequence_ids: list[str]  # ordered list of sequence UUIDs
 
 
+class SceneReorderRequest(BaseModel):
+    scene_ids: list[str]  # ordered list of scene UUIDs within a sequence
+
+
 class AssignSequenceRequest(BaseModel):
     sequence_id: Optional[str] = None  # null = unsequence
     scene_order: Optional[int] = None
@@ -312,6 +316,44 @@ async def reorder_sequences(production_id: str, body: ReorderRequest):
                 update(Sequence)
                 .where(Sequence.id == uuid.UUID(sid))
                 .values(order=idx)
+            )
+
+        await session.commit()
+        return {"status": "reordered"}
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/sequences/{sequence_id}/scenes/reorder
+# ---------------------------------------------------------------------------
+
+
+@sequence_router.put("/sequences/{sequence_id}/scenes/reorder")
+async def reorder_scenes_in_sequence(sequence_id: str, body: SceneReorderRequest):
+    """Bulk reorder scenes within a sequence by updating their scene_order fields."""
+    async with async_session() as session:
+        seq = await session.get(Sequence, uuid.UUID(sequence_id))
+        if seq is None:
+            raise HTTPException(status_code=404, detail="Sequence not found")
+
+        # Validate all scene IDs belong to this sequence
+        result = await session.execute(
+            select(Scene.id).where(Scene.sequence_id == uuid.UUID(sequence_id))
+        )
+        existing_ids = {str(row[0]) for row in result.all()}
+
+        for sid in body.scene_ids:
+            if sid not in existing_ids:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Scene {sid} does not belong to sequence {sequence_id}",
+                )
+
+        # Update scene_order fields to match the provided list's index
+        for idx, sid in enumerate(body.scene_ids):
+            await session.execute(
+                update(Scene)
+                .where(Scene.id == uuid.UUID(sid))
+                .values(scene_order=idx)
             )
 
         await session.commit()

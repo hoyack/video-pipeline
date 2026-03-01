@@ -117,7 +117,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 17. PB Entity Expansion | 4/4 | Complete    | 2026-03-01 |
 | 18. Screenplay System | 3/3 | Complete    | 2026-03-01 |
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
-| 20. Entity Media Uploads | 0/0 | ○ Planned | — |
+| 20. Entity Media Uploads | 0/2 | ○ Planned | — |
 | 21. Sequence UI Polish | 0/0 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
@@ -441,6 +441,11 @@ Plans:
   6. Prop reference image upload button in frontend works
   7. Audio upload endpoints for ScoreTheme and SFXItem functional
   8. Inline audio playback component renders for entities with audio files
+**Plans**: 2 plans in 2 waves
+
+Plans:
+- [ ] 20-01-PLAN.md — Backend: 7 upload endpoints (actor-refs, generate-appearance, wardrobe-ref, generate-reverse-prompt, sonic-identity audio, score-theme audio, SFX audio)
+- [ ] 20-02-PLAN.md — Frontend: AudioPlayer component, API client upload functions, upload UI in CharacterDetail/SetDetail/SoundDepartment
 
 ### Phase 21: Sequence UI Polish
 **Goal**: Wire up the remaining Sequence frontend features so users can fully manage narrative sequences — reorder them, assign acts, see duration, and reorder scenes within sequences

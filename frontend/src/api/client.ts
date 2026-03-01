@@ -21,10 +21,10 @@ import type {
   GenerateNewShotRequest,
   GenerateNewShotResponse,
   MetricsResponse,
-  ManifestListItem,
-  ManifestDetail,
-  CreateManifestRequest,
-  UpdateManifestRequest,
+  ProductionBibleListItem,
+  ProductionBibleDetail,
+  CreateProductionBibleRequest,
+  UpdateProductionBibleRequest,
   CreateAssetRequest,
   UpdateAssetRequest,
   AssetResponse,
@@ -189,78 +189,97 @@ export function getMetrics(): Promise<MetricsResponse> {
   return request<MetricsResponse>("/api/metrics");
 }
 
-/** GET /api/manifests — list manifests with optional filters */
-export function listManifests(params?: {
+/** GET /api/production-bibles — list production bibles with optional filters */
+export function listProductionBibles(params?: {
   category?: string;
   sort_by?: string;
   sort_order?: string;
-}): Promise<ManifestListItem[]> {
+}): Promise<ProductionBibleListItem[]> {
   const searchParams = new URLSearchParams();
   if (params?.category) searchParams.set("category", params.category);
   if (params?.sort_by) searchParams.set("sort_by", params.sort_by);
   if (params?.sort_order) searchParams.set("sort_order", params.sort_order);
   const qs = searchParams.toString();
-  return request<ManifestListItem[]>(`/api/manifests${qs ? `?${qs}` : ""}`);
+  return request<ProductionBibleListItem[]>(`/api/production-bibles${qs ? `?${qs}` : ""}`);
 }
 
-/** POST /api/manifests — create new manifest */
-export function createManifest(body: CreateManifestRequest): Promise<ManifestListItem> {
-  return request<ManifestListItem>("/api/manifests", {
+/** POST /api/production-bibles — create new production bible */
+export function createProductionBible(body: CreateProductionBibleRequest): Promise<ProductionBibleListItem> {
+  return request<ProductionBibleListItem>("/api/production-bibles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-/** POST /api/manifests/from-scene — create manifest from scene storyboard */
-export function importSceneToManifest(
+/** POST /api/production-bibles/from-scene — create production bible from scene storyboard */
+export function importSceneToProductionBible(
   sceneId: string,
   name?: string,
-): Promise<ManifestDetail> {
-  return request<ManifestDetail>("/api/manifests/from-scene", {
+): Promise<ProductionBibleDetail> {
+  return request<ProductionBibleDetail>("/api/production-bibles/from-scene", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scene_id: sceneId, name }),
   });
 }
 
-/** GET /api/manifests/{id} — get manifest with assets */
-export function getManifestDetail(manifestId: string): Promise<ManifestDetail> {
-  return request<ManifestDetail>(`/api/manifests/${manifestId}`);
+/** GET /api/production-bibles/{id} — get production bible with assets */
+export function getProductionBibleDetail(productionBibleId: string): Promise<ProductionBibleDetail> {
+  return request<ProductionBibleDetail>(`/api/production-bibles/${productionBibleId}`);
 }
 
-/** PUT /api/manifests/{id} — update manifest */
-export function updateManifest(manifestId: string, body: UpdateManifestRequest): Promise<ManifestListItem> {
-  return request<ManifestListItem>(`/api/manifests/${manifestId}`, {
+/** PUT /api/production-bibles/{id} — update production bible */
+export function updateProductionBible(productionBibleId: string, body: UpdateProductionBibleRequest): Promise<ProductionBibleListItem> {
+  return request<ProductionBibleListItem>(`/api/production-bibles/${productionBibleId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-/** DELETE /api/manifests/{id} — soft delete manifest */
-export function deleteManifest(manifestId: string): Promise<{ status: string; manifest_id: string }> {
-  return request<{ status: string; manifest_id: string }>(`/api/manifests/${manifestId}`, {
+/** DELETE /api/production-bibles/{id} — soft delete production bible */
+export function deleteProductionBible(productionBibleId: string): Promise<{ status: string; production_bible_id: string }> {
+  return request<{ status: string; production_bible_id: string }>(`/api/production-bibles/${productionBibleId}`, {
     method: "DELETE",
   });
 }
 
-/** POST /api/manifests/{id}/duplicate — duplicate manifest */
-export function duplicateManifest(manifestId: string, name?: string): Promise<ManifestListItem> {
+/** POST /api/production-bibles/{id}/duplicate — duplicate production bible */
+export function duplicateProductionBible(productionBibleId: string, name?: string): Promise<ProductionBibleListItem> {
   const qs = name ? `?name=${encodeURIComponent(name)}` : "";
-  return request<ManifestListItem>(`/api/manifests/${manifestId}/duplicate${qs}`, {
+  return request<ProductionBibleListItem>(`/api/production-bibles/${productionBibleId}/duplicate${qs}`, {
     method: "POST",
   });
 }
 
-/** POST /api/manifests/{id}/assets — create asset in manifest */
-export function createAsset(manifestId: string, body: CreateAssetRequest): Promise<AssetResponse> {
-  return request<AssetResponse>(`/api/manifests/${manifestId}/assets`, {
+/** POST /api/production-bibles/{id}/assets — create asset in production bible */
+export function createAsset(productionBibleId: string, body: CreateAssetRequest): Promise<AssetResponse> {
+  return request<AssetResponse>(`/api/production-bibles/${productionBibleId}/assets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
+
+// ============================================================================
+// Deprecated aliases for backward-compat (will be removed in future cleanup)
+// ============================================================================
+
+/** @deprecated Use listProductionBibles */
+export const listManifests = listProductionBibles;
+/** @deprecated Use createProductionBible */
+export const createManifest = createProductionBible;
+/** @deprecated Use importSceneToProductionBible */
+export const importSceneToManifest = importSceneToProductionBible;
+/** @deprecated Use getProductionBibleDetail */
+export const getManifestDetail = getProductionBibleDetail;
+/** @deprecated Use updateProductionBible */
+export const updateManifest = updateProductionBible;
+/** @deprecated Use deleteProductionBible */
+export const deleteManifest = deleteProductionBible;
+/** @deprecated Use duplicateProductionBible */
+export const duplicateManifest = duplicateProductionBible;
 
 /** PUT /api/assets/{id} — update asset metadata */
 export function updateAsset(assetId: string, body: UpdateAssetRequest): Promise<AssetResponse> {
@@ -293,14 +312,14 @@ export async function uploadAssetImage(assetId: string, file: File): Promise<Ass
   return res.json() as Promise<AssetResponse>;
 }
 
-/** POST /api/manifests/{id}/upload-video — upload video for frame extraction */
-export async function uploadVideoForManifest(
-  manifestId: string,
+/** POST /api/production-bibles/{id}/upload-video — upload video for frame extraction */
+export async function uploadVideoForProductionBible(
+  productionBibleId: string,
   file: File,
-): Promise<{ task_id: string; status: string; manifest_id: string }> {
+): Promise<{ task_id: string; status: string; production_bible_id: string }> {
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(`/api/manifests/${manifestId}/upload-video`, {
+  const res = await fetch(`/api/production-bibles/${productionBibleId}/upload-video`, {
     method: "POST",
     body: formData,
   });
@@ -308,25 +327,30 @@ export async function uploadVideoForManifest(
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new ApiError(res.status, body.detail ?? res.statusText);
   }
-  return res.json() as Promise<{ task_id: string; status: string; manifest_id: string }>;
+  return res.json() as Promise<{ task_id: string; status: string; production_bible_id: string }>;
 }
 
-/** GET /api/manifests/{id}/extraction-progress — poll extraction progress */
-export function getExtractionProgress(manifestId: string): Promise<ProcessingProgress> {
-  return request<ProcessingProgress>(`/api/manifests/${manifestId}/extraction-progress`);
+/** GET /api/production-bibles/{id}/extraction-progress — poll extraction progress */
+export function getExtractionProgress(productionBibleId: string): Promise<ProcessingProgress> {
+  return request<ProcessingProgress>(`/api/production-bibles/${productionBibleId}/extraction-progress`);
 }
 
-/** POST /api/manifests/{id}/process — trigger background processing */
-export function processManifest(manifestId: string): Promise<{ task_id: string; status: string }> {
-  return request<{ task_id: string; status: string }>(`/api/manifests/${manifestId}/process`, {
+/** POST /api/production-bibles/{id}/process — trigger background processing */
+export function processProductionBible(productionBibleId: string): Promise<{ task_id: string; status: string }> {
+  return request<{ task_id: string; status: string }>(`/api/production-bibles/${productionBibleId}/process`, {
     method: "POST",
   });
 }
 
-/** GET /api/manifests/{id}/progress — poll processing progress */
-export function getProcessingProgress(manifestId: string): Promise<ProcessingProgress> {
-  return request<ProcessingProgress>(`/api/manifests/${manifestId}/progress`);
+/** GET /api/production-bibles/{id}/progress — poll processing progress */
+export function getProcessingProgress(productionBibleId: string): Promise<ProcessingProgress> {
+  return request<ProcessingProgress>(`/api/production-bibles/${productionBibleId}/progress`);
 }
+
+/** @deprecated Use uploadVideoForProductionBible */
+export const uploadVideoForManifest = uploadVideoForProductionBible;
+/** @deprecated Use processProductionBible */
+export const processManifest = processProductionBible;
 
 /** POST /api/assets/{id}/reprocess — re-run detection + reverse-prompting for single asset */
 export function reprocessAsset(assetId: string): Promise<AssetResponse> {
@@ -357,13 +381,16 @@ export function selectCandidate(
   );
 }
 
-/** GET /api/manifests/{id} — fetch assets for a manifest (used in EditForkPanel) */
-export async function fetchManifestAssets(manifestId: string): Promise<AssetResponse[]> {
-  const res = await fetch(`/api/manifests/${manifestId}`);
+/** GET /api/production-bibles/{id} — fetch assets for a production bible (used in EditForkPanel) */
+export async function fetchProductionBibleAssets(productionBibleId: string): Promise<AssetResponse[]> {
+  const res = await fetch(`/api/production-bibles/${productionBibleId}`);
   if (!res.ok) throw new ApiError(res.status, await res.text());
   const data = await res.json();
   return data.assets;
 }
+
+/** @deprecated Use fetchProductionBibleAssets */
+export const fetchManifestAssets = fetchProductionBibleAssets;
 
 /** GET /api/settings — get user settings */
 export function getSettings(): Promise<UserSettingsResponse> {

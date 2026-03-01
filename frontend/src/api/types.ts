@@ -34,7 +34,7 @@ export interface GenerateRequest {
   image_model: string;
   video_model: string;
   enable_audio: boolean;
-  manifest_id?: string;
+  production_bible_id?: string;
   quality_mode?: boolean;
   candidate_count?: number;
   vision_model?: string;
@@ -119,7 +119,7 @@ export interface SceneDetail {
   video_model?: string | null;
   audio_enabled?: boolean | null;
   forked_from?: string | null;
-  manifest_id?: string | null;
+  production_bible_id?: string | null;
   quality_mode?: boolean;
   candidate_count?: number;
   vision_model?: string | null;
@@ -150,7 +150,7 @@ export interface EditSceneRequest {
   video_model?: string;
   vision_model?: string;
   audio_enabled?: boolean;
-  manifest_id?: string | null;
+  production_bible_id?: string | null;
   shot_edits?: Record<number, ShotEditPayload>;
   removed_shots?: number[];
   shot_order?: number[];  // shot_indices in desired display order
@@ -320,9 +320,9 @@ export interface MetricsResponse {
   avg_clip_duration: number | null;
 }
 
-/** Item in GET /api/manifests list */
-export interface ManifestListItem {
-  manifest_id: string;
+/** Item in GET /api/production-bibles list */
+export interface ProductionBibleListItem {
+  production_bible_id: string;
   name: string;
   description: string | null;
   thumbnail_url: string | null;
@@ -337,9 +337,9 @@ export interface ManifestListItem {
   updated_at: string;
 }
 
-/** Response from GET /api/manifests/{id} */
-export interface ManifestDetail {
-  manifest_id: string;
+/** Response from GET /api/production-bibles/{id} */
+export interface ProductionBibleDetail {
+  production_bible_id: string;
   name: string;
   description: string | null;
   thumbnail_url: string | null;
@@ -353,17 +353,17 @@ export interface ManifestDetail {
   times_used: number;
   last_used_at: string | null;
   version: number;
-  parent_manifest_id: string | null;
+  parent_production_bible_id: string | null;
   source_video_duration: number | null;
   created_at: string;
   updated_at: string;
   assets: AssetResponse[];
 }
 
-/** Asset within a manifest */
+/** Asset within a production bible */
 export interface AssetResponse {
   asset_id: string;
-  manifest_id: string;
+  production_bible_id: string;
   asset_type: string;
   name: string;
   manifest_tag: string;
@@ -383,21 +383,34 @@ export interface AssetResponse {
   quality_score: number | null;
 }
 
-/** Request body for POST /api/manifests */
-export interface CreateManifestRequest {
+/** Request body for POST /api/production-bibles */
+export interface CreateProductionBibleRequest {
   name: string;
   description?: string;
   category?: string;
   tags?: string[];
 }
 
-/** Request body for PUT /api/manifests/{id} */
-export interface UpdateManifestRequest {
+/** Request body for PUT /api/production-bibles/{id} */
+export interface UpdateProductionBibleRequest {
   name?: string;
   description?: string;
   category?: string;
   tags?: string[];
 }
+
+// ============================================================================
+// Backward-compatibility aliases (deprecated — use Production Bible names)
+// ============================================================================
+
+/** @deprecated Use ProductionBibleListItem */
+export type ManifestListItem = ProductionBibleListItem;
+/** @deprecated Use ProductionBibleDetail */
+export type ManifestDetail = ProductionBibleDetail;
+/** @deprecated Use CreateProductionBibleRequest */
+export type CreateManifestRequest = CreateProductionBibleRequest;
+/** @deprecated Use UpdateProductionBibleRequest */
+export type UpdateManifestRequest = UpdateProductionBibleRequest;
 
 /** Request body for POST /api/manifests/{id}/assets */
 export interface CreateAssetRequest {
@@ -544,7 +557,7 @@ export interface CreateDraftSceneRequest {
   image_model?: string;
   video_model?: string;
   enable_audio?: boolean;
-  manifest_id?: string | null;
+  production_bible_id?: string | null;
   quality_mode?: boolean;
   candidate_count?: number;
   vision_model?: string | null;

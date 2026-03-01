@@ -10,7 +10,7 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown, _is_sqlite
-from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, SceneCheckpoint, Production, DEFAULT_USER_ID
+from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, SceneCheckpoint, Production, Sequence, DEFAULT_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,9 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE scenes ADD COLUMN production_id TEXT REFERENCES productions(id)",
         # ElevenLabs configuration
         "ALTER TABLE user_settings ADD COLUMN elevenlabs_api_key TEXT",
+        # Phase 16: Sequence grouping
+        "ALTER TABLE scenes ADD COLUMN sequence_id TEXT REFERENCES sequences(id)",
+        "ALTER TABLE scenes ADD COLUMN scene_order INTEGER DEFAULT 0",
     ]
     for sql in migrations:
         try:

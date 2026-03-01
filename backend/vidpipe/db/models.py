@@ -166,6 +166,32 @@ class ManifestSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class Sequence(Base):
+    """Sequence model representing an optional grouping layer above Scenes.
+
+    Sequences belong to a Production and contain an ordered set of Scenes.
+    Scenes without a sequence_id remain in a flat list (unsequenced).
+
+    Spec reference: Issue #24 - Sequence Grouping Layer
+    """
+    __tablename__ = "sequences"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("productions.id"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    order: Mapped[int] = mapped_column(Integer, default=0)
+    act: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # ACT_1, ACT_2, ACT_3, or null
+    color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # hex color e.g. "#3B82F6"
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
 class Scene(Base):
     """Scene model representing a video generation scene.
 
@@ -213,6 +239,12 @@ class Scene(Base):
     production_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("productions.id"), nullable=True, index=True
     )
+
+    # Phase 16: Sequence grouping (optional)
+    sequence_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("sequences.id"), nullable=True, index=True
+    )
+    scene_order: Mapped[int] = mapped_column(Integer, default=0)
 
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

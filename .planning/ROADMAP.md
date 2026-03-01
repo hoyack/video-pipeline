@@ -30,7 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback (completed 2026-02-20)
 - [x] **Phase 15: Video Generation Editor** - Unified create/edit/monitor experience replacing GenerateForm + ProgressView; draft projects, gap-filling pipeline, per-scene uploads, VideoGenEditor component, pause/resume (completed 2026-02-21)
 - [x] **Phase 16: Production Bible Foundation** - Rename Manifest → Production Bible across stack, department tab structure, Sequence grouping layer above Scenes (Issues #7, #24) (completed 2026-03-01)
-- [ ] **Phase 17: Production Bible Entity Expansion** - Full Character, Set, Prop entities with sub-entities (Wardrobe, VoiceProfile, SonicIdentity), Score Themes and SFX Library in Sound Department (Issues #8, #9, #10, #11)
+- [x] **Phase 17: Production Bible Entity Expansion** - Full Character, Set, Prop entities with sub-entities (Wardrobe, VoiceProfile, SonicIdentity), Score Themes and SFX Library in Sound Department (Issues #8, #9, #10, #11) (completed 2026-03-01)
 - [ ] **Phase 18: Screenplay System** - Screenplay data model and editor, Screenwriter CrewAI agent for LLM generation chain, Scene Breakdown → pipeline wiring (Issues #12, #13, #14)
 
 ## Phase Details
@@ -111,7 +111,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 | 15. Video Generation Editor | 3/3 | Complete    | 2026-02-21 |
 | 16. Production Bible Foundation | 4/4 | Complete    | 2026-03-01 |
-| 17. PB Entity Expansion | 3/4 | In Progress|  |
+| 17. PB Entity Expansion | 4/4 | Complete   | 2026-03-01 |
 | 18. Screenplay System | 0/3 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation

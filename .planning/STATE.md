@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 17 of 17 (Production Bible Entity Expansion)
-Plan: 3 of 4 complete
-Status: Plan 03 done — Sound CRUD routes + asset-to-entity migration
-Last activity: 2026-03-01 — Completed 17-03 (Sound routes + migration service)
+Plan: 4 of 4 complete
+Status: Phase 17 COMPLETE — All Production Bible entity expansion plans executed
+Last activity: 2026-03-01 — Completed 17-04 (Frontend entity UI)
 
-Progress: [########--] 75% (Phase 17, Plan 3 of 4)
+Progress: [##########] 100% (Phase 17, Plan 4 of 4)
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [########--] 75% (Phase 17, Plan 3 of 4)
 | Phase 17-production-bible-entity-expansion P01 | 2min | 2 tasks | 2 files |
 | Phase 17 P03 | 2min | 2 tasks | 2 files |
 | Phase 17 P02 | 3 | 2 tasks | 3 files |
+| Phase 17 P04 | 8min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -241,6 +242,10 @@ Recent decisions affecting current work:
 - [Phase 17]: Idempotent migration: name-based dedup checks existing Character/Set names before creating
 - [Phase 17-02]: Guarded sound_router import in app.py with try/except ImportError for Plan 17-03 forward-compatibility
 - [Phase 17-02]: Bulk fetch sub-entities in list endpoints to avoid N+1 queries for wardrobes/voice profiles/sonic identities
+- **17-04:** Entity components use list-detail layout with left panel list and right panel tabbed editor
+- **17-04:** Raw asset list moved to collapsible section below entity components to keep asset pipeline accessible
+- **17-04:** Entity counts fetched via parallel API calls in ProductionBibleCreator for tab badges
+- **17-04:** Actor Refs tab is read-only (no upload endpoint yet) -- displays refs from migration only
 
 ### Roadmap Evolution
 
@@ -267,5 +272,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 17-03-PLAN.md (Sound routes + asset-to-entity migration)
+Stopped at: Completed 17-04-PLAN.md (Frontend entity UI) — Phase 17 COMPLETE
 Resume file: None

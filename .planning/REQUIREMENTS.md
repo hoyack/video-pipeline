@@ -104,21 +104,21 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **PBEX-02**: Wardrobe sub-entity per character: label, reference_images, scene_context, prompt_descriptor, is_default toggle
 - [x] **PBEX-03**: VoiceProfile sub-entity per character: voice_id, adapter_type (ELEVENLABS), style_notes, sample_audio
 - [x] **PBEX-04**: Character CRUD API under `/api/production-bibles/:id/characters` + `/api/characters/:id` with prompt-context endpoint
-- [ ] **PBEX-05**: Character detail UI with four tabs: Overview, Actor References, Wardrobe, Voice Profile in Casting tab
+- [x] **PBEX-05**: Character detail UI with four tabs: Overview, Actor References, Wardrobe, Voice Profile in Casting tab
 - [x] **PBEX-06**: Existing manifest character assets migrated to Character entities on first load
 - [x] **PBEX-07**: Set entity with full schema: name, reference_image, reverse_prompt, style_tags, lighting_notes, prompt_tags, sonic_identity
 - [x] **PBEX-08**: SonicIdentity sub-entity per set: ambience_description, reference_audio, generation_prompt
 - [x] **PBEX-09**: LLM Vision reverse-prompt auto-generation for Sets on reference image upload
 - [x] **PBEX-10**: Set CRUD API under `/api/production-bibles/:id/sets` + `/api/sets/:id` with prompt-context endpoint
-- [ ] **PBEX-11**: Set detail UI with Visual and Sonic Identity tabs in Art Department tab
+- [x] **PBEX-11**: Set detail UI with Visual and Sonic Identity tabs in Art Department tab
 - [x] **PBEX-12**: Existing background/scene assets migrated to Set entities
 - [x] **PBEX-13**: Prop entity: name, reference_image, description, associated_characters, prompt_tags under Art Department tab
 - [x] **PBEX-14**: Prop CRUD API under `/api/production-bibles/:id/props` + `/api/props/:id`
-- [ ] **PBEX-15**: Prop list/detail UI in Art Department tab with thumbnail grid
+- [x] **PBEX-15**: Prop list/detail UI in Art Department tab with thumbnail grid
 - [x] **PBEX-16**: ScoreTheme entity: name, mood_descriptors, tempo_notes, usage_notes, reference_audio, generation_prompt, adapter_type
 - [x] **PBEX-17**: SFXItem entity: name, category (IMPACT/MECHANICAL/NATURAL/UI/FOLEY/AMBIENCE), source_audio, generation_prompt, tags
 - [x] **PBEX-18**: ScoreTheme and SFXItem CRUD API under `/api/production-bibles/:id/score-themes` and `/api/production-bibles/:id/sfx`
-- [ ] **PBEX-19**: Sound Department tab UI with Score Themes and SFX Library sections with category filters
+- [x] **PBEX-19**: Sound Department tab UI with Score Themes and SFX Library sections with category filters
 - [x] **PBEX-20**: Scene.score_theme_id nullable FK for forward compatibility with Director agent
 
 ## Screenplay System

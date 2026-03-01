@@ -118,7 +118,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 18. Screenplay System | 3/3 | Complete    | 2026-03-01 |
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
-| 21. Sequence UI Polish | 0/0 | ○ Planned | — |
+| 21. Sequence UI Polish | 0/2 | ○ In Progress | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -457,3 +457,8 @@ Plans:
   2. Act field UI allows setting/changing act on sequences
   3. Total duration displayed in sequence header (sum of scene durations)
   4. Within-sequence scene reordering calls API and updates UI
+**Plans**: 2 plans in 2 waves
+
+Plans:
+- [ ] 21-01-PLAN.md — Backend: bulk scene reorder endpoint, SceneListItem type fix, client function
+- [ ] 21-02-PLAN.md — Frontend: sequence DnD reorder, act field setter, duration display, within-sequence scene reorder

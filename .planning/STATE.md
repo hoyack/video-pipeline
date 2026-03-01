@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 19: Bible Context Fix Cleanup
+**Current focus:** Phase 20: Entity Media Uploads
 
 ## Current Position
 
-Phase: 19 of 21 (Bible Context Fix Cleanup)
-Plan: 2 of 2 complete
-Status: Phase 19 COMPLETE — Bible context fix + cleanup (all plans done)
-Last activity: 2026-03-01 — Completed 19-01 (Bible Context Fix + API Cleanup)
+Phase: 20 of 21 (Entity Media Uploads)
+Plan: 1 of 2 complete
+Status: Executing Phase 20 — Plan 01 complete (Entity upload endpoints)
+Last activity: 2026-03-01 — Completed 20-01 (Entity media upload endpoints)
 
-Progress: [##########] 100% (Phase 19, Plan 2 of 2)
+Progress: [#####-----] 50% (Phase 20, Plan 1 of 2)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 42
+- Total plans completed: 43
 - Average duration: 2.7 min
-- Total execution time: 1.79 hours
+- Total execution time: 1.82 hours
 
 **By Phase:**
 
@@ -60,6 +60,7 @@ Progress: [##########] 100% (Phase 19, Plan 2 of 2)
 | Phase 18-screenplay-system P03 | 8min | 2 tasks | 4 files |
 | Phase 19 P02 | 2min | 2 tasks | 6 files |
 | Phase 19 P01 | 3min | 2 tasks | 6 files |
+| Phase 20 P01 | 2min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -266,6 +267,10 @@ Recent decisions affecting current work:
 - [Phase 19]: Left backward-compat type aliases (ManifestListItem, ManifestDetail) in types.ts and client.ts since they are harmless re-exports
 - **19-01:** Production.production_bible_id FK enables bible context before scenes exist
 - **19-01:** Direct import for sound_router since module now exists (Phase 17-03 complete)
+- **20-01:** Audio uploads use 20MB limit (vs 10MB for images) since audio files are typically larger
+- **20-01:** generate-appearance returns 500 on LLM failure (not graceful degradation) since user explicitly requested the action
+- **20-01:** Standalone generate-reverse-prompt uses OBJECT asset type as generic default
+- **20-01:** Sonic identity audio stored under sets/{set_id}/sonic_identity/ path hierarchy matching parent relationship
 
 ### Roadmap Evolution
 
@@ -292,5 +297,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 19-01-PLAN.md (Bible Context Fix + API Cleanup) — Phase 19 COMPLETE
+Stopped at: Completed 20-01-PLAN.md (Entity media upload endpoints)
 Resume file: None

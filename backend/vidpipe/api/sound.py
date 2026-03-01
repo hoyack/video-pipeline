@@ -372,3 +372,26 @@ async def delete_sfx_item(sfx_item_id: str):
 
         await session.delete(item)
         await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Asset-to-entity migration endpoint
+# ---------------------------------------------------------------------------
+
+
+@sound_router.post("/production-bibles/{production_bible_id}/migrate-entities", status_code=200)
+async def migrate_entities(production_bible_id: str):
+    """Migrate CHARACTER and ENVIRONMENT assets to Character and Set entities.
+
+    Idempotent: calling twice does not create duplicates.
+    """
+    from vidpipe.services.production_bible_entity_service import migrate_all_assets
+
+    async with async_session() as session:
+        bible = await session.get(ProductionBible, uuid.UUID(production_bible_id))
+        if not bible:
+            raise HTTPException(status_code=404, detail="Production Bible not found")
+
+        result = await migrate_all_assets(session, bible.id)
+        await session.commit()
+        return result

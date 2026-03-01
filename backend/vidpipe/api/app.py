@@ -13,6 +13,7 @@ from vidpipe import validate_dependencies
 from vidpipe.db import init_database, shutdown
 from vidpipe.services.comfyui_client import close_comfyui_client
 from vidpipe.api.routes import router
+from vidpipe.api.sequences import sequence_router
 
 # Configure root logger so application logs (pipeline stages, S3, etc.) reach stdout
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -63,6 +64,7 @@ app.add_middleware(
 
 # Include router with all endpoints
 app.include_router(router)
+app.include_router(sequence_router)
 
 # Serve frontend static files in production (after API routes take priority)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"

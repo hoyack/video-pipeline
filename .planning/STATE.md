@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 17 of 17 (Production Bible Entity Expansion)
-Plan: 1 of 4 complete
-Status: Plan 01 done — 8 entity ORM models + score_theme_id migration
-Last activity: 2026-03-01 — Completed 17-01 (Database entity models)
+Plan: 3 of 4 complete
+Status: Plan 03 done — Sound CRUD routes + asset-to-entity migration
+Last activity: 2026-03-01 — Completed 17-03 (Sound routes + migration service)
 
-Progress: [###-------] 25% (Phase 17, Plan 1 of 4)
+Progress: [########--] 75% (Phase 17, Plan 3 of 4)
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [###-------] 25% (Phase 17, Plan 1 of 4)
 | Phase 16-production-bible-foundation P03 | 25min | 2 tasks | 12 files |
 | Phase 16-production-bible-foundation P04 | 8 | 2 tasks | 9 files |
 | Phase 17-production-bible-entity-expansion P01 | 2min | 2 tasks | 2 files |
+| Phase 17 P03 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -234,6 +235,9 @@ Recent decisions affecting current work:
 - **16-03:** DEPARTMENT_TABS array config in ProductionBibleCreator: Casting=CHARACTER, Art Dept=ENV/PROP/OBJECT/VEHICLE/STYLE, Sound=placeholder
 - **17-01:** Scene.score_theme_id added as nullable FK with index for Director agent compatibility
 - **17-01:** All 8 entity models placed after Sequence class in models.py (FK dependency ordering)
+- [Phase 17]: Migration endpoint placed on sound_router to avoid file conflict with Plan 17-02 (characters.py)
+- [Phase 17]: Migration service uses flush (not commit) -- caller controls transaction boundary
+- [Phase 17]: Idempotent migration: name-based dedup checks existing Character/Set names before creating
 
 ### Roadmap Evolution
 
@@ -260,5 +264,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 17-01-PLAN.md (Database entity models — 8 ORM models + score_theme_id migration)
+Stopped at: Completed 17-03-PLAN.md (Sound routes + asset-to-entity migration)
 Resume file: None

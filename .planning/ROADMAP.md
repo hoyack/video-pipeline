@@ -29,6 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring (completed 2026-02-19)
 - [x] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback (completed 2026-02-20)
 - [x] **Phase 15: Video Generation Editor** - Unified create/edit/monitor experience replacing GenerateForm + ProgressView; draft projects, gap-filling pipeline, per-scene uploads, VideoGenEditor component, pause/resume (completed 2026-02-21)
+- [ ] **Phase 16: Production Bible Foundation** - Rename Manifest → Production Bible across stack, department tab structure, Sequence grouping layer above Scenes (Issues #7, #24)
 
 ## Phase Details
 
@@ -88,7 +89,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 14
+Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -107,6 +108,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 14
 | 13. LLM Provider Abstraction | 3/3 | Complete    | 2026-02-19 |
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 | 15. Video Generation Editor | 3/3 | Complete    | 2026-02-21 |
+| 16. Production Bible Foundation | 0/4 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -322,3 +324,25 @@ Plans:
 - [ ] 15-01-PLAN.md — Backend: draft status, create project endpoint, generate endpoint, generation_status column, final-video upload
 - [ ] 15-02-PLAN.md — Pipeline: gap-filling storyboard/keyframes/video_gen/stitcher, per-scene stop flag, generation_status updates
 - [ ] 15-03-PLAN.md — Frontend: VideoGenEditor component, GenerateThroughSlider, ProjectConfigBar, App.tsx navigation merge
+
+### Phase 16: Production Bible Foundation
+**Goal**: Rename the Manifest concept to Production Bible across the entire stack (database, API, frontend), introduce department tab structure in the Production Bible detail view, and add an optional Sequence grouping layer above Scenes for narrative chapter organization
+**Depends on**: Phase 15 (latest completed phase)
+**Requirements**: PBIB-01, PBIB-02, PBIB-03, PBIB-04, PBIB-05, PBIB-06, SEQ-01, SEQ-02, SEQ-03, SEQ-04
+**GitHub Issues**: #7, #24
+**Success Criteria** (what must be TRUE):
+  1. `production_bibles` table exists with all data migrated from `manifests`; all FK columns renamed to `production_bible_id`
+  2. All API endpoints respond at `/api/production-bibles/*` with 301 redirects from legacy `/api/manifests/*` paths
+  3. Frontend uses "Production Bible" terminology everywhere; routes updated to `/production-bibles/*`
+  4. Production Bible detail view has three department tabs: Casting, Art Department, Sound — with existing assets sorted into correct tabs
+  5. `sequences` table stores optional grouping layer with title, description, order, act, and color fields
+  6. Scene model has optional `sequence_id` FK; scenes with null sequence_id remain in flat list
+  7. Sequence CRUD API under `/api/productions/{id}/sequences` with drag-and-drop reorder support
+  8. Frontend renders scenes grouped by sequence when sequences exist, with collapsible sections and drag between sequences
+**Plans:** 4 plans in 2 waves
+
+Plans:
+- [ ] 16-01-PLAN.md — Backend: DB rename manifests to production_bibles, API endpoint rename, 301 redirects, service layer updates
+- [ ] 16-02-PLAN.md — Backend: Sequence model, migration, and CRUD API endpoints
+- [ ] 16-03-PLAN.md — Frontend: Component renames, route updates, department tabs (Casting, Art Dept, Sound)
+- [ ] 16-04-PLAN.md — Frontend: Sequence types, API client, sequence grouping UI with drag-and-drop

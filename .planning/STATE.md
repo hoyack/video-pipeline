@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 16: Production Bible Foundation
+**Current focus:** Phase 17: Production Bible Entity Expansion
 
 ## Current Position
 
-Phase: 16 of 16 (Production Bible Foundation)
-Plan: 4 of 4 complete
-Status: Phase 16 complete — Plans 01-04 all done
-Last activity: 2026-02-28 — Completed 16-03 (Production Bible frontend rename — routes, components, types, API client)
+Phase: 17 of 17 (Production Bible Entity Expansion)
+Plan: 1 of 4 complete
+Status: Plan 01 done — 8 entity ORM models + score_theme_id migration
+Last activity: 2026-03-01 — Completed 17-01 (Database entity models)
 
-Progress: [██████████] 100%+ (16 phases complete, Phase 16 Plan 04 done)
+Progress: [###-------] 25% (Phase 17, Plan 1 of 4)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 40
+- Total plans completed: 41
 - Average duration: 2.7 min
-- Total execution time: 1.71 hours
+- Total execution time: 1.74 hours
 
 **By Phase:**
 
@@ -51,6 +51,7 @@ Progress: [██████████] 100%+ (16 phases complete, Phase 16 P
 | Phase 16-production-bible-foundation P02 | 2 | 2 tasks | 4 files |
 | Phase 16-production-bible-foundation P03 | 25min | 2 tasks | 12 files |
 | Phase 16-production-bible-foundation P04 | 8 | 2 tasks | 9 files |
+| Phase 17-production-bible-entity-expansion P01 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -231,6 +232,8 @@ Recent decisions affecting current work:
 - **16-03:** Backward-compat type aliases (ManifestListItem = ProductionBibleListItem) and function aliases (listManifests = listProductionBibles) added for gradual migration
 - **16-03:** Old Manifest*.tsx files retained; new ProductionBible*.tsx are canonical — deletion deferred to cleanup
 - **16-03:** DEPARTMENT_TABS array config in ProductionBibleCreator: Casting=CHARACTER, Art Dept=ENV/PROP/OBJECT/VEHICLE/STYLE, Sound=placeholder
+- **17-01:** Scene.score_theme_id added as nullable FK with index for Director agent compatibility
+- **17-01:** All 8 entity models placed after Sequence class in models.py (FK dependency ordering)
 
 ### Roadmap Evolution
 
@@ -256,6 +259,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-28 (execution)
-Stopped at: Completed 16-03-PLAN.md (Production Bible frontend rename — routes, components, types, API client)
+Last session: 2026-03-01 (execution)
+Stopped at: Completed 17-01-PLAN.md (Database entity models — 8 ORM models + score_theme_id migration)
 Resume file: None

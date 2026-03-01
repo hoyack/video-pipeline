@@ -16,6 +16,7 @@ from vidpipe.api.routes import router
 from vidpipe.api.sequences import sequence_router
 from vidpipe.api.characters import character_router
 from vidpipe.api.sets_props import sets_props_router
+from vidpipe.api.screenplay import screenplay_router
 
 # Configure root logger so application logs (pipeline stages, S3, etc.) reach stdout
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -69,6 +70,7 @@ app.include_router(router)
 app.include_router(sequence_router)
 app.include_router(character_router)
 app.include_router(sets_props_router)
+app.include_router(screenplay_router)
 
 # Phase 17-03: Sound router (may not exist yet)
 try:

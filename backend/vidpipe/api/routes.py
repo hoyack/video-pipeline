@@ -376,6 +376,8 @@ class SceneListItem(BaseModel):
     # Phase 16: Sequence grouping
     sequence_id: Optional[str] = None
     scene_order: Optional[int] = None
+    # Phase 18: Screenplay linkage
+    screenplay_breakdown_index: Optional[int] = None
 
 
 class PaginatedScenes(BaseModel):
@@ -1389,6 +1391,7 @@ async def list_scenes(
                     production_id=str(p.production_id) if p.production_id else None,
                     sequence_id=str(p.sequence_id) if p.sequence_id else None,
                     scene_order=p.scene_order,
+                    screenplay_breakdown_index=p.screenplay_breakdown_index,
                 )
                 for p in scenes
             ],

@@ -399,6 +399,37 @@ class SFXItem(Base):
     )
 
 
+class Screenplay(Base):
+    """Screenplay entity attached 1:1 to a Production.
+
+    Stores structured narrative content: logline, treatment, character breakdowns,
+    scene breakdown, script, and shot list. Generated incrementally by ScreenwriterService.
+
+    Spec reference: Phase 18 Screenplay System (SCRN-01, SCRN-02, SCRN-05)
+    """
+    __tablename__ = "screenplays"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("productions.id"), unique=True, index=True
+    )
+    title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    genre: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT")  # DRAFT/IN_REVIEW/LOCKED
+    logline: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    treatment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    character_breakdowns: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    scene_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    script: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    shot_list: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    text_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    generating_step: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Current step being generated (for progress)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Scene(Base):
     """Scene model representing a video generation scene.
 
@@ -457,6 +488,10 @@ class Scene(Base):
     score_theme_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("score_themes.id"), nullable=True, index=True
     )
+
+    # Phase 18: Screenplay linkage
+    screenplay_breakdown_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    screenplay_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

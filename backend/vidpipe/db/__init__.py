@@ -12,7 +12,7 @@ from sqlalchemy import text
 from vidpipe.db.engine import async_session, engine, get_session, shutdown, _is_sqlite
 from vidpipe.db.models import (
     Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance,
-    SceneCheckpoint, Production, ProductionBible, Sequence, DEFAULT_USER_ID,
+    SceneCheckpoint, Production, ProductionBible, Sequence, Screenplay, DEFAULT_USER_ID,
     Character, Wardrobe, VoiceProfile, Set, SonicIdentity, Prop, ScoreTheme, SFXItem,
 )
 
@@ -194,6 +194,12 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE scenes ADD COLUMN scene_order INTEGER DEFAULT 0",
         # Phase 17: score_theme_id FK on scenes for Director agent compatibility
         "ALTER TABLE scenes ADD COLUMN score_theme_id {uuid_type} REFERENCES score_themes(id)",
+        # Phase 18: Screenplay linkage columns on scenes
+        "ALTER TABLE scenes ADD COLUMN screenplay_breakdown_index INTEGER",
+        "ALTER TABLE scenes ADD COLUMN screenplay_context TEXT",
+        # Phase 18: Unique index on screenplays.production_id for existing DBs
+        # (create_all() handles this for new DBs via unique=True on the column)
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_screenplays_production_id ON screenplays(production_id)",
     ]
     for i, raw_sql in enumerate(migrations):
         sql = raw_sql.format(uuid_type=uuid_type) if "{uuid_type}" in raw_sql else raw_sql

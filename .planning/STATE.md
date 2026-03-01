@@ -48,6 +48,7 @@ Progress: [██████████] 100% (15 of 15 phases complete, 40 of
 - Trend: Phase 15 COMPLETE — Video Generation Editor fully built
 
 *Updated after each plan completion*
+| Phase 16-production-bible-foundation P02 | 2 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -215,6 +216,9 @@ Recent decisions affecting current work:
 - **15-03:** Draft status maps to editing mode, not drafting — user can edit before first generation
 - **15-03:** ProjectList passes (id, status) to App.tsx for draft-aware routing
 - **15-03:** Auto-collapse ProjectConfigBar when editorMode transitions to running
+- [Phase 16-02]: DELETE sequence unsequences child scenes (sequence_id=NULL) not cascade-delete — prevents accidental data loss
+- [Phase 16-02]: Auto-increment scene_order (max+1) on assign — append semantics match drag-and-drop UX
+- [Phase 16-02]: New sequence endpoints in dedicated sequences.py route file per CLAUDE.md domain separation convention
 
 ### Roadmap Evolution
 

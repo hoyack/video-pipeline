@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 Phase: 16 of 16 (Production Bible Foundation)
 Plan: 4 of 4 complete
 Status: Phase 16 complete — Plans 01-04 all done
-Last activity: 2026-03-01 — Completed 16-04 (Sequence grouping frontend UI)
+Last activity: 2026-02-28 — Completed 16-03 (Production Bible frontend rename — routes, components, types, API client)
 
 Progress: [██████████] 100%+ (16 phases complete, Phase 16 Plan 04 done)
 
@@ -49,6 +49,7 @@ Progress: [██████████] 100%+ (16 phases complete, Phase 16 P
 
 *Updated after each plan completion*
 | Phase 16-production-bible-foundation P02 | 2 | 2 tasks | 4 files |
+| Phase 16-production-bible-foundation P03 | 25min | 2 tasks | 12 files |
 | Phase 16-production-bible-foundation P04 | 8 | 2 tasks | 9 files |
 
 ## Accumulated Context
@@ -227,6 +228,9 @@ Recent decisions affecting current work:
 - **16-01:** Retained Manifest = ProductionBible alias in every file for gradual migration backwards-compatibility
 - **16-01:** Filesystem directory tmp/manifests/ kept as-is — only DB column/table names renamed, not storage paths
 - **16-01:** Function parameter names manifest_id: uuid.UUID kept as-is — only ORM column attribute names renamed
+- **16-03:** Backward-compat type aliases (ManifestListItem = ProductionBibleListItem) and function aliases (listManifests = listProductionBibles) added for gradual migration
+- **16-03:** Old Manifest*.tsx files retained; new ProductionBible*.tsx are canonical — deletion deferred to cleanup
+- **16-03:** DEPARTMENT_TABS array config in ProductionBibleCreator: Casting=CHARACTER, Art Dept=ENV/PROP/OBJECT/VEHICLE/STYLE, Sound=placeholder
 
 ### Roadmap Evolution
 
@@ -252,6 +256,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-01 (execution)
-Stopped at: Completed 16-04-PLAN.md (Sequence grouping frontend UI — Phase 16 complete)
+Last session: 2026-02-28 (execution)
+Stopped at: Completed 16-03-PLAN.md (Production Bible frontend rename — routes, components, types, API client)
 Resume file: None

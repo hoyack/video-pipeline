@@ -344,5 +344,5 @@ Plans:
 Plans:
 - [ ] 16-01-PLAN.md — Backend: DB rename manifests to production_bibles, API endpoint rename, 301 redirects, service layer updates
 - [ ] 16-02-PLAN.md — Backend: Sequence model, migration, and CRUD API endpoints
-- [ ] 16-03-PLAN.md — Frontend: Component renames, route updates, department tabs (Casting, Art Dept, Sound)
+- [x] 16-03-PLAN.md — Frontend: Component renames, route updates, department tabs (Casting, Art Dept, Sound)
 - [ ] 16-04-PLAN.md — Frontend: Sequence types, API client, sequence grouping UI with drag-and-drop

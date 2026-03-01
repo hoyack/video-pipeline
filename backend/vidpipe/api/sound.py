@@ -7,16 +7,18 @@ sound-effect entries with optional source audio and generation prompts.
 Spec reference: Phase 17 - PBEX-16, PBEX-17
 """
 
+import asyncio
 import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from vidpipe.db import async_session
-from vidpipe.db.models import ProductionBible, ScoreTheme, SFXItem
+from vidpipe.db.models import ProductionBible, ScoreTheme, Set, SFXItem, SonicIdentity
+from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,8 @@ sound_router = APIRouter(prefix="/api")
 # Valid SFX categories
 # ---------------------------------------------------------------------------
 VALID_SFX_CATEGORIES = {"IMPACT", "MECHANICAL", "NATURAL", "UI", "FOLEY", "AMBIENCE"}
+
+ALLOWED_AUDIO_TYPES = ("audio/mpeg", "audio/wav", "audio/ogg", "audio/webm", "audio/mp4", "audio/x-m4a")
 
 
 # ---------------------------------------------------------------------------
@@ -395,3 +399,219 @@ async def migrate_entities(production_bible_id: str):
         result = await migrate_all_assets(session, bible.id)
         await session.commit()
         return result
+
+
+# ---------------------------------------------------------------------------
+# Audio upload endpoints
+# ---------------------------------------------------------------------------
+
+
+def _score_theme_to_dict(t: ScoreTheme) -> dict:
+    return {
+        "score_theme_id": str(t.id),
+        "production_bible_id": str(t.production_bible_id),
+        "name": t.name,
+        "mood_descriptors": t.mood_descriptors,
+        "tempo_notes": t.tempo_notes,
+        "usage_notes": t.usage_notes,
+        "reference_audio": t.reference_audio,
+        "generation_prompt": t.generation_prompt,
+        "adapter_type": t.adapter_type,
+        "created_at": t.created_at.isoformat(),
+        "updated_at": t.updated_at.isoformat(),
+    }
+
+
+def _sfx_item_to_dict(item: SFXItem) -> dict:
+    return {
+        "sfx_item_id": str(item.id),
+        "production_bible_id": str(item.production_bible_id),
+        "name": item.name,
+        "category": item.category,
+        "source_audio": item.source_audio,
+        "generation_prompt": item.generation_prompt,
+        "tags": item.tags,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def _sonic_identity_to_dict(si: SonicIdentity) -> dict:
+    return {
+        "sonic_identity_id": str(si.id),
+        "set_id": str(si.set_id),
+        "ambience_description": si.ambience_description,
+        "reference_audio": si.reference_audio,
+        "generation_prompt": si.generation_prompt,
+        "created_at": si.created_at.isoformat(),
+    }
+
+
+@sound_router.post("/score-themes/{score_theme_id}/upload-audio")
+async def upload_score_theme_audio(
+    score_theme_id: str, file: UploadFile = File(...)
+):
+    """Upload reference audio for a score theme."""
+    if file.content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid content type {file.content_type}. Must be one of {ALLOWED_AUDIO_TYPES}",
+        )
+
+    content = await file.read()
+
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(
+            status_code=422, detail="File too large. Maximum size is 20MB"
+        )
+
+    async with async_session() as session:
+        theme = await session.get(ScoreTheme, uuid.UUID(score_theme_id))
+        if theme is None:
+            raise HTTPException(status_code=404, detail="Score theme not found")
+
+        storage = get_storage_backend()
+        filename = file.filename or "reference_audio.mp3"
+
+        if isinstance(storage, LocalStorageBackend):
+            from vidpipe.config import settings as _settings
+
+            local_dir = (
+                _settings.storage.tmp_dir
+                / "manifests"
+                / str(theme.production_bible_id)
+                / "score_themes"
+                / str(theme.id)
+            )
+            local_dir.mkdir(parents=True, exist_ok=True)
+            local_path = local_dir / filename
+            await asyncio.to_thread(local_path.write_bytes, content)
+            theme.reference_audio = str(local_path)
+        else:
+            key = f"manifests/{theme.production_bible_id}/score_themes/{theme.id}/{filename}"
+            await storage.put(key, content, file.content_type or "audio/mpeg")
+            from vidpipe.config import settings as _settings
+
+            local_path = _settings.storage.tmp_dir / key
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(local_path.write_bytes, content)
+            theme.reference_audio = key
+
+        await session.commit()
+        await session.refresh(theme)
+
+        return _score_theme_to_dict(theme)
+
+
+@sound_router.post("/sfx/{sfx_item_id}/upload-audio")
+async def upload_sfx_audio(sfx_item_id: str, file: UploadFile = File(...)):
+    """Upload source audio for an SFX item."""
+    if file.content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid content type {file.content_type}. Must be one of {ALLOWED_AUDIO_TYPES}",
+        )
+
+    content = await file.read()
+
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(
+            status_code=422, detail="File too large. Maximum size is 20MB"
+        )
+
+    async with async_session() as session:
+        item = await session.get(SFXItem, uuid.UUID(sfx_item_id))
+        if item is None:
+            raise HTTPException(status_code=404, detail="SFX item not found")
+
+        storage = get_storage_backend()
+        filename = file.filename or "source_audio.mp3"
+
+        if isinstance(storage, LocalStorageBackend):
+            from vidpipe.config import settings as _settings
+
+            local_dir = (
+                _settings.storage.tmp_dir
+                / "manifests"
+                / str(item.production_bible_id)
+                / "sfx"
+                / str(item.id)
+            )
+            local_dir.mkdir(parents=True, exist_ok=True)
+            local_path = local_dir / filename
+            await asyncio.to_thread(local_path.write_bytes, content)
+            item.source_audio = str(local_path)
+        else:
+            key = f"manifests/{item.production_bible_id}/sfx/{item.id}/{filename}"
+            await storage.put(key, content, file.content_type or "audio/mpeg")
+            from vidpipe.config import settings as _settings
+
+            local_path = _settings.storage.tmp_dir / key
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(local_path.write_bytes, content)
+            item.source_audio = key
+
+        await session.commit()
+        await session.refresh(item)
+
+        return _sfx_item_to_dict(item)
+
+
+@sound_router.post("/sonic-identities/{sonic_identity_id}/upload-audio")
+async def upload_sonic_identity_audio(
+    sonic_identity_id: str, file: UploadFile = File(...)
+):
+    """Upload reference audio for a sonic identity."""
+    if file.content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid content type {file.content_type}. Must be one of {ALLOWED_AUDIO_TYPES}",
+        )
+
+    content = await file.read()
+
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(
+            status_code=422, detail="File too large. Maximum size is 20MB"
+        )
+
+    async with async_session() as session:
+        si = await session.get(SonicIdentity, uuid.UUID(sonic_identity_id))
+        if si is None:
+            raise HTTPException(status_code=404, detail="Sonic identity not found")
+
+        # Look up parent Set to get production_bible_id for storage path
+        set_obj = await session.get(Set, si.set_id)
+
+        storage = get_storage_backend()
+        filename = file.filename or "reference_audio.mp3"
+
+        if isinstance(storage, LocalStorageBackend):
+            from vidpipe.config import settings as _settings
+
+            local_dir = (
+                _settings.storage.tmp_dir
+                / "manifests"
+                / str(set_obj.production_bible_id)
+                / "sets"
+                / str(set_obj.id)
+                / "sonic_identity"
+            )
+            local_dir.mkdir(parents=True, exist_ok=True)
+            local_path = local_dir / filename
+            await asyncio.to_thread(local_path.write_bytes, content)
+            si.reference_audio = str(local_path)
+        else:
+            key = f"manifests/{set_obj.production_bible_id}/sets/{set_obj.id}/sonic_identity/{filename}"
+            await storage.put(key, content, file.content_type or "audio/mpeg")
+            from vidpipe.config import settings as _settings
+
+            local_path = _settings.storage.tmp_dir / key
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(local_path.write_bytes, content)
+            si.reference_audio = key
+
+        await session.commit()
+        await session.refresh(si)
+
+        return _sonic_identity_to_dict(si)

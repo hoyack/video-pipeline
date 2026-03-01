@@ -31,6 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 15: Video Generation Editor** - Unified create/edit/monitor experience replacing GenerateForm + ProgressView; draft projects, gap-filling pipeline, per-scene uploads, VideoGenEditor component, pause/resume (completed 2026-02-21)
 - [x] **Phase 16: Production Bible Foundation** - Rename Manifest → Production Bible across stack, department tab structure, Sequence grouping layer above Scenes (Issues #7, #24) (completed 2026-03-01)
 - [ ] **Phase 17: Production Bible Entity Expansion** - Full Character, Set, Prop entities with sub-entities (Wardrobe, VoiceProfile, SonicIdentity), Score Themes and SFX Library in Sound Department (Issues #8, #9, #10, #11)
+- [ ] **Phase 18: Screenplay System** - Screenplay data model and editor, Screenwriter CrewAI agent for LLM generation chain, Scene Breakdown → pipeline wiring (Issues #12, #13, #14)
 
 ## Phase Details
 
@@ -110,7 +111,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 | 15. Video Generation Editor | 3/3 | Complete    | 2026-02-21 |
 | 16. Production Bible Foundation | 4/4 | Complete    | 2026-03-01 |
-| 17. PB Entity Expansion | 0/? | ○ Planned | — |
+| 17. PB Entity Expansion | 0/4 | ○ Planned | — |
+| 18. Screenplay System | 0/3 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -369,10 +371,34 @@ Plans:
   12. Existing manifest character/background assets migrated to Character/Set entities respectively
   13. Scene.score_theme_id nullable FK added for forward compatibility
   14. prompt-context endpoints for Character and Set return injection strings for generation pipeline
-**Plans:** 4 plans in 3 waves
+**Plans**: 4 plans in 3 waves
 
 Plans:
 - [ ] 17-01-PLAN.md — ORM models (Character, Wardrobe, VoiceProfile, Set, SonicIdentity, Prop, ScoreTheme, SFXItem) + Scene.score_theme_id migration
 - [ ] 17-02-PLAN.md — Character + Set + Prop CRUD API routes with prompt-context endpoints and LLM Vision reverse-prompting
 - [ ] 17-03-PLAN.md — Sound Department CRUD API (ScoreTheme, SFXItem) + asset-to-entity migration service
 - [ ] 17-04-PLAN.md — Frontend: CharacterDetail, SetDetail, SoundDepartment components wired into department tabs
+
+### Phase 18: Screenplay System
+**Goal**: Introduce Screenplay as a structured narrative document attached to Productions (1:1), with a Screenwriter service that generates screenplay components via LLM chain using the existing adapter pattern, and wire Scene Breakdown into the scene/shot generation pipeline so Scenes are driven by structured narrative intent rather than free-form prompts
+**Depends on**: Phase 17
+**Requirements**: SCRN-01, SCRN-02, SCRN-03, SCRN-04, SCRN-05, SCRN-06, SCRN-07, SCRN-08, SCRN-09, SCRN-10, SCRN-11, SCRN-12, SCRN-13, SCRN-14, SCRN-15
+**GitHub Issues**: #12, #13, #14
+**Success Criteria** (what must be TRUE):
+  1. Screenplay entity exists with one-to-one Project relationship, storing logline, treatment, character_breakdowns, scene_breakdown, script, shot_list
+  2. Scene Breakdown entries reference Production Bible Characters, Sets, and Props
+  3. Screenplay CRUD API allows per-component updates and independent regeneration
+  4. Screenplay editor UI has 5 tabs (Logline, Treatment, Scene Breakdown, Script, Shot List) with per-tab Regenerate buttons
+  5. Screenplay status (DRAFT/IN_REVIEW/LOCKED) controls regeneration permissions
+  6. Screenwriter service generates screenplay via sequential LLM chain (existing adapter pattern, not CrewAI): logline → treatment → character_breakdowns → scene_breakdown → script
+  7. Each generation step updates Screenplay incrementally and can be run independently
+  8. Production Bible Characters and Sets injected as context into generation prompts
+  9. "Generate Scenes from Screenplay" creates one Scene per SceneBreakdown entry under the Production, with prompt_tag injection
+  10. Free-form storyboard generation remains as fallback when no Screenplay exists
+  11. Scenes from Screenplay show "Screenplay linked" badge in UI
+**Plans**: 3 plans in 3 waves
+
+Plans:
+- [ ] 18-01-PLAN.md — Screenplay ORM model + Scene columns + Pydantic schemas + ScreenwriterService (6-step LLM chain with entity validation)
+- [ ] 18-02-PLAN.md — Screenplay CRUD API (11 endpoints), generate-scenes endpoint, storyboard.py enrichment hook
+- [ ] 18-03-PLAN.md — Frontend: TypeScript types, API client, ScreenplayEditor (6 tabs), ProductionDetail integration

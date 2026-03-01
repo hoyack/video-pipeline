@@ -121,6 +121,24 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **PBEX-19**: Sound Department tab UI with Score Themes and SFX Library sections with category filters
 - [ ] **PBEX-20**: Scene.score_theme_id nullable FK for forward compatibility with Director agent
 
+## Screenplay System
+
+- [ ] **SCRN-01**: Screenplay entity attached one-to-one to Production with title, genre, status (DRAFT/IN_REVIEW/LOCKED), logline, treatment, character_breakdowns, scene_breakdown, script, shot_list
+- [ ] **SCRN-02**: Scene Breakdown sub-structure per scene: scene_number, slugline, intent, emotional_beat, story_state_in, story_state_out, characters_present (Character refs), set_ref (Set ref), props_required (Prop refs)
+- [ ] **SCRN-03**: Screenplay CRUD API under `/api/productions/:id/screenplay` with per-component update endpoints
+- [ ] **SCRN-04**: Screenplay editor UI with tabs: Logline, Treatment, Scene Breakdown, Script, Shot List — each editable with independent Regenerate button
+- [ ] **SCRN-05**: Screenplay status field (DRAFT/IN_REVIEW/LOCKED); LOCKED prevents regeneration
+- [ ] **SCRN-06**: Scene Breakdown entries link to Production Bible Characters, Sets, and Props
+- [ ] **SCRN-07**: Screenwriter agent with sequential generation chain: logline → treatment → character_breakdowns → scene_breakdown → script (uses existing LLM adapter, not CrewAI)
+- [ ] **SCRN-08**: Each Screenwriter generation step updates Screenplay entity incrementally (user sees progress)
+- [ ] **SCRN-09**: Each Screenwriter step can be run independently (e.g. regenerate only Script without changing Breakdown)
+- [ ] **SCRN-10**: Production Bible Characters and Sets injected as context into Screenwriter generation prompts
+- [ ] **SCRN-11**: LLM adapter selectable per Production for Screenwriter agent
+- [ ] **SCRN-12**: "Generate Scenes from Screenplay" action creates one Scene per SceneBreakdown entry from a locked Screenplay
+- [ ] **SCRN-13**: Scene description populated from SceneBreakdown.intent; Shot prompts include Character, Set, Prop prompt_tags from linked breakdown
+- [ ] **SCRN-14**: Free-form storyboard generation remains as fallback when no Screenplay exists
+- [ ] **SCRN-15**: Scenes generated from Screenplay show "Screenplay linked" badge in UI
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.

@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 20: Entity Media Uploads
+**Current focus:** Phase 21: Sequence UI Polish
 
 ## Current Position
 
-Phase: 20 of 21 (Entity Media Uploads)
-Plan: 2 of 2 complete
-Status: Phase 20 COMPLETE — All entity media uploads done (backend + frontend)
-Last activity: 2026-03-01 — Completed 20-02 (Frontend upload UI + audio playback)
+Phase: 21 of 21 (Sequence UI Polish)
+Plan: 1 of 2 complete
+Status: Executing Phase 21 — Plan 01 complete (scene reorder API + frontend types)
+Last activity: 2026-03-01 — Completed 21-01 (Scene reorder API + frontend types)
 
-Progress: [##########] 100% (Phase 20, Plan 2 of 2)
+Progress: [#####-----] 50% (Phase 21, Plan 1 of 2)
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [##########] 100% (Phase 20, Plan 2 of 2)
 | Phase 19 P01 | 3min | 2 tasks | 6 files |
 | Phase 20 P01 | 2min | 2 tasks | 3 files |
 | Phase 20 P02 | 4min | 2 tasks | 5 files |
+| Phase 21 P01 | 2min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -274,6 +275,8 @@ Recent decisions affecting current work:
 - **20-01:** Sonic identity audio stored under sets/{set_id}/sonic_identity/ path hierarchy matching parent relationship
 - [Phase 20]: AudioPlayer uses native HTML5 audio controls with preload=none for minimal resource usage
 - [Phase 20]: File input uses label-button pattern with hidden input for consistent upload UI styling
+- [Phase 21]: SceneReorderRequest placed in sequences.py (not separate file) since it extends existing sequence endpoints
+- [Phase 21]: scene_order field added after sequence_id in SceneListItem for logical grouping
 
 ### Roadmap Evolution
 
@@ -300,5 +303,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 20-02-PLAN.md (Frontend upload UI + audio playback) -- Phase 20 COMPLETE
+Stopped at: Completed 21-01-PLAN.md (Scene reorder API + frontend types)
 Resume file: None

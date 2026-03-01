@@ -200,6 +200,205 @@ class Sequence(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 17: Production Bible Entity Expansion
+# Characters, Sets, Props, ScoreThemes, SFXItems and their sub-entities.
+# These entities provide structured production data for LLM context injection.
+# ---------------------------------------------------------------------------
+
+
+class Character(Base):
+    """Character entity within a Production Bible.
+
+    Represents a named cast member with role, appearance, wardrobe, and voice.
+    Sub-entities: Wardrobe (1:N), VoiceProfile (1:1).
+
+    Spec reference: Phase 17 - PBEX-01
+    """
+    __tablename__ = "characters"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(30))  # PROTAGONIST, ANTAGONIST, SUPPORTING, EXTRA
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    arc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    actor_refs: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of image URLs/keys
+    base_appearance: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of strings
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class Wardrobe(Base):
+    """Wardrobe item belonging to a Character (1:N relationship).
+
+    Each character can have multiple wardrobe items; one is flagged is_default.
+
+    Spec reference: Phase 17 - PBEX-02
+    """
+    __tablename__ = "wardrobes"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    character_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("characters.id"), index=True
+    )
+    label: Mapped[str] = mapped_column(Text)
+    reference_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of image keys
+    scene_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_descriptor: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class VoiceProfile(Base):
+    """Voice profile for a Character — 1:1 enforced via unique constraint.
+
+    Stores TTS adapter config and style notes for dialogue generation.
+
+    Spec reference: Phase 17 - PBEX-03
+    """
+    __tablename__ = "voice_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    character_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("characters.id"), unique=True, index=True  # 1:1 enforced
+    )
+    voice_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    adapter_type: Mapped[str] = mapped_column(String(50), default="ELEVENLABS")
+    style_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sample_audio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class Set(Base):
+    """Set (location/environment) entity within a Production Bible.
+
+    Stores visual reference, reverse prompt, and sonic identity sub-entity.
+    Sub-entity: SonicIdentity (1:1).
+
+    Spec reference: Phase 17 - PBEX-07
+    """
+    __tablename__ = "sets"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(Text)
+    reference_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    reverse_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    style_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    lighting_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class SonicIdentity(Base):
+    """Sonic identity for a Set — 1:1 enforced via unique constraint.
+
+    Captures ambient audio characteristics for a location.
+
+    Spec reference: Phase 17 - PBEX-08
+    """
+    __tablename__ = "sonic_identities"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    set_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sets.id"), unique=True, index=True  # 1:1 enforced
+    )
+    ambience_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reference_audio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class Prop(Base):
+    """Prop entity within a Production Bible.
+
+    Represents a physical object used in production with optional character associations.
+
+    Spec reference: Phase 17 - PBEX-13
+    """
+    __tablename__ = "props"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(Text)
+    reference_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    associated_characters: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of character UUID strings
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class ScoreTheme(Base):
+    """Score theme for a Production Bible — musical identity for scenes.
+
+    Stores mood, tempo, and generation hints for music generation adapters.
+
+    Spec reference: Phase 17 - PBEX-16
+    """
+    __tablename__ = "score_themes"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(Text)
+    mood_descriptors: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of strings
+    tempo_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    usage_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reference_audio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    adapter_type: Mapped[str] = mapped_column(String(50), default="MUSIC_GEN")
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class SFXItem(Base):
+    """Sound effects item within a Production Bible.
+
+    Categorised SFX entry with optional source audio and generation prompt.
+
+    Spec reference: Phase 17 - PBEX-17
+    """
+    __tablename__ = "sfx_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(30))  # IMPACT, MECHANICAL, NATURAL, UI, FOLEY, AMBIENCE
+    source_audio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of strings
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
 class Scene(Base):
     """Scene model representing a video generation scene.
 

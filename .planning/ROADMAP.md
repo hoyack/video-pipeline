@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 18: Screenplay System** - Screenplay data model and editor, Screenwriter CrewAI agent for LLM generation chain, Scene Breakdown → pipeline wiring (Issues #12, #13, #14) (completed 2026-03-01)
 - [x] **Phase 19: Bible Context Fix + Code Cleanup** - Fix load_bible_context indirect lookup, remove dead manifest strings/orphan files/dead code (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 20: Entity Media Uploads** - Missing upload endpoints and UI for actor refs, wardrobe, audio, props across Production Bible entities (Issues #8, #9, #10, #11) (Gap Closure) (completed 2026-03-01)
-- [ ] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure)
+- [x] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure) (completed 2026-03-01)
 
 ## Phase Details
 
@@ -118,7 +118,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 18. Screenplay System | 3/3 | Complete    | 2026-03-01 |
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
-| 21. Sequence UI Polish | 1/2 | In Progress|  |
+| 21. Sequence UI Polish | 2/2 | Complete   | 2026-03-01 |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)

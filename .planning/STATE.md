@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 21 of 21 (Sequence UI Polish)
-Plan: 1 of 2 complete
-Status: Executing Phase 21 — Plan 01 complete (scene reorder API + frontend types)
-Last activity: 2026-03-01 — Completed 21-01 (Scene reorder API + frontend types)
+Plan: 2 of 2 complete
+Status: Phase 21 COMPLETE — All sequence UI features wired
+Last activity: 2026-03-01 — Completed 21-02 (Sequence UI feature wiring)
 
-Progress: [#####-----] 50% (Phase 21, Plan 1 of 2)
+Progress: [##########] 100% (Phase 21, Plan 2 of 2)
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Progress: [#####-----] 50% (Phase 21, Plan 1 of 2)
 | Phase 20 P01 | 2min | 2 tasks | 3 files |
 | Phase 20 P02 | 4min | 2 tasks | 5 files |
 | Phase 21 P01 | 2min | 2 tasks | 3 files |
+| Phase 21 P02 | 2min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -277,6 +278,9 @@ Recent decisions affecting current work:
 - [Phase 20]: File input uses label-button pattern with hidden input for consistent upload UI styling
 - [Phase 21]: SceneReorderRequest placed in sequences.py (not separate file) since it extends existing sequence endpoints
 - [Phase 21]: scene_order field added after sequence_id in SceneListItem for logical grouping
+- [Phase 21-02]: Single DndContext with type-discriminated handleDragEnd avoids nested DndContext conflicts
+- [Phase 21-02]: Sequence drag handle placed outside SequenceHeader to keep header layout clean
+- [Phase 21-02]: Act picker uses same submenu pattern as color picker for UI consistency
 
 ### Roadmap Evolution
 
@@ -303,5 +307,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 21-01-PLAN.md (Scene reorder API + frontend types)
+Stopped at: Completed 21-02-PLAN.md (Sequence UI feature wiring) — Phase 21 COMPLETE
 Resume file: None

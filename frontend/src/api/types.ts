@@ -228,6 +228,7 @@ export interface SceneListItem {
   thumbnail_url?: string | null;
   production_id?: string | null;
   sequence_id?: string | null;
+  scene_order?: number | null;
   screenplay_breakdown_index?: number | null;
 }
 
@@ -631,6 +632,11 @@ export interface SequenceUpdate {
 /** Request body for PUT /api/productions/{id}/sequences/reorder */
 export interface SequenceReorderRequest {
   sequence_ids: string[];
+}
+
+/** Request body for PUT /api/sequences/{id}/scenes/reorder */
+export interface SceneReorderInSequenceRequest {
+  scene_ids: string[];
 }
 
 /** Request body for PUT /api/scenes/{id}/sequence */

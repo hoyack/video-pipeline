@@ -42,6 +42,7 @@ import type {
   SequenceCreate,
   SequenceUpdate,
   SequenceReorderRequest,
+  SceneReorderInSequenceRequest,
   AssignSequenceRequest,
   CharacterResponse,
   WardrobeResponse,
@@ -725,6 +726,15 @@ export function deleteSequence(sequenceId: string): Promise<{ status: string; un
 /** PUT /api/productions/{id}/sequences/reorder — bulk reorder sequences */
 export function reorderSequences(productionId: string, body: SequenceReorderRequest): Promise<{ status: string }> {
   return request<{ status: string }>(`/api/productions/${productionId}/sequences/reorder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** PUT /api/sequences/{id}/scenes/reorder — bulk reorder scenes within a sequence */
+export function reorderScenesInSequence(sequenceId: string, body: SceneReorderInSequenceRequest): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/sequences/${sequenceId}/scenes/reorder`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

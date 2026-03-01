@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 18 of 18 (Screenplay System)
-Plan: 2 of 3 complete
-Status: Executing Phase 18 — Screenplay API and storyboard enrichment complete
-Last activity: 2026-03-01 — Completed 18-02 (Screenplay REST API + storyboard enrichment)
+Plan: 3 of 3 complete
+Status: Phase 18 COMPLETE — Screenplay System fully built (ORM + API + frontend UI)
+Last activity: 2026-03-01 — Completed 18-03 (Screenplay Frontend UI)
 
-Progress: [######----] 67% (Phase 18, Plan 2 of 3)
+Progress: [##########] 100% (Phase 18, Plan 3 of 3)
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [######----] 67% (Phase 18, Plan 2 of 3)
 | Phase 17 P04 | 8min | 2 tasks | 6 files |
 | Phase 18-screenplay-system P01 | 3min | 2 tasks | 4 files |
 | Phase 18-screenplay-system P02 | 3min | 3 tasks | 4 files |
+| Phase 18-screenplay-system P03 | 8min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -257,6 +258,9 @@ Recent decisions affecting current work:
 - **18-02:** Screenplay enrichment in storyboard.py uses hasattr guard for backward compatibility with pre-migration Scene objects
 - **18-02:** generate-scenes defaults to cinematic style, 16:9 aspect, 8s duration for screenplay-created scenes
 - **18-02:** Force query param on generate-scenes enables idempotent re-generation
+- **18-03:** Pill-style Scenes/Screenplay tab navigation in ProductionDetail matching ProductionBibleCreator pattern
+- **18-03:** JSON editing for structured screenplay fields (v1) -- structured per-field editing deferred
+- **18-03:** generateScreenplayFull uses raw fetch since 202 responses have no parseable body
 
 ### Roadmap Evolution
 
@@ -283,5 +287,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 18-02-PLAN.md (Screenplay REST API + storyboard enrichment)
+Stopped at: Completed 18-03-PLAN.md (Screenplay Frontend UI) — Phase 18 COMPLETE
 Resume file: None

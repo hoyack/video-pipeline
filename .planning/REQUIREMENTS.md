@@ -126,7 +126,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **SCRN-01**: Screenplay entity attached one-to-one to Production with title, genre, status (DRAFT/IN_REVIEW/LOCKED), logline, treatment, character_breakdowns, scene_breakdown, script, shot_list
 - [x] **SCRN-02**: Scene Breakdown sub-structure per scene: scene_number, slugline, intent, emotional_beat, story_state_in, story_state_out, characters_present (Character refs), set_ref (Set ref), props_required (Prop refs)
 - [x] **SCRN-03**: Screenplay CRUD API under `/api/productions/:id/screenplay` with per-component update endpoints
-- [ ] **SCRN-04**: Screenplay editor UI with tabs: Logline, Treatment, Scene Breakdown, Script, Shot List — each editable with independent Regenerate button
+- [x] **SCRN-04**: Screenplay editor UI with tabs: Logline, Treatment, Scene Breakdown, Script, Shot List — each editable with independent Regenerate button
 - [x] **SCRN-05**: Screenplay status field (DRAFT/IN_REVIEW/LOCKED); LOCKED prevents regeneration
 - [x] **SCRN-06**: Scene Breakdown entries link to Production Bible Characters, Sets, and Props
 - [x] **SCRN-07**: Screenwriter agent with sequential generation chain: logline → treatment → character_breakdowns → scene_breakdown → script (uses existing LLM adapter, not CrewAI)
@@ -137,7 +137,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **SCRN-12**: "Generate Scenes from Screenplay" action creates one Scene per SceneBreakdown entry from a locked Screenplay
 - [x] **SCRN-13**: Scene description populated from SceneBreakdown.intent; Shot prompts include Character, Set, Prop prompt_tags from linked breakdown
 - [x] **SCRN-14**: Free-form storyboard generation remains as fallback when no Screenplay exists
-- [ ] **SCRN-15**: Scenes generated from Screenplay show "Screenplay linked" badge in UI
+- [x] **SCRN-15**: Scenes generated from Screenplay show "Screenplay linked" badge in UI
 
 ## v2 Requirements
 

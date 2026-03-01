@@ -65,15 +65,23 @@ async def _run_rename_migrations(conn) -> None:
     # -------------------------------------------------------------------------
     # Phase 16: manifests → production_bibles table rename
     # Must run before create_all() so SA finds the table under the new name.
+    # Uses SAVEPOINT on PostgreSQL so a failed ALTER doesn't abort the transaction.
     # -------------------------------------------------------------------------
+    is_pg = not _is_sqlite()
+    if is_pg:
+        await conn.execute(text("SAVEPOINT rename_table_sp"))
     try:
         await conn.execute(text("ALTER TABLE manifests RENAME TO production_bibles"))
         logger.info("Renamed table: manifests -> production_bibles")
+        if is_pg:
+            await conn.execute(text("RELEASE SAVEPOINT rename_table_sp"))
     except Exception:
-        pass  # Already renamed or doesn't exist yet (fresh DB)
+        if is_pg:
+            await conn.execute(text("ROLLBACK TO SAVEPOINT rename_table_sp"))
+        # Already renamed or doesn't exist yet (fresh DB)
 
     # -------------------------------------------------------------------------
-    # Phase 16: FK column renames (idempotent via try/except)
+    # Phase 16: FK column renames (idempotent via SAVEPOINT + try/except)
     # SQLite 3.25+ and PostgreSQL both support RENAME COLUMN.
     # -------------------------------------------------------------------------
     rename_columns = [
@@ -89,13 +97,20 @@ async def _run_rename_migrations(conn) -> None:
         ("scenes", "manifest_version", "production_bible_version"),
     ]
     for table, old_col, new_col in rename_columns:
+        sp_name = f"rename_{table}_{old_col}_sp"
+        if is_pg:
+            await conn.execute(text(f"SAVEPOINT {sp_name}"))
         try:
             await conn.execute(
                 text(f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}")
             )
             logger.info("Renamed column: %s.%s -> %s", table, old_col, new_col)
+            if is_pg:
+                await conn.execute(text(f"RELEASE SAVEPOINT {sp_name}"))
         except Exception:
-            pass  # Already renamed, column doesn't exist, or table doesn't exist yet
+            if is_pg:
+                await conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp_name}"))
+            # Already renamed, column doesn't exist, or table doesn't exist yet
 
 
 async def _run_migrations(conn) -> None:

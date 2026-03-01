@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
-import { forkScene, fetchManifestAssets, getEnabledModels } from "../api/client.ts";
+import { forkScene, fetchProductionBibleAssets, getEnabledModels } from "../api/client.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { SceneDetail } from "../api/types.ts";
 import type { ForkRequest, AssetResponse, ModifiedAsset, NewForkUpload, EnabledModelsResponse } from "../api/types.ts";
@@ -103,7 +103,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
   useEffect(() => {
     if (!detail.production_bible_id) return;
     setAssetsLoading(true);
-    fetchManifestAssets(detail.production_bible_id)
+    fetchProductionBibleAssets(detail.production_bible_id)
       .then(setAssets)
       .catch(() => {}) // Silent fail — asset section just won't show
       .finally(() => setAssetsLoading(false));
@@ -596,7 +596,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
           {assetsLoading ? (
             <div className="text-sm text-gray-500">Loading assets...</div>
           ) : assets.length === 0 ? (
-            <div className="text-sm text-gray-500">No assets in manifest</div>
+            <div className="text-sm text-gray-500">No assets in Production Bible</div>
           ) : (
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {assets.map((asset) => {

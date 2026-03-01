@@ -258,7 +258,7 @@ export function ShotCard({
                           ? "border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
                           : "border-gray-700 cursor-default",
                       )}
-                      title={canNavigate ? `${ref.name} — Click to view manifest` : ref.name}
+                      title={canNavigate ? `${ref.name} — Click to view Production Bible` : ref.name}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (canNavigate) onViewManifest!(manifestId!);
@@ -370,7 +370,7 @@ export function ShotCard({
                     <div className="space-y-0.5 text-[10px] text-gray-500">
                       {c.manifest_adherence_score != null && (
                         <div className="flex justify-between">
-                          <span>Manifest</span>
+                          <span>Bible</span>
                           <span className="text-gray-400">{c.manifest_adherence_score.toFixed(1)}</span>
                         </div>
                       )}

@@ -1,9 +1,9 @@
 ---
-status: complete
+status: diagnosed
 phase: 17-production-bible-entity-expansion
 source: [17-01-SUMMARY.md, 17-02-SUMMARY.md, 17-03-SUMMARY.md, 17-04-SUMMARY.md]
 started: 2026-03-01T13:20:00Z
-updated: 2026-03-01T16:30:00Z
+updated: 2026-03-01T16:45:00Z
 ---
 
 ## Current Test
@@ -85,21 +85,33 @@ skipped: 10
 ## Gaps
 
 - truth: "Production Bible View page loads with Casting tab showing CharacterDetail component and functional API calls"
-  status: failed
+  status: fixed
   reason: "User reported: View page crashes with TypeError after Docker rebuild. API calls to new entity endpoints return errors. CharacterDetail renders but cannot communicate with backend."
   severity: blocker
   test: 1
-  root_cause: ""
-  artifacts: []
+  root_cause: "Backend API response serializers used generic 'id' field names but frontend expected entity-specific names (character_id, wardrobe_id, etc). Also 'wardrobes' vs 'wardrobe' mismatch."
+  artifacts:
+    - path: "backend/vidpipe/api/characters.py"
+      issue: "id → character_id, wardrobe_id, voice_profile_id; wardrobes → wardrobe"
+    - path: "backend/vidpipe/api/sets_props.py"
+      issue: "id → set_id, sonic_identity_id, prop_id"
+    - path: "backend/vidpipe/api/sound.py"
+      issue: "id → score_theme_id (4x), sfx_item_id (4x)"
   missing: []
-  debug_session: ""
+  debug_session: ".planning/debug/resolved/bible-view-crash.md"
 
 - truth: "Clicking a Production Bible card opens the detail page with 4-tab editor for character editing"
-  status: failed
+  status: fixed
   reason: "User reported: When I click on a Production Bible Card, I get a browser console error that crashes my session"
   severity: blocker
   test: 2
-  root_cause: ""
-  artifacts: []
+  root_cause: "Same root cause as test 1 — response field name mismatches between backend serializers and frontend TypeScript types caused undefined property access crashes"
+  artifacts:
+    - path: "backend/vidpipe/api/characters.py"
+      issue: "Response dict field names mismatched frontend types"
+    - path: "backend/vidpipe/api/sets_props.py"
+      issue: "Response dict field names mismatched frontend types"
+    - path: "backend/vidpipe/api/sound.py"
+      issue: "Response dict field names mismatched frontend types"
   missing: []
-  debug_session: ""
+  debug_session: ".planning/debug/resolved/bible-view-crash.md"

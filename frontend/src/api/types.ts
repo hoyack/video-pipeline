@@ -228,6 +228,7 @@ export interface SceneListItem {
   thumbnail_url?: string | null;
   production_id?: string | null;
   sequence_id?: string | null;
+  screenplay_breakdown_index?: number | null;
 }
 
 /** Paginated response envelope for GET /api/scenes */
@@ -738,6 +739,81 @@ export interface SFXItemResponse {
   tags: string[] | null;
   created_at: string;
   updated_at: string;
+}
+
+// ============================================================================
+// Phase 18: Screenplay types
+// ============================================================================
+
+/** Character breakdown entry within a screenplay */
+export interface CharacterBreakdownEntry {
+  name: string;
+  role: string;
+  arc: string;
+  description: string;
+  manifest_tag: string | null;
+}
+
+/** Scene breakdown entry within a screenplay */
+export interface SceneBreakdownEntry {
+  scene_number: number;
+  slugline: string;
+  intent: string;
+  emotional_beat: string;
+  story_state_in: string;
+  story_state_out: string;
+  characters_present: string[];
+  set_ref: string | null;
+  props_required: string[];
+}
+
+/** Shot list entry within a screenplay */
+export interface ShotListEntry {
+  scene_number: number;
+  shot_number: number;
+  shot_type: string;
+  camera_movement: string;
+  action_notes: string;
+  duration_hint: string;
+}
+
+/** Response from GET /api/productions/{id}/screenplay */
+export interface ScreenplayResponse {
+  id: string;
+  production_id: string;
+  title: string | null;
+  genre: string | null;
+  status: string; // DRAFT | IN_REVIEW | LOCKED
+  logline: string | null;
+  treatment: string | null;
+  character_breakdowns: CharacterBreakdownEntry[] | null;
+  scene_breakdown: SceneBreakdownEntry[] | null;
+  script: string | null;
+  shot_list: ShotListEntry[] | null;
+  text_model: string | null;
+  generating_step: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Request body for PUT /api/productions/{id}/screenplay */
+export interface ScreenplayUpdate {
+  title?: string;
+  genre?: string;
+  logline?: string;
+  treatment?: string;
+  character_breakdowns?: CharacterBreakdownEntry[];
+  scene_breakdown?: SceneBreakdownEntry[];
+  script?: string;
+  shot_list?: ShotListEntry[];
+  text_model?: string;
+}
+
+/** Scene created from screenplay breakdown */
+export interface GeneratedSceneResult {
+  scene_id: string;
+  title: string;
+  scene_number: number;
 }
 
 /** Processing progress response */

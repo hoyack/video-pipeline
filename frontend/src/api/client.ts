@@ -51,6 +51,9 @@ import type {
   PropResponse,
   ScoreThemeResponse,
   SFXItemResponse,
+  ScreenplayResponse,
+  ScreenplayUpdate,
+  GeneratedSceneResult,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -1024,6 +1027,82 @@ export function migrateEntities(
 ): Promise<{ characters_created: number; sets_created: number }> {
   return request<{ characters_created: number; sets_created: number }>(
     `/api/production-bibles/${bibleId}/migrate-entities`,
+    { method: "POST" },
+  );
+}
+
+// ============================================================================
+// Screenplay API (Phase 18)
+// ============================================================================
+
+/** GET /api/productions/{id}/screenplay — get or auto-create screenplay */
+export function getScreenplay(productionId: string): Promise<ScreenplayResponse> {
+  return request<ScreenplayResponse>(`/api/productions/${productionId}/screenplay`);
+}
+
+/** PUT /api/productions/{id}/screenplay — update screenplay fields */
+export function updateScreenplay(productionId: string, data: ScreenplayUpdate): Promise<ScreenplayResponse> {
+  return request<ScreenplayResponse>(`/api/productions/${productionId}/screenplay`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** POST /api/productions/{id}/screenplay/generate — full chain background task (202) */
+export async function generateScreenplayFull(productionId: string, textModel?: string): Promise<void> {
+  const body: Record<string, string> = {};
+  if (textModel) body.text_model = textModel;
+  const res = await fetch(`/api/productions/${productionId}/screenplay/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, data.detail ?? res.statusText);
+  }
+  // 202 response — no body needed
+}
+
+/** POST /api/productions/{id}/screenplay/generate-{step} — regenerate single step */
+export function generateScreenplayStep(
+  productionId: string,
+  step: string,
+  textModel?: string,
+): Promise<ScreenplayResponse> {
+  const body: Record<string, string> = {};
+  if (textModel) body.text_model = textModel;
+  return request<ScreenplayResponse>(
+    `/api/productions/${productionId}/screenplay/generate-${step}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** PATCH /api/productions/{id}/screenplay/status — transition screenplay status */
+export function updateScreenplayStatus(productionId: string, status: string): Promise<ScreenplayResponse> {
+  return request<ScreenplayResponse>(
+    `/api/productions/${productionId}/screenplay/status`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    },
+  );
+}
+
+/** POST /api/productions/{id}/screenplay/generate-scenes — create scenes from locked breakdown */
+export function generateScenesFromScreenplay(
+  productionId: string,
+  force?: boolean,
+): Promise<GeneratedSceneResult[]> {
+  const qs = force ? "?force=true" : "";
+  return request<GeneratedSceneResult[]>(
+    `/api/productions/${productionId}/screenplay/generate-scenes${qs}`,
     { method: "POST" },
   );
 }

@@ -12,6 +12,9 @@ import {
 import type { SceneListItem, SequenceResponse } from "../api/types.ts";
 import { ScenePickerModal } from "./ScenePickerModal.tsx";
 import { SequencedSceneList } from "./SequencedSceneList.tsx";
+import { ScreenplayEditor } from "./ScreenplayEditor.tsx";
+
+type ProductionTab = "scenes" | "screenplay";
 
 interface ProductionDetailProps {
   productionId: string;
@@ -28,6 +31,7 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [showPicker, setShowPicker] = useState(false);
+  const [activeTab, setActiveTab] = useState<ProductionTab>("scenes");
 
   async function load() {
     try {
@@ -154,73 +158,114 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
         )}
       </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Scenes</h2>
-          <div className="flex gap-2">
-            {sequences.length === 0 && (
-              <button
-                onClick={async () => {
-                  try {
-                    const seq = await createSequence(productionId, { title: "Chapter 1" });
-                    setSequences([seq]);
-                  } catch {
-                    setError("Failed to create sequence");
-                  }
-                }}
-                className="rounded-md bg-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-600"
-              >
-                + Create Sequence
-              </button>
-            )}
-            <button
-              onClick={() => setShowPicker(true)}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-            >
-              Add Scenes
-            </button>
-          </div>
-        </div>
-
-        {scenes.length === 0 ? (
-          <p className="text-sm text-gray-500 py-4">No scenes in this production yet.</p>
-        ) : sequences.length > 0 ? (
-          <SequencedSceneList
-            productionId={productionId}
-            scenes={scenes}
-            onViewScene={onViewScene}
-            onRefresh={load}
-          />
-        ) : (
-          <div className="space-y-2">
-            {scenes.map((scene) => (
-              <div
-                key={scene.scene_id}
-                className="flex items-center justify-between rounded-lg border border-gray-700 bg-gray-800/50 p-3 hover:bg-gray-800 transition-colors cursor-pointer"
-                onClick={() => onViewScene(scene.scene_id)}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-white truncate">
-                    {scene.title || scene.prompt.slice(0, 80)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {scene.status} · {new Date(scene.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemoveScene(scene.scene_id);
-                  }}
-                  className="ml-3 text-xs text-gray-500 hover:text-red-400"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+      {/* Tab navigation: Scenes | Screenplay */}
+      <div className="flex gap-1">
+        <button
+          onClick={() => setActiveTab("scenes")}
+          className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+            activeTab === "scenes"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-800 text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          Scenes
+        </button>
+        <button
+          onClick={() => setActiveTab("screenplay")}
+          className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+            activeTab === "screenplay"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-800 text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          Screenplay
+        </button>
       </div>
+
+      {/* Tab content */}
+      {activeTab === "scenes" && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white">Scenes</h2>
+            <div className="flex gap-2">
+              {sequences.length === 0 && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const seq = await createSequence(productionId, { title: "Chapter 1" });
+                      setSequences([seq]);
+                    } catch {
+                      setError("Failed to create sequence");
+                    }
+                  }}
+                  className="rounded-md bg-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-600"
+                >
+                  + Create Sequence
+                </button>
+              )}
+              <button
+                onClick={() => setShowPicker(true)}
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+              >
+                Add Scenes
+              </button>
+            </div>
+          </div>
+
+          {scenes.length === 0 ? (
+            <p className="text-sm text-gray-500 py-4">No scenes in this production yet.</p>
+          ) : sequences.length > 0 ? (
+            <SequencedSceneList
+              productionId={productionId}
+              scenes={scenes}
+              onViewScene={onViewScene}
+              onRefresh={load}
+            />
+          ) : (
+            <div className="space-y-2">
+              {scenes.map((scene) => (
+                <div
+                  key={scene.scene_id}
+                  className="flex items-center justify-between rounded-lg border border-gray-700 bg-gray-800/50 p-3 hover:bg-gray-800 transition-colors cursor-pointer"
+                  onClick={() => onViewScene(scene.scene_id)}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-white truncate">
+                        {scene.title || scene.prompt.slice(0, 80)}
+                      </p>
+                      {scene.screenplay_breakdown_index != null && (
+                        <span className="inline-flex items-center rounded-full bg-blue-900 px-2 py-0.5 text-xs font-medium text-blue-300 whitespace-nowrap">
+                          Screenplay
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {scene.status} · {new Date(scene.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemoveScene(scene.scene_id);
+                    }}
+                    className="ml-3 text-xs text-gray-500 hover:text-red-400"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "screenplay" && (
+        <ScreenplayEditor
+          productionId={productionId}
+          onScenesGenerated={load}
+        />
+      )}
 
       {showPicker && (
         <ScenePickerModal

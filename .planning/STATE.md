@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 18 of 18 (Screenplay System)
-Plan: 1 of 3 complete
-Status: Executing Phase 18 — Screenplay data model and service layer complete
-Last activity: 2026-03-01 — Completed 18-01 (Screenplay data model + ScreenwriterService)
+Plan: 2 of 3 complete
+Status: Executing Phase 18 — Screenplay API and storyboard enrichment complete
+Last activity: 2026-03-01 — Completed 18-02 (Screenplay REST API + storyboard enrichment)
 
-Progress: [###-------] 33% (Phase 18, Plan 1 of 3)
+Progress: [######----] 67% (Phase 18, Plan 2 of 3)
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [###-------] 33% (Phase 18, Plan 1 of 3)
 | Phase 17 P02 | 3 | 2 tasks | 3 files |
 | Phase 17 P04 | 8min | 2 tasks | 6 files |
 | Phase 18-screenplay-system P01 | 3min | 2 tasks | 4 files |
+| Phase 18-screenplay-system P02 | 3min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -252,6 +253,10 @@ Recent decisions affecting current work:
 - **18-01:** screenplay_context JSON column on Scene for denormalized breakdown data (avoids cross-table join in storyboard.py)
 - **18-01:** Entity validation in generate_scene_breakdown is warning-only (LLM may invent characters not in bible)
 - **18-01:** character_breakdowns stored as flat list of dicts for simpler downstream iteration
+- **18-02:** Background task for full generation extracts plain values before launching, opens its own async_session (avoids DetachedInstanceError)
+- **18-02:** Screenplay enrichment in storyboard.py uses hasattr guard for backward compatibility with pre-migration Scene objects
+- **18-02:** generate-scenes defaults to cinematic style, 16:9 aspect, 8s duration for screenplay-created scenes
+- **18-02:** Force query param on generate-scenes enables idempotent re-generation
 
 ### Roadmap Evolution
 
@@ -278,5 +283,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 18-01-PLAN.md (Screenplay data model + ScreenwriterService)
+Stopped at: Completed 18-02-PLAN.md (Screenplay REST API + storyboard enrichment)
 Resume file: None

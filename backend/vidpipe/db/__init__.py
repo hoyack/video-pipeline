@@ -123,6 +123,7 @@ async def _run_migrations(conn) -> None:
     existing tables, so these migrations are needed on both drivers.
     """
     is_sqlite = _is_sqlite()
+    uuid_type = "TEXT" if is_sqlite else "UUID"
 
     # Migrations use SQLite types (TEXT, INTEGER, REAL, BLOB).
     # PostgreSQL also accepts these via implicit type aliases.
@@ -183,10 +184,13 @@ async def _run_migrations(conn) -> None:
         # ElevenLabs configuration
         "ALTER TABLE user_settings ADD COLUMN elevenlabs_api_key TEXT",
         # Phase 16: Sequence grouping
-        "ALTER TABLE scenes ADD COLUMN sequence_id TEXT REFERENCES sequences(id)",
+        # Note: SQLite uses TEXT for UUIDs, PostgreSQL uses UUID type.
+        # The correct type is set below based on driver detection.
+        "ALTER TABLE scenes ADD COLUMN sequence_id {uuid_type} REFERENCES sequences(id)",
         "ALTER TABLE scenes ADD COLUMN scene_order INTEGER DEFAULT 0",
     ]
-    for i, sql in enumerate(migrations):
+    for i, raw_sql in enumerate(migrations):
+        sql = raw_sql.format(uuid_type=uuid_type) if "{uuid_type}" in raw_sql else raw_sql
         sp = f"mig_sp_{i}"
         try:
             if not is_sqlite:

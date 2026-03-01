@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 13: LLM Provider Abstraction & Ollama Integration** - LLM adapter pattern, Vertex AI adapter extraction, Ollama text/vision adapter, settings UI, model management, pipeline wiring (completed 2026-02-19)
 - [x] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback (completed 2026-02-20)
 - [x] **Phase 15: Video Generation Editor** - Unified create/edit/monitor experience replacing GenerateForm + ProgressView; draft projects, gap-filling pipeline, per-scene uploads, VideoGenEditor component, pause/resume (completed 2026-02-21)
-- [ ] **Phase 16: Production Bible Foundation** - Rename Manifest → Production Bible across stack, department tab structure, Sequence grouping layer above Scenes (Issues #7, #24)
+- [x] **Phase 16: Production Bible Foundation** - Rename Manifest → Production Bible across stack, department tab structure, Sequence grouping layer above Scenes (Issues #7, #24) (completed 2026-03-01)
 
 ## Phase Details
 
@@ -108,7 +108,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 13. LLM Provider Abstraction | 3/3 | Complete    | 2026-02-19 |
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 | 15. Video Generation Editor | 3/3 | Complete    | 2026-02-21 |
-| 16. Production Bible Foundation | 4/4 | Complete   | 2026-03-01 |
+| 16. Production Bible Foundation | 4/4 | Complete    | 2026-03-01 |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)

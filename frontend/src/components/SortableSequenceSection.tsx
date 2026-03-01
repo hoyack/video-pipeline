@@ -1,5 +1,5 @@
 import { useDroppable } from "@dnd-kit/core";
-import { useSortable } from "@dnd-kit/sortable";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { SceneListItem, SequenceResponse, SequenceUpdate } from "../api/types.ts";
 import { SequenceHeader } from "./SequenceHeader.tsx";
@@ -17,9 +17,11 @@ interface SortableSequenceSectionProps {
 /** A scene row within a sequence that is draggable to other sequences. */
 function DraggableSceneRow({
   scene,
+  sequenceId,
   onViewScene,
 }: {
   scene: SceneListItem;
+  sequenceId: string;
   onViewScene: (id: string) => void;
 }) {
   const {
@@ -29,7 +31,10 @@ function DraggableSceneRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: scene.scene_id });
+  } = useSortable({
+    id: scene.scene_id,
+    data: { type: "scene-within-sequence", sequenceId },
+  });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -87,46 +92,88 @@ export function SortableSequenceSection({
   onDelete,
   onToggleCollapse,
 }: SortableSequenceSectionProps) {
-  // Make the section itself a droppable target
-  const { setNodeRef, isOver } = useDroppable({ id: sequence.id });
+  // Make the sequence header sortable for sequence reorder
+  const {
+    attributes: seqAttributes,
+    listeners: seqListeners,
+    setNodeRef: setSortableRef,
+    transform: seqTransform,
+    transition: seqTransition,
+    isDragging: seqIsDragging,
+  } = useSortable({
+    id: sequence.id,
+    data: { type: "sequence" },
+  });
+
+  const sortableStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(seqTransform),
+    transition: seqTransition,
+    opacity: seqIsDragging ? 0.5 : undefined,
+    position: "relative" as const,
+    zIndex: seqIsDragging ? 30 : undefined,
+  };
+
+  // Make the section itself a droppable target for cross-sequence scene drag
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: sequence.id });
 
   // Sort scenes by scene_order
   const sortedScenes = [...scenes].sort((a, b) => {
-    const aOrder = (a as SceneListItem & { scene_order?: number }).scene_order ?? 0;
-    const bOrder = (b as SceneListItem & { scene_order?: number }).scene_order ?? 0;
+    const aOrder = a.scene_order ?? 0;
+    const bOrder = b.scene_order ?? 0;
     return aOrder - bOrder;
   });
 
   return (
-    <div className="space-y-1">
-      <SequenceHeader
-        sequence={sequence}
-        isCollapsed={isCollapsed}
-        onToggleCollapse={() => onToggleCollapse(sequence.id)}
-        onUpdate={(updates) => onUpdate(sequence.id, updates)}
-        onDelete={onDelete}
-      />
+    <div ref={setSortableRef} style={sortableStyle} className="space-y-1">
+      <div className="flex items-center gap-1">
+        {/* Sequence drag handle */}
+        <button
+          {...seqAttributes}
+          {...seqListeners}
+          className="flex-shrink-0 text-gray-600 hover:text-gray-400 cursor-grab active:cursor-grabbing p-0.5"
+          title="Drag to reorder sequence"
+        >
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M7 2a2 2 0 110 4 2 2 0 010-4zM13 2a2 2 0 110 4 2 2 0 010-4zM7 8a2 2 0 110 4 2 2 0 010-4zM13 8a2 2 0 110 4 2 2 0 010-4zM7 14a2 2 0 110 4 2 2 0 010-4zM13 14a2 2 0 110 4 2 2 0 010-4z" />
+          </svg>
+        </button>
+        <div className="flex-1 min-w-0">
+          <SequenceHeader
+            sequence={sequence}
+            isCollapsed={isCollapsed}
+            onToggleCollapse={() => onToggleCollapse(sequence.id)}
+            onUpdate={(updates) => onUpdate(sequence.id, updates)}
+            onDelete={onDelete}
+          />
+        </div>
+      </div>
 
       {!isCollapsed && (
         <div
-          ref={setNodeRef}
+          ref={setDropRef}
           className={`ml-4 space-y-1 min-h-[40px] rounded-lg transition-colors ${
             isOver ? "bg-blue-900/20 border border-blue-700/50" : ""
           }`}
         >
-          {sortedScenes.length === 0 ? (
-            <div className="py-3 text-center text-xs text-gray-600">
-              Drop scenes here
-            </div>
-          ) : (
-            sortedScenes.map((scene) => (
-              <DraggableSceneRow
-                key={scene.scene_id}
-                scene={scene}
-                onViewScene={onViewScene}
-              />
-            ))
-          )}
+          <SortableContext
+            items={sortedScenes.map((s) => s.scene_id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {sortedScenes.length === 0 ? (
+              <div className="py-3 text-center text-xs text-gray-600">
+                Drop scenes here
+              </div>
+            ) : (
+              sortedScenes.map((scene) => (
+                <DraggableSceneRow
+                  key={scene.scene_id}
+                  scene={scene}
+                  sequenceId={sequence.id}
+                  onViewScene={onViewScene}
+                />
+              ))
+            )}
+          </SortableContext>
         </div>
       )}
     </div>

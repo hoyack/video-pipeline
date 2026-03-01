@@ -7,11 +7,18 @@ import {
 } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
 import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import {
   listSequences,
   createSequence,
   updateSequence,
   deleteSequence,
   assignSceneToSequence,
+  reorderSequences,
+  reorderScenesInSequence,
 } from "../api/client.ts";
 import type { SceneListItem, SequenceResponse, SequenceUpdate } from "../api/types.ts";
 import { SortableSequenceSection } from "./SortableSequenceSection.tsx";
@@ -68,38 +75,117 @@ export function SequencedSceneList({
 
   const unsequencedScenes = localScenes.filter((s) => !s.sequence_id);
 
+  const sequenceIds = new Set(sequences.map((s) => s.id));
+
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over) return;
 
+    const activeType = active.data.current?.type as string | undefined;
+
+    // --- Sequence reorder ---
+    if (activeType === "sequence") {
+      const activeId = active.id as string;
+      const overId = over.id as string;
+      if (activeId === overId) return;
+
+      const oldIndex = sequences.findIndex((s) => s.id === activeId);
+      const newIndex = sequences.findIndex((s) => s.id === overId);
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      const reordered = arrayMove(sequences, oldIndex, newIndex);
+      const previousSequences = sequences;
+      setSequences(reordered);
+
+      try {
+        await reorderSequences(productionId, {
+          sequence_ids: reordered.map((s) => s.id),
+        });
+      } catch {
+        setSequences(previousSequences);
+        setError("Failed to reorder sequences");
+      }
+      return;
+    }
+
+    // --- Within-sequence scene reorder ---
+    if (
+      activeType === "scene-within-sequence" &&
+      over.data.current?.type === "scene-within-sequence" &&
+      active.data.current?.sequenceId === over.data.current?.sequenceId
+    ) {
+      const sequenceId = active.data.current?.sequenceId as string;
+      const seqScenes = localScenes
+        .filter((s) => s.sequence_id === sequenceId)
+        .sort((a, b) => (a.scene_order ?? 0) - (b.scene_order ?? 0));
+
+      const activeId = active.id as string;
+      const overId = over.id as string;
+      if (activeId === overId) return;
+
+      const oldIndex = seqScenes.findIndex((s) => s.scene_id === activeId);
+      const newIndex = seqScenes.findIndex((s) => s.scene_id === overId);
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      const reorderedScenes = arrayMove(seqScenes, oldIndex, newIndex);
+      const reorderedSceneIds = reorderedScenes.map((s) => s.scene_id);
+
+      // Optimistic update: reassign scene_order values
+      const previousScenes = localScenes;
+      setLocalScenes((prev) =>
+        prev.map((s) => {
+          const idx = reorderedSceneIds.indexOf(s.scene_id);
+          if (idx !== -1) {
+            return { ...s, scene_order: idx };
+          }
+          return s;
+        }),
+      );
+
+      try {
+        await reorderScenesInSequence(sequenceId, {
+          scene_ids: reorderedSceneIds,
+        });
+      } catch {
+        setLocalScenes(previousScenes);
+        setError("Failed to reorder scenes");
+      }
+      return;
+    }
+
+    // --- Cross-sequence scene drag (existing behavior) ---
     const sceneId = active.id as string;
     const targetId = over.id as string;
 
     // Determine target sequence (null = unsequenced)
-    const targetSequenceId = targetId === UNSEQUENCED_ID ? null : targetId;
+    const targetSequenceId = targetId === UNSEQUENCED_ID ? null : (sequenceIds.has(targetId) ? targetId : null);
+
+    // If dropping on another scene (not a sequence zone), try to find the sequence from over data
+    const overSequenceId = over.data.current?.sequenceId as string | undefined;
+    const resolvedTarget = targetSequenceId ?? overSequenceId ?? null;
 
     // Find current scene
     const scene = localScenes.find((s) => s.scene_id === sceneId);
     if (!scene) return;
 
     // Skip no-op: already in target
-    if (scene.sequence_id === targetSequenceId) return;
+    if (scene.sequence_id === resolvedTarget) return;
 
     // Optimistic update
     const previousScenes = localScenes;
     setLocalScenes((prev) =>
       prev.map((s) =>
-        s.scene_id === sceneId ? { ...s, sequence_id: targetSequenceId } : s,
+        s.scene_id === sceneId ? { ...s, sequence_id: resolvedTarget } : s,
       ),
     );
 
     // Update sequence scene counts optimistically
-    if (scene.sequence_id) {
+    if (scene.sequence_id || resolvedTarget) {
       setSequences((prev) =>
         prev.map((seq) =>
           seq.id === scene.sequence_id
             ? { ...seq, scene_count: Math.max(0, seq.scene_count - 1) }
-            : seq.id === targetSequenceId
+            : seq.id === resolvedTarget
               ? { ...seq, scene_count: seq.scene_count + 1 }
               : seq,
         ),
@@ -107,7 +193,7 @@ export function SequencedSceneList({
     }
 
     try {
-      await assignSceneToSequence(sceneId, { sequence_id: targetSequenceId });
+      await assignSceneToSequence(sceneId, { sequence_id: resolvedTarget });
       // Refresh parent if callback provided
       onRefresh?.();
     } catch {
@@ -174,19 +260,24 @@ export function SequencedSceneList({
       )}
 
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-        {/* Sequences in order */}
-        {sequences.map((seq) => (
-          <SortableSequenceSection
-            key={seq.id}
-            sequence={seq}
-            scenes={scenesForSequence(seq.id)}
-            isCollapsed={!!collapsed[seq.id]}
-            onViewScene={onViewScene}
-            onUpdate={handleUpdateSequence}
-            onDelete={handleDeleteSequence}
-            onToggleCollapse={handleToggleCollapse}
-          />
-        ))}
+        {/* Sequences in order — wrapped in SortableContext for sequence reorder */}
+        <SortableContext
+          items={sequences.map((s) => s.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          {sequences.map((seq) => (
+            <SortableSequenceSection
+              key={seq.id}
+              sequence={seq}
+              scenes={scenesForSequence(seq.id)}
+              isCollapsed={!!collapsed[seq.id]}
+              onViewScene={onViewScene}
+              onUpdate={handleUpdateSequence}
+              onDelete={handleDeleteSequence}
+              onToggleCollapse={handleToggleCollapse}
+            />
+          ))}
+        </SortableContext>
 
         {/* Unsequenced scenes */}
         <UnsequencedSection

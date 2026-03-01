@@ -1019,6 +1019,112 @@ export function deleteSFXItem(sfxId: string): Promise<void> {
   return request<void>(`/api/sfx/${sfxId}`, { method: "DELETE" });
 }
 
+// --- Character uploads ---
+
+/** POST /api/characters/{id}/actor-refs -- upload actor reference image */
+export async function uploadActorRef(characterId: string, file: File): Promise<CharacterResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/characters/${characterId}/actor-refs`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<CharacterResponse>;
+}
+
+/** POST /api/characters/{id}/generate-appearance -- generate base appearance from actor refs */
+export async function generateAppearance(characterId: string): Promise<CharacterResponse> {
+  const res = await fetch(`/api/characters/${characterId}/generate-appearance`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<CharacterResponse>;
+}
+
+/** POST /api/wardrobes/{id}/upload-reference -- upload wardrobe reference image */
+export async function uploadWardrobeReference(wardrobeId: string, file: File): Promise<WardrobeResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/wardrobes/${wardrobeId}/upload-reference`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<WardrobeResponse>;
+}
+
+/** POST /api/props/{id}/upload-reference -- upload prop reference image */
+export async function uploadPropReference(propId: string, file: File): Promise<PropResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/props/${propId}/upload-reference`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<PropResponse>;
+}
+
+// --- Audio uploads ---
+
+/** POST /api/sonic-identities/{id}/upload-audio -- upload sonic identity reference audio */
+export async function uploadSonicIdentityAudio(sonicIdentityId: string, file: File): Promise<SonicIdentityResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/sonic-identities/${sonicIdentityId}/upload-audio`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<SonicIdentityResponse>;
+}
+
+/** POST /api/score-themes/{id}/upload-audio -- upload score theme reference audio */
+export async function uploadScoreThemeAudio(scoreThemeId: string, file: File): Promise<ScoreThemeResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/score-themes/${scoreThemeId}/upload-audio`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<ScoreThemeResponse>;
+}
+
+/** POST /api/sfx/{id}/upload-audio -- upload SFX item source audio */
+export async function uploadSFXAudio(sfxItemId: string, file: File): Promise<SFXItemResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/sfx/${sfxItemId}/upload-audio`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<SFXItemResponse>;
+}
+
 // --- Migration ---
 
 /** POST /api/production-bibles/{id}/migrate-entities — migrate assets to structured entities */

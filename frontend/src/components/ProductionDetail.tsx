@@ -3,12 +3,15 @@ import {
   getProduction,
   updateProduction,
   listScenes,
+  listSequences,
+  createSequence,
   batchAddScenesToProduction,
   removeSceneFromProduction,
   type ProductionResponse,
 } from "../api/client.ts";
-import type { SceneListItem } from "../api/types.ts";
+import type { SceneListItem, SequenceResponse } from "../api/types.ts";
 import { ScenePickerModal } from "./ScenePickerModal.tsx";
+import { SequencedSceneList } from "./SequencedSceneList.tsx";
 
 interface ProductionDetailProps {
   productionId: string;
@@ -18,6 +21,7 @@ interface ProductionDetailProps {
 export function ProductionDetail({ productionId, onViewScene }: ProductionDetailProps) {
   const [production, setProduction] = useState<ProductionResponse | null>(null);
   const [scenes, setScenes] = useState<SceneListItem[]>([]);
+  const [sequences, setSequences] = useState<SequenceResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -28,14 +32,16 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
   async function load() {
     try {
       setLoading(true);
-      const [prod, scenesData] = await Promise.all([
+      const [prod, scenesData, seqs] = await Promise.all([
         getProduction(productionId),
         listScenes({ per_page: 96, view: "cards" }),
+        listSequences(productionId).catch(() => [] as SequenceResponse[]),
       ]);
       setProduction(prod);
       setEditName(prod.name);
       setEditDesc(prod.description || "");
       setScenes(scenesData.items.filter((s) => s.production_id === productionId));
+      setSequences(seqs);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load production");
@@ -151,16 +157,40 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Scenes</h2>
-          <button
-            onClick={() => setShowPicker(true)}
-            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-          >
-            Add Scenes
-          </button>
+          <div className="flex gap-2">
+            {sequences.length === 0 && (
+              <button
+                onClick={async () => {
+                  try {
+                    const seq = await createSequence(productionId, { title: "Chapter 1" });
+                    setSequences([seq]);
+                  } catch {
+                    setError("Failed to create sequence");
+                  }
+                }}
+                className="rounded-md bg-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-600"
+              >
+                + Create Sequence
+              </button>
+            )}
+            <button
+              onClick={() => setShowPicker(true)}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+            >
+              Add Scenes
+            </button>
+          </div>
         </div>
 
         {scenes.length === 0 ? (
           <p className="text-sm text-gray-500 py-4">No scenes in this production yet.</p>
+        ) : sequences.length > 0 ? (
+          <SequencedSceneList
+            productionId={productionId}
+            scenes={scenes}
+            onViewScene={onViewScene}
+            onRefresh={load}
+          />
         ) : (
           <div className="space-y-2">
             {scenes.map((scene) => (

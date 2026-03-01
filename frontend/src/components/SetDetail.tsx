@@ -18,7 +18,10 @@ import {
   deleteProp,
   listCharacters,
   migrateEntities,
+  uploadPropReference,
+  uploadSonicIdentityAudio,
 } from "../api/client.ts";
+import { AudioPlayer } from "./AudioPlayer.tsx";
 
 interface SetDetailProps {
   productionBibleId: string;
@@ -143,6 +146,30 @@ export function SetDetail({ productionBibleId }: SetDetailProps) {
       await deleteSonicIdentity(setId);
       setSets((prev) =>
         prev.map((s) => (s.set_id === setId ? { ...s, sonic_identity: null } : s)),
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleUploadPropRef = async (propId: string, file: File) => {
+    try {
+      const updated = await uploadPropReference(propId, file);
+      setProps((prev) => prev.map((p) => (p.prop_id === propId ? updated : p)));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleUploadSonicAudio = async (sonicIdentityId: string, file: File) => {
+    try {
+      const updated = await uploadSonicIdentityAudio(sonicIdentityId, file);
+      setSets((prev) =>
+        prev.map((s) =>
+          s.sonic_identity?.sonic_identity_id === sonicIdentityId
+            ? { ...s, sonic_identity: updated }
+            : s,
+        ),
       );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -333,6 +360,7 @@ export function SetDetail({ productionBibleId }: SetDetailProps) {
                     set={selectedSet}
                     onUpsert={handleUpsertSonic}
                     onDelete={handleDeleteSonic}
+                    onUploadAudio={handleUploadSonicAudio}
                   />
                 )}
               </>
@@ -433,6 +461,7 @@ export function SetDetail({ productionBibleId }: SetDetailProps) {
               characters={characters}
               onUpdate={handleUpdateProp}
               onDelete={handleDeleteProp}
+              onUploadRef={handleUploadPropRef}
               onClose={() => setSelectedPropId(null)}
             />
           )}
@@ -572,10 +601,12 @@ function SetSonicTab({
   set,
   onUpsert,
   onDelete,
+  onUploadAudio,
 }: {
   set: SetResponse;
   onUpsert: (setId: string, data: { ambience_description?: string; generation_prompt?: string }) => Promise<void>;
   onDelete: (setId: string) => Promise<void>;
+  onUploadAudio: (sonicIdentityId: string, file: File) => Promise<void>;
 }) {
   const [ambienceDescription, setAmbienceDescription] = useState(set.sonic_identity?.ambience_description ?? "");
   const [generationPrompt, setGenerationPrompt] = useState(set.sonic_identity?.generation_prompt ?? "");
@@ -593,6 +624,14 @@ function SetSonicTab({
       generation_prompt: generationPrompt || undefined,
     });
     setSaving(false);
+  };
+
+  const handleAudioFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && set.sonic_identity) {
+      onUploadAudio(set.sonic_identity.sonic_identity_id, file);
+    }
+    e.target.value = "";
   };
 
   return (
@@ -619,14 +658,27 @@ function SetSonicTab({
         />
       </div>
 
+      {/* Reference audio playback */}
+      {set.sonic_identity?.reference_audio && (
+        <AudioPlayer src={set.sonic_identity.reference_audio} label="Reference Audio" />
+      )}
+
       <div className="flex items-center justify-between">
-        <button
-          disabled
-          title="Audio adapter coming soon"
-          className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-500 cursor-not-allowed"
-        >
-          Generate Audio
-        </button>
+        <div className="flex gap-2">
+          <button
+            disabled
+            title="Audio adapter coming soon"
+            className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-500 cursor-not-allowed"
+          >
+            Generate Audio
+          </button>
+          {set.sonic_identity && (
+            <label className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer">
+              Upload Audio
+              <input type="file" accept="audio/*" onChange={handleAudioFileChange} className="hidden" />
+            </label>
+          )}
+        </div>
 
         <div className="flex gap-2">
           {set.sonic_identity && (
@@ -655,12 +707,14 @@ function PropEditor({
   characters,
   onUpdate,
   onDelete,
+  onUploadRef,
   onClose,
 }: {
   prop: PropResponse;
   characters: CharacterResponse[];
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onUploadRef: (propId: string, file: File) => Promise<void>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(prop.name);
@@ -695,6 +749,12 @@ function PropEditor({
     );
   };
 
+  const handlePropFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onUploadRef(prop.prop_id, file);
+    e.target.value = "";
+  };
+
   return (
     <div className="mt-4 rounded-lg border border-blue-700/50 bg-gray-900/80 p-4 space-y-3">
       <div className="flex items-center justify-between">
@@ -702,14 +762,22 @@ function PropEditor({
         <button onClick={onClose} className="text-xs text-gray-400 hover:text-gray-200">close</button>
       </div>
 
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Name</label>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
-        />
+      <div className="flex gap-3">
+        <div className="flex-1">
+          <label className="block text-xs text-gray-400 mb-1">Name</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
+          />
+        </div>
+        <div className="flex-shrink-0 pt-5">
+          <label className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer">
+            Upload Image
+            <input type="file" accept="image/*" onChange={handlePropFileChange} className="hidden" />
+          </label>
+        </div>
       </div>
 
       <div>

@@ -12,7 +12,10 @@ import {
   createSFXItem,
   updateSFXItem,
   deleteSFXItem,
+  uploadScoreThemeAudio,
+  uploadSFXAudio,
 } from "../api/client.ts";
+import { AudioPlayer } from "./AudioPlayer.tsx";
 
 interface SoundDepartmentProps {
   productionBibleId: string;
@@ -147,6 +150,24 @@ export function SoundDepartment({ productionBibleId }: SoundDepartmentProps) {
     }
   };
 
+  const handleUploadThemeAudio = async (themeId: string, file: File) => {
+    try {
+      const updated = await uploadScoreThemeAudio(themeId, file);
+      setScoreThemes((prev) => prev.map((t) => (t.score_theme_id === themeId ? updated : t)));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleUploadSfxAudio = async (sfxId: string, file: File) => {
+    try {
+      const updated = await uploadSFXAudio(sfxId, file);
+      setSfxItems((prev) => prev.map((s) => (s.sfx_item_id === sfxId ? updated : s)));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   if (loading) {
     return <div className="flex justify-center py-12"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>;
   }
@@ -214,6 +235,7 @@ export function SoundDepartment({ productionBibleId }: SoundDepartmentProps) {
                 onToggle={() => setSelectedThemeId(selectedThemeId === theme.score_theme_id ? null : theme.score_theme_id)}
                 onUpdate={handleUpdateTheme}
                 onDelete={handleDeleteTheme}
+                onUploadAudio={handleUploadThemeAudio}
               />
             ))}
           </div>
@@ -308,6 +330,7 @@ export function SoundDepartment({ productionBibleId }: SoundDepartmentProps) {
                 onToggle={() => setSelectedSfxId(selectedSfxId === sfx.sfx_item_id ? null : sfx.sfx_item_id)}
                 onUpdate={handleUpdateSfx}
                 onDelete={handleDeleteSfx}
+                onUploadAudio={handleUploadSfxAudio}
               />
             ))}
           </div>
@@ -325,12 +348,14 @@ function ScoreThemeItem({
   onToggle,
   onUpdate,
   onDelete,
+  onUploadAudio,
 }: {
   theme: ScoreThemeResponse;
   isExpanded: boolean;
   onToggle: () => void;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onUploadAudio: (themeId: string, file: File) => Promise<void>;
 }) {
   const [name, setName] = useState(theme.name);
   const [moodDescriptors, setMoodDescriptors] = useState(theme.mood_descriptors?.join(", ") ?? "");
@@ -449,14 +474,34 @@ function ScoreThemeItem({
             />
           </div>
 
+          {/* Reference audio playback */}
+          {theme.reference_audio && (
+            <AudioPlayer src={theme.reference_audio} label="Reference Audio" />
+          )}
+
           <div className="flex items-center justify-between">
-            <button
-              disabled
-              title="Music adapter coming soon"
-              className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-500 cursor-not-allowed"
-            >
-              Generate Music
-            </button>
+            <div className="flex gap-2">
+              <button
+                disabled
+                title="Music adapter coming soon"
+                className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-500 cursor-not-allowed"
+              >
+                Generate Music
+              </button>
+              <label className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer">
+                Upload Audio
+                <input
+                  type="file"
+                  accept="audio/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onUploadAudio(theme.score_theme_id, file);
+                    e.target.value = "";
+                  }}
+                  className="hidden"
+                />
+              </label>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={() => onDelete(theme.score_theme_id)}
@@ -485,12 +530,14 @@ function SFXItemRow({
   onToggle,
   onUpdate,
   onDelete,
+  onUploadAudio,
 }: {
   sfx: SFXItemResponse;
   isExpanded: boolean;
   onToggle: () => void;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onUploadAudio: (sfxId: string, file: File) => Promise<void>;
 }) {
   const [name, setName] = useState(sfx.name);
   const [category, setCategory] = useState(sfx.category);
@@ -599,13 +646,33 @@ function SFXItemRow({
             />
           </div>
 
+          {/* Source audio playback */}
+          {sfx.source_audio && (
+            <AudioPlayer src={sfx.source_audio} label="Source Audio" />
+          )}
+
           <div className="flex justify-between">
-            <button
-              onClick={() => onDelete(sfx.sfx_item_id)}
-              className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-300 hover:bg-red-800"
-            >
-              Delete
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onDelete(sfx.sfx_item_id)}
+                className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-300 hover:bg-red-800"
+              >
+                Delete
+              </button>
+              <label className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer">
+                Upload Audio
+                <input
+                  type="file"
+                  accept="audio/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onUploadAudio(sfx.sfx_item_id, file);
+                    e.target.value = "";
+                  }}
+                  className="hidden"
+                />
+              </label>
+            </div>
             <button
               onClick={handleSave}
               disabled={saving}

@@ -15,6 +15,9 @@ import {
   upsertVoiceProfile,
   deleteVoiceProfile,
   migrateEntities,
+  uploadActorRef,
+  generateAppearance,
+  uploadWardrobeReference,
 } from "../api/client.ts";
 
 interface CharacterDetailProps {
@@ -192,6 +195,40 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
     }
   };
 
+  const handleUploadActorRef = async (charId: string, file: File) => {
+    try {
+      const updated = await uploadActorRef(charId, file);
+      setCharacters((prev) => prev.map((c) => (c.character_id === charId ? updated : c)));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleGenerateAppearance = async (charId: string) => {
+    try {
+      const updated = await generateAppearance(charId);
+      setCharacters((prev) => prev.map((c) => (c.character_id === charId ? updated : c)));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleUploadWardrobeRef = async (wardrobeId: string, file: File) => {
+    if (!selectedCharacter) return;
+    try {
+      const updated = await uploadWardrobeReference(wardrobeId, file);
+      setCharacters((prev) =>
+        prev.map((c) =>
+          c.character_id === selectedCharacter.character_id
+            ? { ...c, wardrobe: (c.wardrobe ?? []).map((w) => (w.wardrobe_id === wardrobeId ? updated : w)) }
+            : c,
+        ),
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const roleBadgeColor = (role: string) => {
     switch (role) {
       case "PROTAGONIST": return "bg-yellow-900 text-yellow-300";
@@ -337,7 +374,11 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
 
               {/* Actor References tab */}
               {activeSubTab === "actor_refs" && (
-                <ActorRefsTab character={selectedCharacter} />
+                <ActorRefsTab
+                  character={selectedCharacter}
+                  onUploadRef={handleUploadActorRef}
+                  onGenerateAppearance={handleGenerateAppearance}
+                />
               )}
 
               {/* Wardrobe tab */}
@@ -391,6 +432,7 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
                           wardrobe={w}
                           onUpdate={handleUpdateWardrobe}
                           onDelete={handleDeleteWardrobe}
+                          onUploadRef={handleUploadWardrobeRef}
                         />
                       ))}
                     </div>
@@ -536,29 +578,67 @@ function OverviewTab({
   );
 }
 
-function ActorRefsTab({ character }: { character: CharacterResponse }) {
+function ActorRefsTab({
+  character,
+  onUploadRef,
+  onGenerateAppearance,
+}: {
+  character: CharacterResponse;
+  onUploadRef: (charId: string, file: File) => Promise<void>;
+  onGenerateAppearance: (charId: string) => Promise<void>;
+}) {
+  const [generating, setGenerating] = useState(false);
   const refs = character.actor_refs ?? [];
 
-  if (refs.length === 0) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <p className="text-sm text-gray-500">
-          No actor references yet. Upload endpoint coming in a future phase.
-        </p>
-      </div>
-    );
-  }
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onUploadRef(character.character_id, file);
+    e.target.value = "";
+  };
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      await onGenerateAppearance(character.character_id);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   return (
-    <div className="grid grid-cols-3 gap-3">
-      {refs.map((url, idx) => (
-        <img
-          key={idx}
-          src={url}
-          alt={`Actor ref ${idx + 1}`}
-          className="w-full aspect-square object-cover rounded border border-gray-700"
-        />
-      ))}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-medium text-gray-300">Actor References</h4>
+        <label className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 cursor-pointer">
+          + Upload
+          <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+        </label>
+      </div>
+
+      {refs.length === 0 ? (
+        <div className="flex items-center justify-center py-12 rounded-lg border border-dashed border-gray-700">
+          <p className="text-sm text-gray-500">No actor references yet. Upload reference photos above.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          {refs.map((url, idx) => (
+            <img
+              key={idx}
+              src={url}
+              alt={`Actor ref ${idx + 1}`}
+              className="w-full aspect-square object-cover rounded border border-gray-700"
+            />
+          ))}
+        </div>
+      )}
+
+      <button
+        onClick={handleGenerate}
+        disabled={refs.length === 0 || generating}
+        className="text-xs px-3 py-1.5 rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {generating ? "Generating..." : "Generate Base Appearance"}
+      </button>
     </div>
   );
 }
@@ -567,10 +647,12 @@ function WardrobeItem({
   wardrobe,
   onUpdate,
   onDelete,
+  onUploadRef,
 }: {
   wardrobe: WardrobeResponse;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onUploadRef: (wardrobeId: string, file: File) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(wardrobe.label);
@@ -585,6 +667,14 @@ function WardrobeItem({
     setIsDefault(wardrobe.is_default);
   }, [wardrobe]);
 
+  const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onUploadRef(wardrobe.wardrobe_id, file);
+    e.target.value = "";
+  };
+
+  const refImages = wardrobe.reference_images ?? [];
+
   const handleSave = async () => {
     await onUpdate(wardrobe.wardrobe_id, {
       label: label.trim(),
@@ -597,32 +687,50 @@ function WardrobeItem({
 
   if (!editing) {
     return (
-      <div className="rounded border border-gray-700 bg-gray-800/50 p-3 flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-200">{wardrobe.label}</span>
-            {wardrobe.is_default && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900 text-green-300">default</span>
+      <div className="rounded border border-gray-700 bg-gray-800/50 p-3">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-200">{wardrobe.label}</span>
+              {wardrobe.is_default && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900 text-green-300">default</span>
+              )}
+            </div>
+            {wardrobe.prompt_descriptor && (
+              <p className="text-xs text-gray-400 mt-1">{wardrobe.prompt_descriptor}</p>
             )}
           </div>
-          {wardrobe.prompt_descriptor && (
-            <p className="text-xs text-gray-400 mt-1">{wardrobe.prompt_descriptor}</p>
-          )}
+          <div className="flex gap-1">
+            <label className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer">
+              Upload
+              <input type="file" accept="image/*" onChange={handleUploadFile} className="hidden" />
+            </label>
+            <button
+              onClick={() => setEditing(true)}
+              className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => onDelete(wardrobe.wardrobe_id)}
+              className="text-xs px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
+            >
+              Delete
+            </button>
+          </div>
         </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => setEditing(true)}
-            className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => onDelete(wardrobe.wardrobe_id)}
-            className="text-xs px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
-          >
-            Delete
-          </button>
-        </div>
+        {refImages.length > 0 && (
+          <div className="flex gap-1.5 mt-2 flex-wrap">
+            {refImages.map((url, idx) => (
+              <img
+                key={idx}
+                src={url}
+                alt={`Ref ${idx + 1}`}
+                className="w-12 h-12 object-cover rounded border border-gray-700"
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -658,6 +766,22 @@ function WardrobeItem({
           placeholder="e.g. Act 2, night scenes"
         />
       </div>
+      {refImages.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap">
+          {refImages.map((url, idx) => (
+            <img
+              key={idx}
+              src={url}
+              alt={`Ref ${idx + 1}`}
+              className="w-12 h-12 object-cover rounded border border-gray-700"
+            />
+          ))}
+        </div>
+      )}
+      <label className="inline-block text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer">
+        Upload Reference Image
+        <input type="file" accept="image/*" onChange={handleUploadFile} className="hidden" />
+      </label>
       <div className="flex items-center gap-2">
         <input
           type="checkbox"

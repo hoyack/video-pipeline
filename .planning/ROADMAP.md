@@ -111,7 +111,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 | 15. Video Generation Editor | 3/3 | Complete    | 2026-02-21 |
 | 16. Production Bible Foundation | 4/4 | Complete    | 2026-03-01 |
-| 17. PB Entity Expansion | 4/4 | Complete   | 2026-03-01 |
+| 17. PB Entity Expansion | 4/4 | Complete    | 2026-03-01 |
 | 18. Screenplay System | 0/3 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation

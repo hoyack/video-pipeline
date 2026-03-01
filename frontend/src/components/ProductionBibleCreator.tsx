@@ -22,6 +22,16 @@ import {
 } from "../api/client.ts";
 import { AssetUploader } from "./AssetUploader.tsx";
 import { AssetEditor } from "./AssetEditor.tsx";
+import { CharacterDetail } from "./CharacterDetail.tsx";
+import { SetDetail } from "./SetDetail.tsx";
+import { SoundDepartment } from "./SoundDepartment.tsx";
+import {
+  listCharacters,
+  listSets,
+  listProps,
+  listScoreThemes,
+  listSFXItems,
+} from "../api/client.ts";
 
 interface ProductionBibleCreatorProps {
   productionBibleId?: string | null;
@@ -118,6 +128,14 @@ export function ProductionBibleCreator({
 
   // Department tab state (used in Stage 3)
   const [activeTab, setActiveTab] = useState("casting");
+
+  // Entity counts for department tab badges (Stage 3)
+  const [entityCounts, setEntityCounts] = useState<Record<string, number>>({
+    casting: 0,
+    art: 0,
+    sound: 0,
+  });
+  const [showRawAssets, setShowRawAssets] = useState(false);
 
   // Lightbox state for Stage 3 image preview
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -219,6 +237,32 @@ export function ProductionBibleCreator({
         });
     }
   }, [productionBibleId]);
+
+  // Fetch entity counts for Stage 3 tab badges
+  useEffect(() => {
+    const bibleId = productionBibleId || manifest?.production_bible_id;
+    if (!bibleId || currentStage !== 3) return;
+
+    const fetchCounts = async () => {
+      try {
+        const [chars, sets, props, themes, sfx] = await Promise.all([
+          listCharacters(bibleId),
+          listSets(bibleId),
+          listProps(bibleId),
+          listScoreThemes(bibleId),
+          listSFXItems(bibleId),
+        ]);
+        setEntityCounts({
+          casting: chars.length,
+          art: sets.length + props.length,
+          sound: themes.length + sfx.length,
+        });
+      } catch {
+        // Counts are cosmetic; silently ignore errors
+      }
+    };
+    fetchCounts();
+  }, [productionBibleId, manifest?.production_bible_id, currentStage]);
 
   // Polling for Stage 2 (PROCESSING)
   useEffect(() => {
@@ -973,9 +1017,7 @@ export function ProductionBibleCreator({
         {/* Department tabs */}
         <div className="mb-4 flex gap-2">
           {DEPARTMENT_TABS.map((tab) => {
-            const count = tab.assetTypes.length > 0
-              ? assets.filter((a) => tab.assetTypes.includes(a.asset_type)).length
-              : 0;
+            const count = entityCounts[tab.id] || 0;
             return (
               <button
                 key={tab.id}
@@ -997,263 +1039,285 @@ export function ProductionBibleCreator({
           })}
         </div>
 
-        {/* Sound tab placeholder */}
-        {activeTab === "sound" && (
-          <div className="flex min-h-[200px] items-center justify-center rounded-lg border border-dashed border-gray-700">
-            <p className="text-sm text-gray-500">Audio direction coming soon</p>
+        {/* Entity components per department tab */}
+        {activeTab === "casting" && manifest?.production_bible_id && (
+          <div className="mb-8">
+            <CharacterDetail productionBibleId={manifest.production_bible_id} />
           </div>
         )}
 
-        {/* Asset list (filtered by active tab) */}
-        {activeTab !== "sound" && (
-          <div className="mb-8 space-y-4">
-            {filteredAssets.length === 0 ? (
-              <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-dashed border-gray-700">
-                <p className="text-sm text-gray-500">
-                  No {activeTabConfig?.label} assets yet.
-                </p>
-              </div>
-            ) : (
-              filteredAssets.map((asset) => (
-                <div
-                  key={asset.asset_id}
-                  className="rounded-lg border border-gray-800 bg-gray-900/50 p-4"
-                >
-                  <div className="flex gap-4">
-                    {/* Thumbnail */}
-                    <div className="flex-shrink-0 space-y-1.5">
-                      {asset.reference_image_url ? (
-                        <img
-                          src={asset.reference_image_url}
-                          alt={asset.name}
-                          onClick={() => {
-                            setLightboxUrl(asset.reference_image_url);
-                            setLightboxName(asset.name);
-                          }}
-                          className="w-32 h-32 object-cover rounded border border-gray-700 cursor-pointer transition-opacity hover:opacity-80"
-                          title="Click to enlarge"
-                        />
-                      ) : (
-                        <div className="w-32 h-32 bg-gray-800 rounded border border-gray-700 flex items-center justify-center text-gray-600 text-xs">
-                          No image
-                        </div>
-                      )}
-                      {/* Image action buttons */}
-                      {asset.reference_image_url && (
-                        <div className="flex gap-1.5 justify-center">
-                          <button
-                            onClick={() => copyImage(asset.reference_image_url!, `img-${asset.asset_id}`)}
-                            className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
-                            title="Copy image to clipboard"
-                          >
-                            {copiedField === `img-${asset.asset_id}` ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-                          </button>
-                          <a
-                            href={asset.reference_image_url}
-                            download={`${asset.name}.png`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex items-center px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
-                            title="Download image"
-                          >
-                            <SaveIcon size={12} />
-                          </a>
-                        </div>
-                      )}
-                    </div>
+        {activeTab === "art" && manifest?.production_bible_id && (
+          <div className="mb-8">
+            <SetDetail productionBibleId={manifest.production_bible_id} />
+          </div>
+        )}
 
-                    {/* Details */}
-                    <div className="flex-1 min-w-0">
-                      {/* Name + badges row */}
-                      <div className="flex items-start gap-2 mb-2">
-                        <input
-                          type="text"
-                          value={asset.name}
-                          onChange={(e) =>
-                            handleAssetUpdate(asset.asset_id, {
-                              name: e.target.value,
-                            })
-                          }
-                          className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white text-sm font-medium flex-1 min-w-0 focus:border-blue-500 outline-none"
-                        />
-                        <span className="px-2 py-1 text-xs font-medium bg-blue-900 text-blue-300 rounded">
-                          {asset.manifest_tag}
-                        </span>
-                        <select
-                          value={asset.asset_type}
-                          onChange={(e) =>
-                            handleAssetUpdate(asset.asset_id, {
-                              asset_type: e.target.value,
-                            })
-                          }
-                          className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:border-blue-500 outline-none"
-                        >
-                          {ASSET_TYPES.map((type) => (
-                            <option key={type} value={type}>
-                              {type}
-                            </option>
-                          ))}
-                        </select>
+        {activeTab === "sound" && manifest?.production_bible_id && (
+          <div className="mb-8">
+            <SoundDepartment productionBibleId={manifest.production_bible_id} />
+          </div>
+        )}
+
+        {/* Collapsible Raw Assets section */}
+        <div className="mb-8">
+          <button
+            onClick={() => setShowRawAssets(!showRawAssets)}
+            className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 mb-3"
+          >
+            <span className={`transition-transform ${showRawAssets ? "rotate-90" : ""}`}>&#9654;</span>
+            Raw Assets ({filteredAssets.length})
+          </button>
+
+          {showRawAssets && (
+            <div className="space-y-4">
+              {filteredAssets.length === 0 ? (
+                <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-dashed border-gray-700">
+                  <p className="text-sm text-gray-500">
+                    No {activeTabConfig?.label} assets yet.
+                  </p>
+                </div>
+              ) : (
+                filteredAssets.map((asset) => (
+                  <div
+                    key={asset.asset_id}
+                    className="rounded-lg border border-gray-800 bg-gray-900/50 p-4"
+                  >
+                    <div className="flex gap-4">
+                      {/* Thumbnail */}
+                      <div className="flex-shrink-0 space-y-1.5">
+                        {asset.reference_image_url ? (
+                          <img
+                            src={asset.reference_image_url}
+                            alt={asset.name}
+                            onClick={() => {
+                              setLightboxUrl(asset.reference_image_url);
+                              setLightboxName(asset.name);
+                            }}
+                            className="w-32 h-32 object-cover rounded border border-gray-700 cursor-pointer transition-opacity hover:opacity-80"
+                            title="Click to enlarge"
+                          />
+                        ) : (
+                          <div className="w-32 h-32 bg-gray-800 rounded border border-gray-700 flex items-center justify-center text-gray-600 text-xs">
+                            No image
+                          </div>
+                        )}
+                        {/* Image action buttons */}
+                        {asset.reference_image_url && (
+                          <div className="flex gap-1.5 justify-center">
+                            <button
+                              onClick={() => copyImage(asset.reference_image_url!, `img-${asset.asset_id}`)}
+                              className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+                              title="Copy image to clipboard"
+                            >
+                              {copiedField === `img-${asset.asset_id}` ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                            </button>
+                            <a
+                              href={asset.reference_image_url}
+                              download={`${asset.name}.png`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+                              title="Download image"
+                            >
+                              <SaveIcon size={12} />
+                            </a>
+                          </div>
+                        )}
                       </div>
 
-                      {/* Quality score + detection info */}
-                      <div className="flex items-center gap-3 mb-3 text-xs">
-                        {asset.quality_score !== null && (
+                      {/* Details */}
+                      <div className="flex-1 min-w-0">
+                        {/* Name + badges row */}
+                        <div className="flex items-start gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={asset.name}
+                            onChange={(e) =>
+                              handleAssetUpdate(asset.asset_id, {
+                                name: e.target.value,
+                              })
+                            }
+                            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white text-sm font-medium flex-1 min-w-0 focus:border-blue-500 outline-none"
+                          />
+                          <span className="px-2 py-1 text-xs font-medium bg-blue-900 text-blue-300 rounded">
+                            {asset.manifest_tag}
+                          </span>
+                          <select
+                            value={asset.asset_type}
+                            onChange={(e) =>
+                              handleAssetUpdate(asset.asset_id, {
+                                asset_type: e.target.value,
+                              })
+                            }
+                            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:border-blue-500 outline-none"
+                          >
+                            {ASSET_TYPES.map((type) => (
+                              <option key={type} value={type}>
+                                {type}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Quality score + detection info */}
+                        <div className="flex items-center gap-3 mb-3 text-xs">
+                          {asset.quality_score !== null && (
+                            <span
+                              className={`px-2 py-1 rounded font-medium ${getQualityBadgeColor(asset.quality_score)}`}
+                            >
+                              Quality: {asset.quality_score.toFixed(1)}
+                            </span>
+                          )}
+                          {asset.detection_class && (
+                            <span className="text-gray-500">
+                              {asset.detection_class}{" "}
+                              {asset.detection_confidence !== null &&
+                                `(${(asset.detection_confidence * 100).toFixed(0)}%)`}
+                            </span>
+                          )}
                           <span
-                            className={`px-2 py-1 rounded font-medium ${getQualityBadgeColor(asset.quality_score)}`}
-                          >
-                            Quality: {asset.quality_score.toFixed(1)}
-                          </span>
-                        )}
-                        {asset.detection_class && (
-                          <span className="text-gray-500">
-                            {asset.detection_class}{" "}
-                            {asset.detection_confidence !== null &&
-                              `(${(asset.detection_confidence * 100).toFixed(0)}%)`}
-                          </span>
-                        )}
-                        <span
-                          className={`px-2 py-1 rounded ${
-                            asset.source === "uploaded"
-                              ? "bg-purple-900 text-purple-300"
-                              : asset.source === "video_frame"
+                            className={`px-2 py-1 rounded ${
+                              asset.source === "uploaded"
                                 ? "bg-purple-900 text-purple-300"
-                                : "bg-gray-800 text-gray-400"
-                          }`}
-                        >
-                          {asset.source === "video_frame" ? "video frame" : asset.source}
-                        </span>
-                        {asset.is_face_crop && (
-                          <span className="px-2 py-1 rounded bg-indigo-900 text-indigo-300">
-                            face
+                                : asset.source === "video_frame"
+                                  ? "bg-purple-900 text-purple-300"
+                                  : "bg-gray-800 text-gray-400"
+                            }`}
+                          >
+                            {asset.source === "video_frame" ? "video frame" : asset.source}
                           </span>
-                        )}
-                      </div>
-
-                      {/* Reverse prompt */}
-                      <div className="mb-3">
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-xs font-medium text-gray-400">
-                            Reverse Prompt
-                          </label>
-                          <div className="flex items-center gap-2">
-                            {asset.reverse_prompt && (
-                              <button
-                                onClick={() => copyText(asset.reverse_prompt!, `rp-${asset.asset_id}`)}
-                                className="text-gray-500 hover:text-gray-300 transition-colors"
-                                title="Copy reverse prompt"
-                              >
-                                {copiedField === `rp-${asset.asset_id}` ? <CheckIcon /> : <CopyIcon />}
-                              </button>
-                            )}
-                            <button
-                              onClick={() =>
-                                toggleFieldEdit(asset.asset_id, "reverse_prompt")
-                              }
-                              className="text-xs text-blue-400 hover:text-blue-300"
-                            >
-                              {isFieldEditing(asset.asset_id, "reverse_prompt")
-                                ? "Save"
-                                : "Edit"}
-                            </button>
-                          </div>
+                          {asset.is_face_crop && (
+                            <span className="px-2 py-1 rounded bg-indigo-900 text-indigo-300">
+                              face
+                            </span>
+                          )}
                         </div>
-                        {isFieldEditing(asset.asset_id, "reverse_prompt") ? (
-                          <textarea
-                            value={asset.reverse_prompt || ""}
-                            onChange={(e) =>
-                              handleAssetUpdate(asset.asset_id, {
-                                reverse_prompt: e.target.value,
-                              })
-                            }
-                            rows={3}
-                            className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none"
-                          />
-                        ) : (
-                          <p className="text-sm text-gray-300">
-                            {asset.reverse_prompt || (
-                              <span className="text-gray-600 italic">
-                                No reverse prompt
-                              </span>
-                            )}
-                          </p>
-                        )}
-                      </div>
 
-                      {/* Visual description */}
-                      <div className="mb-3">
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-xs font-medium text-gray-400">
-                            Visual Description
-                          </label>
-                          <div className="flex items-center gap-2">
-                            {asset.visual_description && (
+                        {/* Reverse prompt */}
+                        <div className="mb-3">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-medium text-gray-400">
+                              Reverse Prompt
+                            </label>
+                            <div className="flex items-center gap-2">
+                              {asset.reverse_prompt && (
+                                <button
+                                  onClick={() => copyText(asset.reverse_prompt!, `rp-${asset.asset_id}`)}
+                                  className="text-gray-500 hover:text-gray-300 transition-colors"
+                                  title="Copy reverse prompt"
+                                >
+                                  {copiedField === `rp-${asset.asset_id}` ? <CheckIcon /> : <CopyIcon />}
+                                </button>
+                              )}
                               <button
-                                onClick={() => copyText(asset.visual_description!, `vd-${asset.asset_id}`)}
-                                className="text-gray-500 hover:text-gray-300 transition-colors"
-                                title="Copy visual description"
+                                onClick={() =>
+                                  toggleFieldEdit(asset.asset_id, "reverse_prompt")
+                                }
+                                className="text-xs text-blue-400 hover:text-blue-300"
                               >
-                                {copiedField === `vd-${asset.asset_id}` ? <CheckIcon /> : <CopyIcon />}
+                                {isFieldEditing(asset.asset_id, "reverse_prompt")
+                                  ? "Save"
+                                  : "Edit"}
                               </button>
-                            )}
-                            <button
-                              onClick={() =>
-                                toggleFieldEdit(asset.asset_id, "visual_description")
-                              }
-                              className="text-xs text-blue-400 hover:text-blue-300"
-                            >
-                              {isFieldEditing(asset.asset_id, "visual_description")
-                                ? "Save"
-                                : "Edit"}
-                            </button>
+                            </div>
                           </div>
+                          {isFieldEditing(asset.asset_id, "reverse_prompt") ? (
+                            <textarea
+                              value={asset.reverse_prompt || ""}
+                              onChange={(e) =>
+                                handleAssetUpdate(asset.asset_id, {
+                                  reverse_prompt: e.target.value,
+                                })
+                              }
+                              rows={3}
+                              className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none"
+                            />
+                          ) : (
+                            <p className="text-sm text-gray-300">
+                              {asset.reverse_prompt || (
+                                <span className="text-gray-600 italic">
+                                  No reverse prompt
+                                </span>
+                              )}
+                            </p>
+                          )}
                         </div>
-                        {isFieldEditing(asset.asset_id, "visual_description") ? (
-                          <textarea
-                            value={asset.visual_description || ""}
-                            onChange={(e) =>
-                              handleAssetUpdate(asset.asset_id, {
-                                visual_description: e.target.value,
-                              })
-                            }
-                            rows={2}
-                            className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none"
-                          />
-                        ) : (
-                          <p className="text-sm text-gray-300">
-                            {asset.visual_description || (
-                              <span className="text-gray-600 italic">
-                                No visual description
-                              </span>
-                            )}
-                          </p>
-                        )}
-                      </div>
 
-                      {/* Action buttons */}
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleReprocess(asset.asset_id)}
-                          disabled={reprocessingAssets.has(asset.asset_id)}
-                          className="text-xs px-3 py-1 rounded bg-yellow-900 text-yellow-300 hover:bg-yellow-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {reprocessingAssets.has(asset.asset_id)
-                            ? "Processing..."
-                            : "Re-process"}
-                        </button>
-                        <button
-                          onClick={() => handleAssetDelete(asset.asset_id)}
-                          className="text-xs px-3 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
-                        >
-                          Remove
-                        </button>
+                        {/* Visual description */}
+                        <div className="mb-3">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-medium text-gray-400">
+                              Visual Description
+                            </label>
+                            <div className="flex items-center gap-2">
+                              {asset.visual_description && (
+                                <button
+                                  onClick={() => copyText(asset.visual_description!, `vd-${asset.asset_id}`)}
+                                  className="text-gray-500 hover:text-gray-300 transition-colors"
+                                  title="Copy visual description"
+                                >
+                                  {copiedField === `vd-${asset.asset_id}` ? <CheckIcon /> : <CopyIcon />}
+                                </button>
+                              )}
+                              <button
+                                onClick={() =>
+                                  toggleFieldEdit(asset.asset_id, "visual_description")
+                                }
+                                className="text-xs text-blue-400 hover:text-blue-300"
+                              >
+                                {isFieldEditing(asset.asset_id, "visual_description")
+                                  ? "Save"
+                                  : "Edit"}
+                              </button>
+                            </div>
+                          </div>
+                          {isFieldEditing(asset.asset_id, "visual_description") ? (
+                            <textarea
+                              value={asset.visual_description || ""}
+                              onChange={(e) =>
+                                handleAssetUpdate(asset.asset_id, {
+                                  visual_description: e.target.value,
+                                })
+                              }
+                              rows={2}
+                              className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none"
+                            />
+                          ) : (
+                            <p className="text-sm text-gray-300">
+                              {asset.visual_description || (
+                                <span className="text-gray-600 italic">
+                                  No visual description
+                                </span>
+                              )}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleReprocess(asset.asset_id)}
+                            disabled={reprocessingAssets.has(asset.asset_id)}
+                            className="text-xs px-3 py-1 rounded bg-yellow-900 text-yellow-300 hover:bg-yellow-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {reprocessingAssets.has(asset.asset_id)
+                              ? "Processing..."
+                              : "Re-process"}
+                          </button>
+                          <button
+                            onClick={() => handleAssetDelete(asset.asset_id)}
+                            className="text-xs px-3 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
+                ))
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Footer actions */}
         <div className="flex justify-between pt-6 border-t border-gray-800">

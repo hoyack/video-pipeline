@@ -116,7 +116,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 16. Production Bible Foundation | 4/4 | Complete    | 2026-03-01 |
 | 17. PB Entity Expansion | 4/4 | Complete    | 2026-03-01 |
 | 18. Screenplay System | 3/3 | Complete    | 2026-03-01 |
-| 19. Bible Context Fix + Cleanup | 0/0 | ○ Planned | — |
+| 19. Bible Context Fix + Cleanup | 0/2 | ○ Planned | — |
 | 20. Entity Media Uploads | 0/0 | ○ Planned | — |
 | 21. Sequence UI Polish | 0/0 | ○ Planned | — |
 
@@ -420,6 +420,11 @@ Plans:
   3. User-facing "manifest" strings removed from ShotCard.tsx and EditForkPanel.tsx
   4. Orphan files deleted: ManifestLibrary.tsx, ManifestCreator.tsx, ManifestCard.tsx, ManifestSelector.tsx
   5. Dead `sound_router` try/except guard removed from app.py
+**Plans**: 2 plans in 1 wave
+
+Plans:
+- [ ] 19-01-PLAN.md — Backend: Production.production_bible_id FK, migration, load_bible_context fix, API response update, sound_router cleanup
+- [ ] 19-02-PLAN.md — Frontend: Fix manifest strings in ShotCard/EditForkPanel, delete orphan Manifest*.tsx files
 
 ### Phase 20: Entity Media Uploads
 **Goal**: Add missing upload endpoints and frontend UI for reference images and audio files across all Production Bible entity types

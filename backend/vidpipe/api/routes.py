@@ -373,6 +373,9 @@ class SceneListItem(BaseModel):
     aspect_ratio: Optional[str] = None
     thumbnail_url: Optional[str] = None
     production_id: Optional[str] = None
+    # Phase 16: Sequence grouping
+    sequence_id: Optional[str] = None
+    scene_order: Optional[int] = None
 
 
 class PaginatedScenes(BaseModel):
@@ -1384,6 +1387,8 @@ async def list_scenes(
                     aspect_ratio=p.aspect_ratio,
                     thumbnail_url=thumbnail_map.get(str(p.id)),
                     production_id=str(p.production_id) if p.production_id else None,
+                    sequence_id=str(p.sequence_id) if p.sequence_id else None,
+                    scene_order=p.scene_order,
                 )
                 for p in scenes
             ],

@@ -30,6 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 14: Storyboard Manifest Asset Binding Fix** - Defense-in-depth fix for storyboard LLM creating new character tags instead of using existing manifest assets; prompt hardening, post-LLM tag remapping, prompt rewriter fallback, keyframe enforcement fallback (completed 2026-02-20)
 - [x] **Phase 15: Video Generation Editor** - Unified create/edit/monitor experience replacing GenerateForm + ProgressView; draft projects, gap-filling pipeline, per-scene uploads, VideoGenEditor component, pause/resume (completed 2026-02-21)
 - [x] **Phase 16: Production Bible Foundation** - Rename Manifest → Production Bible across stack, department tab structure, Sequence grouping layer above Scenes (Issues #7, #24) (completed 2026-03-01)
+- [ ] **Phase 17: Production Bible Entity Expansion** - Full Character, Set, Prop entities with sub-entities (Wardrobe, VoiceProfile, SonicIdentity), Score Themes and SFX Library in Sound Department (Issues #8, #9, #10, #11)
 
 ## Phase Details
 
@@ -109,6 +110,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 | 15. Video Generation Editor | 3/3 | Complete    | 2026-02-21 |
 | 16. Production Bible Foundation | 4/4 | Complete    | 2026-03-01 |
+| 17. PB Entity Expansion | 0/? | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -346,3 +348,31 @@ Plans:
 - [ ] 16-02-PLAN.md — Backend: Sequence model, migration, and CRUD API endpoints
 - [x] 16-03-PLAN.md — Frontend: Component renames, route updates, department tabs (Casting, Art Dept, Sound)
 - [ ] 16-04-PLAN.md — Frontend: Sequence types, API client, sequence grouping UI with drag-and-drop
+
+### Phase 17: Production Bible Entity Expansion
+**Goal**: Expand the Production Bible with full Character, Set, and Prop entities (each with sub-entities and CRUD APIs), plus Score Themes and SFX Library in the Sound Department — providing the structured data layer that generation pipelines, audio tracks, and crew agents depend on
+**Depends on**: Phase 16
+**Requirements**: PBEX-01, PBEX-02, PBEX-03, PBEX-04, PBEX-05, PBEX-06, PBEX-07, PBEX-08, PBEX-09, PBEX-10, PBEX-11, PBEX-12, PBEX-13, PBEX-14, PBEX-15, PBEX-16, PBEX-17, PBEX-18, PBEX-19, PBEX-20
+**GitHub Issues**: #8, #9, #10, #11
+**Success Criteria** (what must be TRUE):
+  1. Character entity exists with full schema (name, role, description, arc, actor_refs, base_appearance, wardrobe, voice_profile, prompt_tags) and CRUD API
+  2. Wardrobe sub-entity per character supports label, reference_images, scene_context, prompt_descriptor, is_default
+  3. VoiceProfile sub-entity per character stores voice_id, adapter_type, style_notes, sample_audio (generation disabled until audio adapter ships)
+  4. Set entity exists with reference_image, reverse_prompt (auto-generated via LLM Vision), style_tags, lighting_notes, prompt_tags, and SonicIdentity sub-entity
+  5. Prop entity exists under Art Department tab with reference_image, description, associated_characters, prompt_tags
+  6. ScoreTheme entity exists with mood_descriptors, tempo/usage notes, reference_audio, generation_prompt
+  7. SFXItem entity exists with category filter (IMPACT/MECHANICAL/NATURAL/UI/FOLEY/AMBIENCE), source_audio, generation_prompt
+  8. All entities have full CRUD APIs with list/create/get/update/delete endpoints
+  9. Casting tab shows Character list with detail view (4 tabs: Overview, Actor References, Wardrobe, Voice Profile)
+  10. Art Department tab shows Set list with detail view (2 tabs: Visual, Sonic Identity) and Prop list with detail view
+  11. Sound Department tab shows Score Themes section and SFX Library section with category filters
+  12. Existing manifest character/background assets migrated to Character/Set entities respectively
+  13. Scene.score_theme_id nullable FK added for forward compatibility
+  14. prompt-context endpoints for Character and Set return injection strings for generation pipeline
+**Plans:** 4 plans in 3 waves
+
+Plans:
+- [ ] 17-01-PLAN.md — ORM models (Character, Wardrobe, VoiceProfile, Set, SonicIdentity, Prop, ScoreTheme, SFXItem) + Scene.score_theme_id migration
+- [ ] 17-02-PLAN.md — Character + Set + Prop CRUD API routes with prompt-context endpoints and LLM Vision reverse-prompting
+- [ ] 17-03-PLAN.md — Sound Department CRUD API (ScoreTheme, SFXItem) + asset-to-entity migration service
+- [ ] 17-04-PLAN.md — Frontend: CharacterDetail, SetDetail, SoundDepartment components wired into department tabs

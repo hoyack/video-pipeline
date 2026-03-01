@@ -129,7 +129,44 @@ gh issue create --title "..." --body "..." # Create issues for discovered work
 
 When done, create a PR referencing the issue (e.g. `Closes #12`). Do not close issues manually — let the PR merge close them.
 
-## Build & Run
+## Docker (Primary Runtime)
+
+The app runs in Docker containers. **Code changes are not live until containers are rebuilt.**
+
+### Container Architecture
+
+| Container | Image | Ports | Notes |
+|-----------|-------|-------|-------|
+| `backend` | Python 3.11 + FastAPI | `${VIDPIPE_PORT:-8100}` → 8000 | Connects to Supabase PostgreSQL via `supabase_default` network |
+| `frontend` | nginx (production) or Node (dev) | `${VIDPIPE_FRONTEND_PORT:-80}` → 80 | Serves built Vite bundle, proxies `/api` to backend |
+
+### Compose Files
+
+- **`docker-compose.yml`** — Production: static frontend build (nginx), PostgreSQL via Supabase pooler (port 6543), S3 storage
+- **`docker-compose.dev.yml`** — Development: Vite dev server with HMR, backend `--reload`, SQLite, volume-mounted source code (changes auto-reload)
+
+### Rebuilding After Code Changes (CRITICAL)
+
+**Production mode (`docker-compose.yml`):** Source code is COPIED into images at build time. After modifying backend Python or frontend TypeScript/React code, you **must rebuild** for changes to take effect:
+
+```bash
+# Rebuild and restart specific services (fastest)
+docker compose up -d --build backend frontend
+
+# Rebuild just backend (Python changes only)
+docker compose up -d --build backend
+
+# Rebuild just frontend (TypeScript/React changes only)
+docker compose up -d --build frontend
+```
+
+**Development mode (`docker-compose.dev.yml`):** Backend source is volume-mounted with `--reload`, so Python changes auto-reload. Frontend runs Vite dev server with HMR. No rebuild needed for code changes, but dependency changes (`pyproject.toml`, `package.json`) still require rebuild.
+
+### After Making Fixes
+
+When code changes are ready to test in the browser, always rebuild the affected containers before verifying. A common failure mode is fixing code but forgetting to rebuild — the running containers still serve the old code.
+
+## Build & Run (Without Docker)
 
 ```bash
 # Backend

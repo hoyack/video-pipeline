@@ -11,8 +11,8 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 Phase: 19 of 21 (Bible Context Fix Cleanup)
 Plan: 2 of 2 complete
-Status: Phase 19 Plan 02 COMPLETE — Frontend manifest cleanup (terminology + orphan deletion)
-Last activity: 2026-03-01 — Completed 19-02 (Frontend Manifest Cleanup)
+Status: Phase 19 COMPLETE — Bible context fix + cleanup (all plans done)
+Last activity: 2026-03-01 — Completed 19-01 (Bible Context Fix + API Cleanup)
 
 Progress: [##########] 100% (Phase 19, Plan 2 of 2)
 
@@ -59,6 +59,7 @@ Progress: [##########] 100% (Phase 19, Plan 2 of 2)
 | Phase 18-screenplay-system P02 | 3min | 3 tasks | 4 files |
 | Phase 18-screenplay-system P03 | 8min | 2 tasks | 4 files |
 | Phase 19 P02 | 2min | 2 tasks | 6 files |
+| Phase 19 P01 | 3min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -263,6 +264,8 @@ Recent decisions affecting current work:
 - **18-03:** JSON editing for structured screenplay fields (v1) -- structured per-field editing deferred
 - **18-03:** generateScreenplayFull uses raw fetch since 202 responses have no parseable body
 - [Phase 19]: Left backward-compat type aliases (ManifestListItem, ManifestDetail) in types.ts and client.ts since they are harmless re-exports
+- **19-01:** Production.production_bible_id FK enables bible context before scenes exist
+- **19-01:** Direct import for sound_router since module now exists (Phase 17-03 complete)
 
 ### Roadmap Evolution
 
@@ -289,5 +292,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 19-02-PLAN.md (Frontend Manifest Cleanup) — Phase 19 Plan 02 done
+Stopped at: Completed 19-01-PLAN.md (Bible Context Fix + API Cleanup) — Phase 19 COMPLETE
 Resume file: None

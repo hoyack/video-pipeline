@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 16 of 16 (Production Bible Foundation)
-Plan: 1 of 2 complete
-Status: Phase 16 in progress — Plan 01 (Manifest → ProductionBible rename) complete
-Last activity: 2026-02-28 — Completed 16-01 (Manifest → ProductionBible rename across backend)
+Plan: 4 of 4 complete
+Status: Phase 16 complete — Plans 01-04 all done
+Last activity: 2026-03-01 — Completed 16-04 (Sequence grouping frontend UI)
 
-Progress: [██████████] 100%+ (16+ phases, Plans 16-01 and 16-02 complete)
+Progress: [██████████] 100%+ (16 phases complete, Phase 16 Plan 04 done)
 
 ## Performance Metrics
 
@@ -49,6 +49,7 @@ Progress: [██████████] 100%+ (16+ phases, Plans 16-01 and 16
 
 *Updated after each plan completion*
 | Phase 16-production-bible-foundation P02 | 2 | 2 tasks | 4 files |
+| Phase 16-production-bible-foundation P04 | 8 | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -219,6 +220,9 @@ Recent decisions affecting current work:
 - [Phase 16-02]: DELETE sequence unsequences child scenes (sequence_id=NULL) not cascade-delete — prevents accidental data loss
 - [Phase 16-02]: Auto-increment scene_order (max+1) on assign — append semantics match drag-and-drop UX
 - [Phase 16-02]: New sequence endpoints in dedicated sequences.py route file per CLAUDE.md domain separation convention
+- [Phase 16-04]: Optimistic UI update on drag-end — local state updated immediately, reverted on API failure
+- [Phase 16-04]: UNSEQUENCED_ID sentinel constant shared between UnsequencedSection and SequencedSceneList
+- [Phase 16-04]: ProductionDetail loads sequences in parallel with production and scenes — single load() call
 - **16-01:** Rename migrations must run BEFORE create_all() in init_database() so SQLAlchemy finds tables under new names
 - **16-01:** Retained Manifest = ProductionBible alias in every file for gradual migration backwards-compatibility
 - **16-01:** Filesystem directory tmp/manifests/ kept as-is — only DB column/table names renamed, not storage paths
@@ -248,6 +252,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-28 (execution)
-Stopped at: Completed 16-01-PLAN.md (Manifest → ProductionBible rename — backend complete)
+Last session: 2026-03-01 (execution)
+Stopped at: Completed 16-04-PLAN.md (Sequence grouping frontend UI — Phase 16 complete)
 Resume file: None

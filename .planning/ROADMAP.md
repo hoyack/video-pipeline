@@ -108,7 +108,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 13. LLM Provider Abstraction | 3/3 | Complete    | 2026-02-19 |
 | 14. Storyboard Asset Binding | 1/1 | Complete    | 2026-02-20 |
 | 15. Video Generation Editor | 3/3 | Complete    | 2026-02-21 |
-| 16. Production Bible Foundation | 2/4 | In Progress|  |
+| 16. Production Bible Foundation | 4/4 | Complete   | 2026-03-01 |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -339,7 +339,7 @@ Plans:
   6. Scene model has optional `sequence_id` FK; scenes with null sequence_id remain in flat list
   7. Sequence CRUD API under `/api/productions/{id}/sequences` with drag-and-drop reorder support
   8. Frontend renders scenes grouped by sequence when sequences exist, with collapsible sections and drag between sequences
-**Plans:** 2/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 - [ ] 16-01-PLAN.md — Backend: DB rename manifests to production_bibles, API endpoint rename, 301 redirects, service layer updates

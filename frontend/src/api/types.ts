@@ -638,6 +638,108 @@ export interface AssignSequenceRequest {
   scene_order?: number;
 }
 
+// ============================================================================
+// Phase 17: Production Bible Entity Types
+// ============================================================================
+
+export interface CharacterResponse {
+  character_id: string;
+  production_bible_id: string;
+  name: string;
+  role: "PROTAGONIST" | "ANTAGONIST" | "SUPPORTING" | "EXTRA";
+  description: string | null;
+  arc: string | null;
+  actor_refs: string[] | null;
+  base_appearance: string | null;
+  prompt_tags: string[] | null;
+  wardrobe: WardrobeResponse[];
+  voice_profile: VoiceProfileResponse | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WardrobeResponse {
+  wardrobe_id: string;
+  character_id: string;
+  label: string;
+  reference_images: string[] | null;
+  scene_context: string | null;
+  prompt_descriptor: string | null;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface VoiceProfileResponse {
+  voice_profile_id: string;
+  character_id: string;
+  voice_id: string | null;
+  adapter_type: string;
+  style_notes: string | null;
+  sample_audio: string | null;
+  created_at: string;
+}
+
+export interface SetResponse {
+  set_id: string;
+  production_bible_id: string;
+  name: string;
+  reference_image: string | null;
+  reverse_prompt: string | null;
+  style_tags: string[] | null;
+  lighting_notes: string | null;
+  prompt_tags: string[] | null;
+  sonic_identity: SonicIdentityResponse | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SonicIdentityResponse {
+  sonic_identity_id: string;
+  set_id: string;
+  ambience_description: string | null;
+  reference_audio: string | null;
+  generation_prompt: string | null;
+  created_at: string;
+}
+
+export interface PropResponse {
+  prop_id: string;
+  production_bible_id: string;
+  name: string;
+  reference_image: string | null;
+  description: string | null;
+  associated_characters: string[] | null;
+  prompt_tags: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScoreThemeResponse {
+  score_theme_id: string;
+  production_bible_id: string;
+  name: string;
+  mood_descriptors: string[] | null;
+  tempo_notes: string | null;
+  usage_notes: string | null;
+  reference_audio: string | null;
+  generation_prompt: string | null;
+  adapter_type: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SFXItemResponse {
+  sfx_item_id: string;
+  production_bible_id: string;
+  name: string;
+  category: "IMPACT" | "MECHANICAL" | "NATURAL" | "UI" | "FOLEY" | "AMBIENCE";
+  source_audio: string | null;
+  generation_prompt: string | null;
+  tags: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Processing progress response */
 export interface ProcessingProgress {
   status: "processing" | "complete" | "error" | "not_started";

@@ -43,6 +43,14 @@ import type {
   SequenceUpdate,
   SequenceReorderRequest,
   AssignSequenceRequest,
+  CharacterResponse,
+  WardrobeResponse,
+  VoiceProfileResponse,
+  SetResponse,
+  SonicIdentityResponse,
+  PropResponse,
+  ScoreThemeResponse,
+  SFXItemResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -732,6 +740,291 @@ export function assignSceneToSequence(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
+  );
+}
+
+// ============================================================================
+// Phase 17: Production Bible Entity CRUD
+// ============================================================================
+
+// --- Characters ---
+
+/** GET /api/production-bibles/{id}/characters — list characters */
+export function listCharacters(bibleId: string): Promise<CharacterResponse[]> {
+  return request<CharacterResponse[]>(`/api/production-bibles/${bibleId}/characters`);
+}
+
+/** POST /api/production-bibles/{id}/characters — create character */
+export function createCharacter(
+  bibleId: string,
+  data: { name: string; role: string; description?: string; arc?: string; base_appearance?: string; prompt_tags?: string[] },
+): Promise<CharacterResponse> {
+  return request<CharacterResponse>(`/api/production-bibles/${bibleId}/characters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/characters/{id} — get character detail */
+export function getCharacter(characterId: string): Promise<CharacterResponse> {
+  return request<CharacterResponse>(`/api/characters/${characterId}`);
+}
+
+/** PUT /api/characters/{id} — update character */
+export function updateCharacter(
+  characterId: string,
+  data: Partial<{ name: string; role: string; description: string; arc: string; base_appearance: string; prompt_tags: string[] }>,
+): Promise<CharacterResponse> {
+  return request<CharacterResponse>(`/api/characters/${characterId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/characters/{id} — delete character */
+export function deleteCharacter(characterId: string): Promise<void> {
+  return request<void>(`/api/characters/${characterId}`, { method: "DELETE" });
+}
+
+/** POST /api/characters/{id}/wardrobes — create wardrobe item */
+export function createWardrobe(
+  characterId: string,
+  data: { label: string; scene_context?: string; prompt_descriptor?: string; is_default?: boolean },
+): Promise<WardrobeResponse> {
+  return request<WardrobeResponse>(`/api/characters/${characterId}/wardrobes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/wardrobes/{id} — update wardrobe item */
+export function updateWardrobe(
+  wardrobeId: string,
+  data: Partial<{ label: string; scene_context: string; prompt_descriptor: string; is_default: boolean }>,
+): Promise<WardrobeResponse> {
+  return request<WardrobeResponse>(`/api/wardrobes/${wardrobeId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/wardrobes/{id} — delete wardrobe item */
+export function deleteWardrobe(wardrobeId: string): Promise<void> {
+  return request<void>(`/api/wardrobes/${wardrobeId}`, { method: "DELETE" });
+}
+
+/** PUT /api/characters/{id}/voice-profile — upsert voice profile */
+export function upsertVoiceProfile(
+  characterId: string,
+  data: { voice_id?: string; adapter_type?: string; style_notes?: string },
+): Promise<VoiceProfileResponse> {
+  return request<VoiceProfileResponse>(`/api/characters/${characterId}/voice-profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/characters/{id}/voice-profile — delete voice profile */
+export function deleteVoiceProfile(characterId: string): Promise<void> {
+  return request<void>(`/api/characters/${characterId}/voice-profile`, { method: "DELETE" });
+}
+
+// --- Sets ---
+
+/** GET /api/production-bibles/{id}/sets — list sets */
+export function listSets(bibleId: string): Promise<SetResponse[]> {
+  return request<SetResponse[]>(`/api/production-bibles/${bibleId}/sets`);
+}
+
+/** POST /api/production-bibles/{id}/sets — create set */
+export function createSet(
+  bibleId: string,
+  data: { name: string; style_tags?: string[]; lighting_notes?: string; prompt_tags?: string[] },
+): Promise<SetResponse> {
+  return request<SetResponse>(`/api/production-bibles/${bibleId}/sets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/sets/{id} — get set detail */
+export function getSet(setId: string): Promise<SetResponse> {
+  return request<SetResponse>(`/api/sets/${setId}`);
+}
+
+/** PUT /api/sets/{id} — update set */
+export function updateSet(
+  setId: string,
+  data: Partial<{ name: string; style_tags: string[]; lighting_notes: string; prompt_tags: string[] }>,
+): Promise<SetResponse> {
+  return request<SetResponse>(`/api/sets/${setId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/sets/{id} — delete set */
+export function deleteSet(setId: string): Promise<void> {
+  return request<void>(`/api/sets/${setId}`, { method: "DELETE" });
+}
+
+/** POST /api/sets/{id}/upload-reference — upload reference image for set */
+export async function uploadSetReference(setId: string, file: File): Promise<SetResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/sets/${setId}/upload-reference`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<SetResponse>;
+}
+
+/** PUT /api/sets/{id}/sonic-identity — upsert sonic identity */
+export function upsertSonicIdentity(
+  setId: string,
+  data: { ambience_description?: string; generation_prompt?: string },
+): Promise<SonicIdentityResponse> {
+  return request<SonicIdentityResponse>(`/api/sets/${setId}/sonic-identity`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/sets/{id}/sonic-identity — delete sonic identity */
+export function deleteSonicIdentity(setId: string): Promise<void> {
+  return request<void>(`/api/sets/${setId}/sonic-identity`, { method: "DELETE" });
+}
+
+// --- Props ---
+
+/** GET /api/production-bibles/{id}/props — list props */
+export function listProps(bibleId: string): Promise<PropResponse[]> {
+  return request<PropResponse[]>(`/api/production-bibles/${bibleId}/props`);
+}
+
+/** POST /api/production-bibles/{id}/props — create prop */
+export function createProp(
+  bibleId: string,
+  data: { name: string; description?: string; associated_characters?: string[]; prompt_tags?: string[] },
+): Promise<PropResponse> {
+  return request<PropResponse>(`/api/production-bibles/${bibleId}/props`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/props/{id} — update prop */
+export function updateProp(
+  propId: string,
+  data: Partial<{ name: string; description: string; associated_characters: string[]; prompt_tags: string[] }>,
+): Promise<PropResponse> {
+  return request<PropResponse>(`/api/props/${propId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/props/{id} — delete prop */
+export function deleteProp(propId: string): Promise<void> {
+  return request<void>(`/api/props/${propId}`, { method: "DELETE" });
+}
+
+// --- Score Themes ---
+
+/** GET /api/production-bibles/{id}/score-themes — list score themes */
+export function listScoreThemes(bibleId: string): Promise<ScoreThemeResponse[]> {
+  return request<ScoreThemeResponse[]>(`/api/production-bibles/${bibleId}/score-themes`);
+}
+
+/** POST /api/production-bibles/{id}/score-themes — create score theme */
+export function createScoreTheme(
+  bibleId: string,
+  data: { name: string; mood_descriptors?: string[]; tempo_notes?: string; usage_notes?: string; generation_prompt?: string },
+): Promise<ScoreThemeResponse> {
+  return request<ScoreThemeResponse>(`/api/production-bibles/${bibleId}/score-themes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/score-themes/{id} — update score theme */
+export function updateScoreTheme(
+  themeId: string,
+  data: Partial<{ name: string; mood_descriptors: string[]; tempo_notes: string; usage_notes: string; generation_prompt: string }>,
+): Promise<ScoreThemeResponse> {
+  return request<ScoreThemeResponse>(`/api/score-themes/${themeId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/score-themes/{id} — delete score theme */
+export function deleteScoreTheme(themeId: string): Promise<void> {
+  return request<void>(`/api/score-themes/${themeId}`, { method: "DELETE" });
+}
+
+// --- SFX Items ---
+
+/** GET /api/production-bibles/{id}/sfx — list SFX items (optional category filter) */
+export function listSFXItems(bibleId: string, category?: string): Promise<SFXItemResponse[]> {
+  const qs = category ? `?category=${encodeURIComponent(category)}` : "";
+  return request<SFXItemResponse[]>(`/api/production-bibles/${bibleId}/sfx${qs}`);
+}
+
+/** POST /api/production-bibles/{id}/sfx — create SFX item */
+export function createSFXItem(
+  bibleId: string,
+  data: { name: string; category: string; generation_prompt?: string; tags?: string[] },
+): Promise<SFXItemResponse> {
+  return request<SFXItemResponse>(`/api/production-bibles/${bibleId}/sfx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/sfx/{id} — update SFX item */
+export function updateSFXItem(
+  sfxId: string,
+  data: Partial<{ name: string; category: string; generation_prompt: string; tags: string[] }>,
+): Promise<SFXItemResponse> {
+  return request<SFXItemResponse>(`/api/sfx/${sfxId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/sfx/{id} — delete SFX item */
+export function deleteSFXItem(sfxId: string): Promise<void> {
+  return request<void>(`/api/sfx/${sfxId}`, { method: "DELETE" });
+}
+
+// --- Migration ---
+
+/** POST /api/production-bibles/{id}/migrate-entities — migrate assets to structured entities */
+export function migrateEntities(
+  bibleId: string,
+): Promise<{ characters_created: number; sets_created: number }> {
+  return request<{ characters_created: number; sets_created: number }>(
+    `/api/production-bibles/${bibleId}/migrate-entities`,
+    { method: "POST" },
   );
 }
 

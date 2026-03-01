@@ -396,7 +396,33 @@ async def generate_storyboard(
             f"- Break the script into exactly {scene.target_shot_count} distinct visual shots",
         )
 
-    full_prompt = f"{system_prompt}{filled_context}\n\nScript: {scene.prompt}"
+    # Phase 18: Screenplay context enrichment (additive-only, SCRN-13/SCRN-14)
+    screenplay_enrichment = ""
+    if hasattr(scene, 'screenplay_context') and scene.screenplay_context:
+        breakdown = scene.screenplay_context
+        parts = []
+        parts.append("SCREENPLAY DIRECTION:")
+        if breakdown.get("slugline"):
+            parts.append(f"  Scene: {breakdown['slugline']}")
+        if breakdown.get("intent"):
+            parts.append(f"  Intent: {breakdown['intent']}")
+        if breakdown.get("emotional_beat"):
+            parts.append(f"  Emotional beat: {breakdown['emotional_beat']}")
+        if breakdown.get("story_state_in"):
+            parts.append(f"  Story state (entering): {breakdown['story_state_in']}")
+        if breakdown.get("story_state_out"):
+            parts.append(f"  Story state (leaving): {breakdown['story_state_out']}")
+        if breakdown.get("characters_present"):
+            chars = ", ".join(breakdown["characters_present"])
+            parts.append(f"  Characters in scene: {chars}")
+        if breakdown.get("set_ref"):
+            parts.append(f"  Location/Set: {breakdown['set_ref']}")
+        if breakdown.get("props_required"):
+            props = ", ".join(breakdown["props_required"])
+            parts.append(f"  Props: {props}")
+        screenplay_enrichment = "\n".join(parts) + "\n\n"
+
+    full_prompt = f"{system_prompt}{filled_context}\n\n{screenplay_enrichment}Script: {scene.prompt}"
 
     # Set generation_status on empty shots before generating
     for s in empty_shots:

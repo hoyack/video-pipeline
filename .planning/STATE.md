@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 18: Screenplay System
+**Current focus:** Phase 19: Bible Context Fix Cleanup
 
 ## Current Position
 
-Phase: 18 of 18 (Screenplay System)
-Plan: 3 of 3 complete
-Status: Phase 18 COMPLETE — Screenplay System fully built (ORM + API + frontend UI)
-Last activity: 2026-03-01 — Completed 18-03 (Screenplay Frontend UI)
+Phase: 19 of 21 (Bible Context Fix Cleanup)
+Plan: 2 of 2 complete
+Status: Phase 19 Plan 02 COMPLETE — Frontend manifest cleanup (terminology + orphan deletion)
+Last activity: 2026-03-01 — Completed 19-02 (Frontend Manifest Cleanup)
 
-Progress: [##########] 100% (Phase 18, Plan 3 of 3)
+Progress: [##########] 100% (Phase 19, Plan 2 of 2)
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [##########] 100% (Phase 18, Plan 3 of 3)
 | Phase 18-screenplay-system P01 | 3min | 2 tasks | 4 files |
 | Phase 18-screenplay-system P02 | 3min | 3 tasks | 4 files |
 | Phase 18-screenplay-system P03 | 8min | 2 tasks | 4 files |
+| Phase 19 P02 | 2min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -261,6 +262,7 @@ Recent decisions affecting current work:
 - **18-03:** Pill-style Scenes/Screenplay tab navigation in ProductionDetail matching ProductionBibleCreator pattern
 - **18-03:** JSON editing for structured screenplay fields (v1) -- structured per-field editing deferred
 - **18-03:** generateScreenplayFull uses raw fetch since 202 responses have no parseable body
+- [Phase 19]: Left backward-compat type aliases (ManifestListItem, ManifestDetail) in types.ts and client.ts since they are harmless re-exports
 
 ### Roadmap Evolution
 
@@ -287,5 +289,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 18-03-PLAN.md (Screenplay Frontend UI) — Phase 18 COMPLETE
+Stopped at: Completed 19-02-PLAN.md (Frontend Manifest Cleanup) — Phase 19 Plan 02 done
 Resume file: None

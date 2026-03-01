@@ -521,6 +521,46 @@ async def delete_prop(prop_id: str):
         return None
 
 
+@sets_props_router.post("/generate-reverse-prompt")
+async def generate_reverse_prompt(file: UploadFile = File(...)):
+    """Standalone reverse-prompt endpoint. Accepts an image and returns reverse_prompt text."""
+    if file.content_type not in ("image/png", "image/jpeg", "image/webp"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid content type {file.content_type}. Must be image/png, image/jpeg, or image/webp",
+        )
+
+    content = await file.read()
+
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="File too large. Maximum size is 10MB")
+
+    # Save to a temp location for LLM Vision read
+    from vidpipe.config import settings as _settings
+
+    temp_dir = _settings.storage.tmp_dir / "reverse_prompt_uploads" / str(uuid.uuid4())
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    filename = file.filename or "upload.png"
+    temp_path = temp_dir / filename
+    await asyncio.to_thread(temp_path.write_bytes, content)
+
+    try:
+        from vidpipe.services.reverse_prompt_service import ReversePromptService
+
+        svc = ReversePromptService()
+        result = await svc.reverse_prompt_asset(str(temp_path), "OBJECT")
+        return {
+            "reverse_prompt": result["reverse_prompt"],
+            "visual_description": result.get("visual_description", ""),
+        }
+    except Exception as e:
+        logger.error("Generate reverse-prompt failed: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate reverse prompt: {e}",
+        )
+
+
 @sets_props_router.post("/props/{prop_id}/upload-reference")
 async def upload_prop_reference(prop_id: str, file: UploadFile = File(...)):
     """Upload reference image for a prop. No LLM Vision call (props lack reverse_prompt)."""

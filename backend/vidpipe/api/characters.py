@@ -8,16 +8,18 @@ wardrobe items, and optional voice profile. Sub-entities:
 Spec reference: Phase 17 - PBEX-01, PBEX-02, PBEX-03, PBEX-04
 """
 
+import asyncio
 import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 
 from vidpipe.db import async_session
 from vidpipe.db.models import Character, ProductionBible, VoiceProfile, Wardrobe
+from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -535,3 +537,190 @@ async def delete_voice_profile(character_id: str):
         await session.commit()
 
         return None
+
+
+# ---------------------------------------------------------------------------
+# Upload endpoints
+# ---------------------------------------------------------------------------
+
+
+@character_router.post("/characters/{character_id}/actor-refs")
+async def upload_actor_ref(character_id: str, file: UploadFile = File(...)):
+    """Upload an actor reference image. Appends to character.actor_refs list."""
+    if file.content_type not in ("image/png", "image/jpeg", "image/webp"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid content type {file.content_type}. Must be image/png, image/jpeg, or image/webp",
+        )
+
+    content = await file.read()
+
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="File too large. Maximum size is 10MB")
+
+    async with async_session() as session:
+        char = await session.get(Character, uuid.UUID(character_id))
+        if char is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        storage = get_storage_backend()
+        filename = file.filename or "actor_ref.png"
+
+        if isinstance(storage, LocalStorageBackend):
+            from vidpipe.config import settings as _settings
+
+            local_dir = (
+                _settings.storage.tmp_dir
+                / "manifests"
+                / str(char.production_bible_id)
+                / "characters"
+                / str(char.id)
+                / "actor_refs"
+            )
+            local_dir.mkdir(parents=True, exist_ok=True)
+            local_path = local_dir / filename
+            await asyncio.to_thread(local_path.write_bytes, content)
+            stored_path = str(local_path)
+        else:
+            key = f"manifests/{char.production_bible_id}/characters/{char.id}/actor_refs/{filename}"
+            await storage.put(key, content, file.content_type or "image/png")
+            from vidpipe.config import settings as _settings
+
+            local_path = _settings.storage.tmp_dir / key
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(local_path.write_bytes, content)
+            stored_path = key
+
+        # New list to trigger SQLAlchemy change detection
+        char.actor_refs = (char.actor_refs or []) + [stored_path]
+
+        await session.commit()
+        await session.refresh(char)
+
+        # Fetch sub-entities for full response
+        ward_result = await session.execute(
+            select(Wardrobe).where(Wardrobe.character_id == char.id)
+        )
+        vp_result = await session.execute(
+            select(VoiceProfile).where(VoiceProfile.character_id == char.id)
+        )
+
+        return _character_to_dict(
+            char, list(ward_result.scalars().all()), vp_result.scalars().first()
+        )
+
+
+@character_router.post("/characters/{character_id}/generate-appearance")
+async def generate_appearance(character_id: str):
+    """Generate base appearance text from first actor ref image via LLM Vision."""
+    async with async_session() as session:
+        char = await session.get(Character, uuid.UUID(character_id))
+        if char is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        if not char.actor_refs:
+            raise HTTPException(
+                status_code=422, detail="Upload actor reference images first"
+            )
+
+        first_ref = char.actor_refs[0]
+
+        # Resolve to local path if S3 key
+        from vidpipe.config import settings as _settings
+
+        if not first_ref.startswith("/"):
+            # S3 key — local copy should exist from actor-ref upload
+            local_ref_path = str(_settings.storage.tmp_dir / first_ref)
+        else:
+            local_ref_path = first_ref
+
+        try:
+            from vidpipe.services.reverse_prompt_service import ReversePromptService
+
+            svc = ReversePromptService()
+            result = await svc.reverse_prompt_asset(
+                local_ref_path, "CHARACTER", user_name=char.name
+            )
+            char.base_appearance = result["reverse_prompt"]
+        except Exception as e:
+            logger.error(
+                "Generate appearance failed for character %s: %s", character_id, e
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate appearance: {e}",
+            )
+
+        await session.commit()
+        await session.refresh(char)
+
+        ward_result = await session.execute(
+            select(Wardrobe).where(Wardrobe.character_id == char.id)
+        )
+        vp_result = await session.execute(
+            select(VoiceProfile).where(VoiceProfile.character_id == char.id)
+        )
+
+        return _character_to_dict(
+            char, list(ward_result.scalars().all()), vp_result.scalars().first()
+        )
+
+
+@character_router.post("/wardrobes/{wardrobe_id}/upload-reference")
+async def upload_wardrobe_reference(wardrobe_id: str, file: UploadFile = File(...)):
+    """Upload a reference image for a wardrobe item. Appends to reference_images list."""
+    if file.content_type not in ("image/png", "image/jpeg", "image/webp"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid content type {file.content_type}. Must be image/png, image/jpeg, or image/webp",
+        )
+
+    content = await file.read()
+
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="File too large. Maximum size is 10MB")
+
+    async with async_session() as session:
+        w = await session.get(Wardrobe, uuid.UUID(wardrobe_id))
+        if w is None:
+            raise HTTPException(status_code=404, detail="Wardrobe not found")
+
+        # Fetch parent character to get production_bible_id for storage path
+        char = await session.get(Character, w.character_id)
+
+        storage = get_storage_backend()
+        filename = file.filename or "wardrobe_ref.png"
+
+        if isinstance(storage, LocalStorageBackend):
+            from vidpipe.config import settings as _settings
+
+            local_dir = (
+                _settings.storage.tmp_dir
+                / "manifests"
+                / str(char.production_bible_id)
+                / "characters"
+                / str(char.id)
+                / "wardrobes"
+                / str(w.id)
+            )
+            local_dir.mkdir(parents=True, exist_ok=True)
+            local_path = local_dir / filename
+            await asyncio.to_thread(local_path.write_bytes, content)
+            stored_path = str(local_path)
+        else:
+            key = f"manifests/{char.production_bible_id}/characters/{char.id}/wardrobes/{w.id}/{filename}"
+            await storage.put(key, content, file.content_type or "image/png")
+            from vidpipe.config import settings as _settings
+
+            local_path = _settings.storage.tmp_dir / key
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(local_path.write_bytes, content)
+            stored_path = key
+
+        # New list to trigger SQLAlchemy change detection
+        w.reference_images = (w.reference_images or []) + [stored_path]
+
+        await session.commit()
+        await session.refresh(w)
+
+        return _wardrobe_to_dict(w)

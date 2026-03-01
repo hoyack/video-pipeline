@@ -10,7 +10,11 @@ import logging
 from sqlalchemy import text
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown, _is_sqlite
-from vidpipe.db.models import Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance, SceneCheckpoint, Production, ProductionBible, Sequence, DEFAULT_USER_ID
+from vidpipe.db.models import (
+    Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance,
+    SceneCheckpoint, Production, ProductionBible, Sequence, DEFAULT_USER_ID,
+    Character, Wardrobe, VoiceProfile, Set, SonicIdentity, Prop, ScoreTheme, SFXItem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +192,8 @@ async def _run_migrations(conn) -> None:
         # The correct type is set below based on driver detection.
         "ALTER TABLE scenes ADD COLUMN sequence_id {uuid_type} REFERENCES sequences(id)",
         "ALTER TABLE scenes ADD COLUMN scene_order INTEGER DEFAULT 0",
+        # Phase 17: score_theme_id FK on scenes for Director agent compatibility
+        "ALTER TABLE scenes ADD COLUMN score_theme_id {uuid_type} REFERENCES score_themes(id)",
     ]
     for i, raw_sql in enumerate(migrations):
         sql = raw_sql.format(uuid_type=uuid_type) if "{uuid_type}" in raw_sql else raw_sql

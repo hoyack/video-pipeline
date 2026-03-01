@@ -453,6 +453,11 @@ class Scene(Base):
     )
     scene_order: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Phase 17: Score theme association for Director agent
+    score_theme_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("score_themes.id"), nullable=True, index=True
+    )
+
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

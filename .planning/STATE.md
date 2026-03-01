@@ -53,6 +53,7 @@ Progress: [########--] 75% (Phase 17, Plan 3 of 4)
 | Phase 16-production-bible-foundation P04 | 8 | 2 tasks | 9 files |
 | Phase 17-production-bible-entity-expansion P01 | 2min | 2 tasks | 2 files |
 | Phase 17 P03 | 2min | 2 tasks | 2 files |
+| Phase 17 P02 | 3 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -238,6 +239,8 @@ Recent decisions affecting current work:
 - [Phase 17]: Migration endpoint placed on sound_router to avoid file conflict with Plan 17-02 (characters.py)
 - [Phase 17]: Migration service uses flush (not commit) -- caller controls transaction boundary
 - [Phase 17]: Idempotent migration: name-based dedup checks existing Character/Set names before creating
+- [Phase 17-02]: Guarded sound_router import in app.py with try/except ImportError for Plan 17-03 forward-compatibility
+- [Phase 17-02]: Bulk fetch sub-entities in list endpoints to avoid N+1 queries for wardrobes/voice profiles/sonic identities
 
 ### Roadmap Evolution
 

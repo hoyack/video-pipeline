@@ -31,12 +31,16 @@ class Production(Base):
     )
 
 
-class Manifest(Base):
-    """Manifest model representing a standalone, reusable asset collection.
+class ProductionBible(Base):
+    """ProductionBible model representing a standalone, reusable asset collection.
 
-    Spec reference: V2 Manifest System
+    Formerly called Manifest. Renamed in Phase 16 to align with production
+    terminology — a Production Bible is the authoritative reference document
+    for characters, environments, props, and style in a video production.
+
+    Spec reference: V2 Manifest System / Phase 16 Production Bible Foundation
     """
-    __tablename__ = "manifests"
+    __tablename__ = "production_bibles"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text)
@@ -52,8 +56,8 @@ class Manifest(Base):
     times_used: Mapped[int] = mapped_column(Integer, default=0)
     last_used_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
-    parent_manifest_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("manifests.id"), nullable=True, index=True
+    parent_production_bible_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("production_bibles.id"), nullable=True, index=True
     )
     source_video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     source_video_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -65,6 +69,10 @@ class Manifest(Base):
     )
 
 
+# Backwards-compatibility alias — remove after frontend migration in Plan 03
+Manifest = ProductionBible
+
+
 class Asset(Base):
     """Asset model representing tagged visual elements within a manifest.
 
@@ -73,8 +81,8 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    manifest_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("manifests.id"), index=True
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
     )
     asset_type: Mapped[str] = mapped_column(String(50))
     name: Mapped[str] = mapped_column(Text)
@@ -159,10 +167,10 @@ class ManifestSnapshot(Base):
     __tablename__ = "manifest_snapshots"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    manifest_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("manifests.id"), index=True)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("production_bibles.id"), index=True)
     scene_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenes.id"), index=True)
     version_at_snapshot: Mapped[int] = mapped_column(Integer)
-    snapshot_data: Mapped[dict] = mapped_column(JSON)  # Full manifest + assets serialized
+    snapshot_data: Mapped[dict] = mapped_column(JSON)  # Full production bible + assets serialized
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
@@ -215,10 +223,10 @@ class Scene(Base):
     forked_from_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("scenes.id"), nullable=True
     )
-    manifest_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("manifests.id"), nullable=True, index=True
+    production_bible_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("production_bibles.id"), nullable=True, index=True
     )
-    manifest_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    production_bible_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Phase 11: Multi-Candidate Quality Mode
     quality_mode: Mapped[bool] = mapped_column(Boolean, default=False)

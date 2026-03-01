@@ -50,6 +50,54 @@ async def _seed_default_user(conn) -> None:
         logger.info("Seeded default user %s", uid)
 
 
+async def _run_rename_migrations(conn) -> None:
+    """Run table and column RENAME migrations (idempotent).
+
+    MUST run BEFORE create_all() so SQLAlchemy finds tables under their new names.
+
+    Phase 16: Renames 'manifests' table to 'production_bibles' and renames all
+    FK columns that referenced manifests to use production_bible_id naming.
+
+    SQLite 3.25+ supports RENAME COLUMN. Older versions require table recreation
+    but we use try/except for idempotency — if the column already has the new name,
+    the rename fails silently.
+    """
+    # -------------------------------------------------------------------------
+    # Phase 16: manifests → production_bibles table rename
+    # Must run before create_all() so SA finds the table under the new name.
+    # -------------------------------------------------------------------------
+    try:
+        await conn.execute(text("ALTER TABLE manifests RENAME TO production_bibles"))
+        logger.info("Renamed table: manifests -> production_bibles")
+    except Exception:
+        pass  # Already renamed or doesn't exist yet (fresh DB)
+
+    # -------------------------------------------------------------------------
+    # Phase 16: FK column renames (idempotent via try/except)
+    # SQLite 3.25+ and PostgreSQL both support RENAME COLUMN.
+    # -------------------------------------------------------------------------
+    rename_columns = [
+        # production_bibles self-referential FK
+        ("production_bibles", "parent_manifest_id", "parent_production_bible_id"),
+        # assets.manifest_id → production_bible_id
+        ("assets", "manifest_id", "production_bible_id"),
+        # manifest_snapshots.manifest_id → production_bible_id
+        ("manifest_snapshots", "manifest_id", "production_bible_id"),
+        # scenes.manifest_id → production_bible_id
+        ("scenes", "manifest_id", "production_bible_id"),
+        # scenes.manifest_version → production_bible_version
+        ("scenes", "manifest_version", "production_bible_version"),
+    ]
+    for table, old_col, new_col in rename_columns:
+        try:
+            await conn.execute(
+                text(f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}")
+            )
+            logger.info("Renamed column: %s.%s -> %s", table, old_col, new_col)
+        except Exception:
+            pass  # Already renamed, column doesn't exist, or table doesn't exist yet
+
+
 async def _run_migrations(conn) -> None:
     """Run safe ALTER TABLE migrations for new columns (idempotent).
 
@@ -68,8 +116,12 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE video_clips ADD COLUMN source VARCHAR(20) DEFAULT 'generated'",
         "ALTER TABLE video_clips ADD COLUMN veo_submission_count INTEGER DEFAULT 0",
         "ALTER TABLE video_clips ADD COLUMN safety_regen_count INTEGER DEFAULT 0",
-        "ALTER TABLE scenes ADD COLUMN manifest_id TEXT REFERENCES manifests(id)",
-        "ALTER TABLE scenes ADD COLUMN manifest_version INTEGER",
+        # Phase 6: manifest → production bible association on scenes
+        # Note: column may be named manifest_id (pre-16) or production_bible_id (post-16).
+        # If rename migration above ran, this ADD will fail silently (already exists).
+        # If starting fresh (no old DB), use the new name directly.
+        "ALTER TABLE scenes ADD COLUMN production_bible_id TEXT REFERENCES production_bibles(id)",
+        "ALTER TABLE scenes ADD COLUMN production_bible_version INTEGER",
         # Phase 5: Manifesting Engine fields
         "ALTER TABLE assets ADD COLUMN reverse_prompt TEXT",
         "ALTER TABLE assets ADD COLUMN visual_description TEXT",
@@ -133,6 +185,9 @@ async def _run_migrations(conn) -> None:
 async def init_database():
     """Initialize database schema on first run."""
     async with engine.begin() as conn:
+        # Phase 16: Table/column renames MUST run before create_all() so SQLAlchemy
+        # finds tables under their new names (production_bibles, production_bible_id).
+        await _run_rename_migrations(conn)
         await conn.run_sync(Base.metadata.create_all)
         await _run_migrations(conn)
         await _seed_default_user(conn)

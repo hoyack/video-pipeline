@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 17: Production Bible Entity Expansion** - Full Character, Set, Prop entities with sub-entities (Wardrobe, VoiceProfile, SonicIdentity), Score Themes and SFX Library in Sound Department (Issues #8, #9, #10, #11) (completed 2026-03-01)
 - [x] **Phase 18: Screenplay System** - Screenplay data model and editor, Screenwriter CrewAI agent for LLM generation chain, Scene Breakdown → pipeline wiring (Issues #12, #13, #14) (completed 2026-03-01)
 - [x] **Phase 19: Bible Context Fix + Code Cleanup** - Fix load_bible_context indirect lookup, remove dead manifest strings/orphan files/dead code (Gap Closure) (completed 2026-03-01)
-- [ ] **Phase 20: Entity Media Uploads** - Missing upload endpoints and UI for actor refs, wardrobe, audio, props across Production Bible entities (Issues #8, #9, #10, #11) (Gap Closure)
+- [x] **Phase 20: Entity Media Uploads** - Missing upload endpoints and UI for actor refs, wardrobe, audio, props across Production Bible entities (Issues #8, #9, #10, #11) (Gap Closure) (completed 2026-03-01)
 - [ ] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure)
 
 ## Phase Details
@@ -117,7 +117,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 17. PB Entity Expansion | 4/4 | Complete    | 2026-03-01 |
 | 18. Screenplay System | 3/3 | Complete    | 2026-03-01 |
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
-| 20. Entity Media Uploads | 1/2 | In Progress|  |
+| 20. Entity Media Uploads | 2/2 | Complete   | 2026-03-01 |
 | 21. Sequence UI Polish | 0/0 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation

@@ -10,6 +10,15 @@ interface SequenceHeaderProps {
   onDelete: (id: string) => void;
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds >= 60) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  }
+  return `${seconds}s`;
+}
+
 export function SequenceHeader({
   sequence,
   isCollapsed,
@@ -82,6 +91,13 @@ export function SequenceHeader({
         {sequence.scene_count} {sequence.scene_count === 1 ? "scene" : "scenes"}
       </span>
 
+      {/* Duration badge */}
+      {sequence.total_duration != null && sequence.total_duration > 0 && (
+        <span className="text-xs text-gray-400 flex-shrink-0">
+          {formatDuration(sequence.total_duration)}
+        </span>
+      )}
+
       {/* Act label */}
       {sequence.act && (
         <span className="text-xs text-blue-400 bg-blue-900/40 rounded px-1.5 py-0.5 flex-shrink-0">
@@ -93,6 +109,7 @@ export function SequenceHeader({
       <SequenceContextMenu
         sequenceId={sequence.id}
         color={sequence.color}
+        act={sequence.act}
         onEdit={() => {
           setEditTitle(sequence.title);
           setEditing(true);
@@ -100,6 +117,7 @@ export function SequenceHeader({
         }}
         onDelete={onDelete}
         onColorChange={(color) => onUpdate({ color })}
+        onActChange={(act) => onUpdate({ act })}
       />
 
       {/* Collapse toggle */}

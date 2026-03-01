@@ -1066,7 +1066,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         )}
       </div>
 
-      {/* Asset Manifest — collapsible */}
+      {/* Production Bible — collapsible */}
       <div className="rounded-lg border border-gray-800 bg-gray-900/50">
         <button
           type="button"
@@ -1074,7 +1074,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           className="flex w-full items-center justify-between px-4 py-3 text-left"
         >
           <div className="flex items-center gap-2 min-w-0">
-            <h3 className="text-sm font-medium text-gray-300 shrink-0">Asset Manifest</h3>
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Production Bible</h3>
             {!manifestExpanded && manifestId && (
               <span className="text-xs text-gray-500 truncate">{manifestId}</span>
             )}

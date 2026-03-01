@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 16-production-bible-foundation
 source: 16-01-SUMMARY.md, 16-02-SUMMARY.md, 16-03-SUMMARY.md, 16-04-SUMMARY.md
 started: 2026-03-01T02:00:00Z
@@ -69,7 +69,11 @@ skipped: 0
   reason: "User reported: It says 'Asset Manifest' on the container label in the Scene dropdown for Production Bible"
   severity: minor
   test: 4
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "EditModeOverlay.tsx line 1077 still says 'Asset Manifest' instead of 'Production Bible'. Comment on line 1069 also uses old terminology."
+  artifacts:
+    - path: "frontend/src/components/EditModeOverlay.tsx"
+      issue: "Label text 'Asset Manifest' not renamed to 'Production Bible'"
+  missing:
+    - "Change 'Asset Manifest' to 'Production Bible' on line 1077"
+    - "Update comment on line 1069 from 'Asset Manifest' to 'Production Bible'"
   debug_session: ""

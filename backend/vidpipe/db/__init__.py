@@ -186,15 +186,21 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE scenes ADD COLUMN sequence_id TEXT REFERENCES sequences(id)",
         "ALTER TABLE scenes ADD COLUMN scene_order INTEGER DEFAULT 0",
     ]
-    for sql in migrations:
+    for i, sql in enumerate(migrations):
+        sp = f"mig_sp_{i}"
         try:
             if not is_sqlite:
-                # PostgreSQL supports IF NOT EXISTS for idempotent column adds
-                sql = sql.replace("ADD COLUMN ", "ADD COLUMN IF NOT EXISTS ")
-            await conn.execute(text(sql))
-        except Exception:
+                pg_sql = sql.replace("ADD COLUMN ", "ADD COLUMN IF NOT EXISTS ")
+                await conn.execute(text(f"SAVEPOINT {sp}"))
+                await conn.execute(text(pg_sql))
+                await conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+            else:
+                await conn.execute(text(sql))
+        except Exception as e:
+            if not is_sqlite:
+                logger.warning("Migration rollback: %s — %s", sql[:60], e)
+                await conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
             # Column already exists (SQLite) or other safe-to-ignore error
-            pass
 
 
 async def init_database():

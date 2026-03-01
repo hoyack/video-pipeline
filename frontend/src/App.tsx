@@ -5,8 +5,8 @@ import { ProgressView } from "./components/ProgressView.tsx";
 import { SceneList } from "./components/SceneList.tsx";
 import { SceneDetail } from "./components/SceneDetail.tsx";
 import { Dashboard } from "./components/Dashboard.tsx";
-import { ManifestLibrary } from "./components/ManifestLibrary.tsx";
-import { ManifestCreator } from "./components/ManifestCreator.tsx";
+import { ProductionBibleLibrary } from "./components/ProductionBibleLibrary.tsx";
+import { ProductionBibleCreator } from "./components/ProductionBibleCreator.tsx";
 import { SettingsPage } from "./components/SettingsPage.tsx";
 import { ProductionList } from "./components/ProductionList.tsx";
 import { ProductionDetail } from "./components/ProductionDetail.tsx";
@@ -57,7 +57,7 @@ function App() {
                 onForked={(newId) => navigate(`/scenes/${newId}/progress`)}
                 onViewScene={(id) => navigate(`/scenes/${id}`)}
                 onViewManifest={(manifestId) =>
-                  navigate(`/manifests/${manifestId}/edit`)
+                  navigate(`/production-bibles/${manifestId}/edit`)
                 }
               />
             )}
@@ -78,27 +78,27 @@ function App() {
           <Route path="/dashboard">
             <Dashboard />
           </Route>
-          <Route path="/manifests/new">
-            <ManifestCreator
-              manifestId={null}
-              onSaved={() => navigate("/manifests")}
-              onCancel={() => navigate("/manifests")}
+          <Route path="/production-bibles/new">
+            <ProductionBibleCreator
+              productionBibleId={null}
+              onSaved={() => navigate("/production-bibles")}
+              onCancel={() => navigate("/production-bibles")}
             />
           </Route>
-          <Route path="/manifests/:id/edit">
+          <Route path="/production-bibles/:id/edit">
             {(params) => (
-              <ManifestCreator
-                manifestId={params.id}
-                onSaved={() => navigate("/manifests")}
-                onCancel={() => navigate("/manifests")}
+              <ProductionBibleCreator
+                productionBibleId={params.id}
+                onSaved={() => navigate("/production-bibles")}
+                onCancel={() => navigate("/production-bibles")}
               />
             )}
           </Route>
-          <Route path="/manifests">
-            <ManifestLibrary
-              onCreateNew={() => navigate("/manifests/new")}
-              onEditManifest={(id) => navigate(`/manifests/${id}/edit`)}
-              onViewManifest={(id) => navigate(`/manifests/${id}/edit`)}
+          <Route path="/production-bibles">
+            <ProductionBibleLibrary
+              onCreateNew={() => navigate("/production-bibles/new")}
+              onEditManifest={(id) => navigate(`/production-bibles/${id}/edit`)}
+              onViewManifest={(id) => navigate(`/production-bibles/${id}/edit`)}
             />
           </Route>
           <Route path="/settings">

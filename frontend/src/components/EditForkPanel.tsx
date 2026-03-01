@@ -101,13 +101,13 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
   const [newUploads, setNewUploads] = useState<NewForkUpload[]>([]);
 
   useEffect(() => {
-    if (!detail.manifest_id) return;
+    if (!detail.production_bible_id) return;
     setAssetsLoading(true);
-    fetchManifestAssets(detail.manifest_id)
+    fetchManifestAssets(detail.production_bible_id)
       .then(setAssets)
       .catch(() => {}) // Silent fail — asset section just won't show
       .finally(() => setAssetsLoading(false));
-  }, [detail.manifest_id]);
+  }, [detail.production_bible_id]);
 
   const selectedVideoModel = VIDEO_MODELS.find((m) => m.id === videoModel) ?? VIDEO_MODELS[0];
   const allowedDurations = selectedVideoModel.allowedDurations;
@@ -291,7 +291,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
       }
     }
 
-    if (detail.manifest_id && (Object.keys(modifiedAssets).length > 0 || removedAssetIds.size > 0 || newUploads.length > 0)) {
+    if (detail.production_bible_id && (Object.keys(modifiedAssets).length > 0 || removedAssetIds.size > 0 || newUploads.length > 0)) {
       req.asset_changes = {
         modified_assets: Object.keys(modifiedAssets).length > 0 ? modifiedAssets : undefined,
         removed_asset_ids: removedAssetIds.size > 0 ? [...removedAssetIds] : undefined,
@@ -580,7 +580,7 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
       </div>}
 
       {/* Asset Registry (Phase 12) */}
-      {detail.manifest_id && (
+      {detail.production_bible_id && (
         <div>
           <h3 className="mb-3 text-sm font-medium text-gray-400">
             Asset Registry

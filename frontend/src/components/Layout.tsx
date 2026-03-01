@@ -20,7 +20,7 @@ const NAV_ITEMS: { href: string; label: string; match: (path: string) => boolean
       path === "/generate" ||
       path.startsWith("/scenes/"),
   },
-  { href: "/manifests", label: "Manifests", match: (path) => path.startsWith("/manifests") },
+  { href: "/production-bibles", label: "Production Bibles", match: (path) => path.startsWith("/production-bibles") },
   { href: "/settings", label: "Settings", match: (path) => path === "/settings" },
 ];
 

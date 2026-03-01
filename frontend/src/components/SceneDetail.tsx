@@ -451,7 +451,7 @@ export function SceneDetail({ sceneId, onViewProgress, onForked, onViewScene, on
                 sceneId={detail.scene_id}
                 qualityMode={detail.quality_mode}
                 onViewManifest={onViewManifest}
-                manifestId={detail.manifest_id}
+                manifestId={detail.production_bible_id}
               />
             ))}
           </div>

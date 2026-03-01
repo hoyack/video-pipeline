@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { generateVideo, getEnabledModels } from "../api/client.ts";
-import { ManifestSelector } from "./ManifestSelector.tsx";
+import { ProductionBibleSelector } from "./ProductionBibleSelector.tsx";
 import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { EnabledModelsResponse } from "../api/types.ts";
 import {
@@ -195,7 +195,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         image_model: imageModel,
         video_model: videoModel,
         enable_audio: audioActive,
-        manifest_id: selectedManifestId ?? undefined,
+        production_bible_id: selectedManifestId ?? undefined,
         quality_mode: qualityMode,
         candidate_count: qualityMode ? candidateCount : undefined,
         vision_model: visionModel || undefined,
@@ -544,17 +544,17 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         )}
       </div>
 
-      {/* Asset Manifest */}
+      {/* Production Bible */}
       <div>
         <label className="mb-2 block text-sm font-medium text-gray-300">
-          Asset Manifest
+          Production Bible
         </label>
         <p className="mb-3 text-xs text-gray-500">
-          Choose reference assets from a pre-built manifest or upload inline.
+          Choose reference assets from a production bible or upload inline.
         </p>
-        <ManifestSelector
-          selectedManifestId={selectedManifestId}
-          onManifestSelect={setSelectedManifestId}
+        <ProductionBibleSelector
+          selectedProductionBibleId={selectedManifestId}
+          onProductionBibleSelect={setSelectedManifestId}
         />
       </div>
 

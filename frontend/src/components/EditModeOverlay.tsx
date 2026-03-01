@@ -18,7 +18,7 @@ import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, us
 import type { DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
-import { ManifestSelector } from "./ManifestSelector.tsx";
+import { ProductionBibleSelector } from "./ProductionBibleSelector.tsx";
 import { RegenProgressBar } from "./RegenProgressBar.tsx";
 import { useSceneWebSocket } from "../hooks/useSceneWebSocket.ts";
 import type { WsEvent } from "../api/wsTypes.ts";
@@ -83,7 +83,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [enableAudio, setEnableAudio] = useState(detail.audio_enabled ?? false);
   const runThrough: string | null = null;
   const [totalDuration, setTotalDuration] = useState(detail.shot_count * (detail.clip_duration ?? 6));
-  const [manifestId, setManifestId] = useState<string | null>(detail.manifest_id ?? null);
+  const [manifestId, setManifestId] = useState<string | null>(detail.production_bible_id ?? null);
 
   // Shot edits
   const [shotEdits, setShotEdits] = useState<Record<number, Record<string, string>>>({});
@@ -103,7 +103,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [_stitching, setStitching] = useState(false);
   const [stitchMessage, setStitchMessage] = useState<string | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(!detail.prompt);
-  const [manifestExpanded, setManifestExpanded] = useState(!detail.manifest_id);
+  const [manifestExpanded, setManifestExpanded] = useState(!detail.production_bible_id);
   const [shotsExpanded, setShotsExpanded] = useState(true);
   const [videoExpanded, setVideoExpanded] = useState(true);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
@@ -626,7 +626,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     if (videoModel !== (detail.video_model ?? "")) req.video_model = videoModel || undefined;
     if ((visionModel || undefined) !== (detail.vision_model || undefined)) req.vision_model = visionModel || undefined;
     if (enableAudio !== (detail.audio_enabled ?? false)) req.audio_enabled = enableAudio;
-    if (manifestId !== (detail.manifest_id ?? null)) req.manifest_id = manifestId;
+    if (manifestId !== (detail.production_bible_id ?? null)) req.production_bible_id = manifestId;
 
     if (Object.keys(shotEdits).length > 0) {
       const converted: Record<number, ShotEditPayload> = {};
@@ -1095,9 +1095,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
         {manifestExpanded && (
           <div className="px-4 pb-4">
-            <ManifestSelector
-              selectedManifestId={manifestId}
-              onManifestSelect={setManifestId}
+            <ProductionBibleSelector
+              selectedProductionBibleId={manifestId}
+              onProductionBibleSelect={setManifestId}
             />
           </div>
         )}

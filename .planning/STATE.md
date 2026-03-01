@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 17: Production Bible Entity Expansion
+**Current focus:** Phase 18: Screenplay System
 
 ## Current Position
 
-Phase: 17 of 17 (Production Bible Entity Expansion)
-Plan: 4 of 4 complete
-Status: Phase 17 COMPLETE — All Production Bible entity expansion plans executed
-Last activity: 2026-03-01 — Completed 17-04 (Frontend entity UI)
+Phase: 18 of 18 (Screenplay System)
+Plan: 1 of 3 complete
+Status: Executing Phase 18 — Screenplay data model and service layer complete
+Last activity: 2026-03-01 — Completed 18-01 (Screenplay data model + ScreenwriterService)
 
-Progress: [##########] 100% (Phase 17, Plan 4 of 4)
+Progress: [###-------] 33% (Phase 18, Plan 1 of 3)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 41
+- Total plans completed: 42
 - Average duration: 2.7 min
-- Total execution time: 1.74 hours
+- Total execution time: 1.79 hours
 
 **By Phase:**
 
@@ -55,6 +55,7 @@ Progress: [##########] 100% (Phase 17, Plan 4 of 4)
 | Phase 17 P03 | 2min | 2 tasks | 2 files |
 | Phase 17 P02 | 3 | 2 tasks | 3 files |
 | Phase 17 P04 | 8min | 2 tasks | 6 files |
+| Phase 18-screenplay-system P01 | 3min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -246,6 +247,11 @@ Recent decisions affecting current work:
 - **17-04:** Raw asset list moved to collapsible section below entity components to keep asset pipeline accessible
 - **17-04:** Entity counts fetched via parallel API calls in ProductionBibleCreator for tab badges
 - **17-04:** Actor Refs tab is read-only (no upload endpoint yet) -- displays refs from migration only
+- **18-01:** generating_step column on Screenplay for progress polling instead of event_bus (simpler, consistent with Shot.generation_status pattern)
+- **18-01:** screenplay_breakdown_index is plain INTEGER not FK to screenplays (avoids FK ordering issues per Research pitfall 5)
+- **18-01:** screenplay_context JSON column on Scene for denormalized breakdown data (avoids cross-table join in storyboard.py)
+- **18-01:** Entity validation in generate_scene_breakdown is warning-only (LLM may invent characters not in bible)
+- **18-01:** character_breakdowns stored as flat list of dicts for simpler downstream iteration
 
 ### Roadmap Evolution
 
@@ -272,5 +278,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01 (execution)
-Stopped at: Completed 17-04-PLAN.md (Frontend entity UI) — Phase 17 COMPLETE
+Stopped at: Completed 18-01-PLAN.md (Screenplay data model + ScreenwriterService)
 Resume file: None

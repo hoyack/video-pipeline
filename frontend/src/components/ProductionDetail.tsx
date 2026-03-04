@@ -220,6 +220,7 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
               scenes={scenes}
               onViewScene={onViewScene}
               onRefresh={load}
+              onRemoveScene={handleRemoveScene}
             />
           ) : (
             <div className="space-y-2">

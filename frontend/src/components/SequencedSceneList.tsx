@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   DndContext,
   PointerSensor,
+  closestCenter,
+  pointerWithin,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import type { DragEndEvent } from "@dnd-kit/core";
+import type { CollisionDetection, DragEndEvent } from "@dnd-kit/core";
 import {
   SortableContext,
   arrayMove,
@@ -24,11 +26,24 @@ import type { SceneListItem, SequenceResponse, SequenceUpdate } from "../api/typ
 import { SortableSequenceSection } from "./SortableSequenceSection.tsx";
 import { UnsequencedSection, UNSEQUENCED_ID } from "./UnsequencedSection.tsx";
 
+/**
+ * Custom collision detection: if the pointer is physically inside the
+ * unsequenced drop zone, always prioritize it. Otherwise fall back to
+ * closestCenter for sorting and cross-sequence assignment.
+ */
+const sequenceCollision: CollisionDetection = (args) => {
+  const withinCollisions = pointerWithin(args);
+  const unsequencedHit = withinCollisions.find((c) => c.id === UNSEQUENCED_ID);
+  if (unsequencedHit) return [unsequencedHit];
+  return closestCenter(args);
+};
+
 interface SequencedSceneListProps {
   productionId: string;
   scenes: SceneListItem[];
   onViewScene: (id: string) => void;
   onRefresh?: () => void;
+  onRemoveScene?: (sceneId: string) => void;
 }
 
 export function SequencedSceneList({
@@ -36,6 +51,7 @@ export function SequencedSceneList({
   scenes,
   onViewScene,
   onRefresh,
+  onRemoveScene,
 }: SequencedSceneListProps) {
   const [sequences, setSequences] = useState<SequenceResponse[]>([]);
   const [localScenes, setLocalScenes] = useState<SceneListItem[]>(scenes);
@@ -158,11 +174,20 @@ export function SequencedSceneList({
     const targetId = over.id as string;
 
     // Determine target sequence (null = unsequenced)
-    const targetSequenceId = targetId === UNSEQUENCED_ID ? null : (sequenceIds.has(targetId) ? targetId : null);
-
-    // If dropping on another scene (not a sequence zone), try to find the sequence from over data
-    const overSequenceId = over.data.current?.sequenceId as string | undefined;
-    const resolvedTarget = targetSequenceId ?? overSequenceId ?? null;
+    let resolvedTarget: string | null;
+    if (targetId === UNSEQUENCED_ID) {
+      // Explicitly unsequencing — intentional null
+      resolvedTarget = null;
+    } else if (sequenceIds.has(targetId)) {
+      // Dropped on a sequence header (sortable)
+      resolvedTarget = targetId;
+    } else if (over.data.current?.type === "sequence-drop") {
+      // Dropped on a sequence body drop zone (e.g. "Drop scenes here")
+      resolvedTarget = over.data.current.sequenceId as string;
+    } else {
+      // Dropped on a scene row — inherit its sequence (or null if unsequenced)
+      resolvedTarget = (over.data.current?.sequenceId as string) ?? null;
+    }
 
     // Find current scene
     const scene = localScenes.find((s) => s.scene_id === sceneId);
@@ -259,7 +284,7 @@ export function SequencedSceneList({
         </div>
       )}
 
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} collisionDetection={sequenceCollision} onDragEnd={handleDragEnd}>
         {/* Sequences in order — wrapped in SortableContext for sequence reorder */}
         <SortableContext
           items={sequences.map((s) => s.id)}
@@ -275,6 +300,7 @@ export function SequencedSceneList({
               onUpdate={handleUpdateSequence}
               onDelete={handleDeleteSequence}
               onToggleCollapse={handleToggleCollapse}
+              onRemoveScene={onRemoveScene}
             />
           ))}
         </SortableContext>
@@ -283,6 +309,7 @@ export function SequencedSceneList({
         <UnsequencedSection
           scenes={unsequencedScenes}
           onViewScene={onViewScene}
+          onRemoveScene={onRemoveScene}
         />
       </DndContext>
 

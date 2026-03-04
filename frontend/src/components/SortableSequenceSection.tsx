@@ -12,6 +12,7 @@ interface SortableSequenceSectionProps {
   onUpdate: (id: string, updates: SequenceUpdate) => void;
   onDelete: (id: string) => void;
   onToggleCollapse: (id: string) => void;
+  onRemoveScene?: (sceneId: string) => void;
 }
 
 /** A scene row within a sequence that is draggable to other sequences. */
@@ -19,10 +20,12 @@ function DraggableSceneRow({
   scene,
   sequenceId,
   onViewScene,
+  onRemoveScene,
 }: {
   scene: SceneListItem;
   sequenceId: string;
   onViewScene: (id: string) => void;
+  onRemoveScene?: (sceneId: string) => void;
 }) {
   const {
     attributes,
@@ -78,6 +81,17 @@ function DraggableSceneRow({
           </p>
           <p className="text-xs text-gray-500 mt-0.5">{scene.status}</p>
         </div>
+        {onRemoveScene && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemoveScene(scene.scene_id); }}
+            className="flex-shrink-0 text-gray-500 hover:text-red-400 p-0.5"
+            title="Remove from production"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );
@@ -91,6 +105,7 @@ export function SortableSequenceSection({
   onUpdate,
   onDelete,
   onToggleCollapse,
+  onRemoveScene,
 }: SortableSequenceSectionProps) {
   // Make the sequence header sortable for sequence reorder
   const {
@@ -113,8 +128,13 @@ export function SortableSequenceSection({
     zIndex: seqIsDragging ? 30 : undefined,
   };
 
-  // Make the section itself a droppable target for cross-sequence scene drag
-  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: sequence.id });
+  // Make the section itself a droppable target for cross-sequence scene drag.
+  // Uses a distinct ID from the useSortable above to avoid duplicate droppable registration.
+  const dropId = `${sequence.id}:drop`;
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: dropId,
+    data: { type: "sequence-drop", sequenceId: sequence.id },
+  });
 
   // Sort scenes by scene_order
   const sortedScenes = [...scenes].sort((a, b) => {
@@ -170,6 +190,7 @@ export function SortableSequenceSection({
                   scene={scene}
                   sequenceId={sequence.id}
                   onViewScene={onViewScene}
+                  onRemoveScene={onRemoveScene}
                 />
               ))
             )}

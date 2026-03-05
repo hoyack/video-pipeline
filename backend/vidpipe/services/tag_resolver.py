@@ -7,6 +7,7 @@ and PropBinding lookup.
 Spec reference: Phase 22 - ALIB-07
 """
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -24,7 +25,16 @@ from vidpipe.db.models import (
     SetBinding,
 )
 
+logger = logging.getLogger(__name__)
+
 TAG_PATTERN = re.compile(r"\[(CHAR|SET|PROP):([A-Z0-9_]+)\]")
+
+
+def has_tags(text: str) -> bool:
+    """Return True if text contains any [CHAR:TAG], [SET:TAG], or [PROP:TAG] patterns."""
+    if not text:
+        return False
+    return bool(TAG_PATTERN.search(text))
 
 
 @dataclass
@@ -94,6 +104,9 @@ async def resolve_tags(
             unresolved_tags.append(full_tag)
             # Remove unresolved tag from text to avoid polluting prompts
             resolved_text = resolved_text.replace(full_tag, tag_name, 1)
+
+    if unresolved_tags:
+        logger.warning("Unresolved tags in prompt: %s", unresolved_tags)
 
     return ResolvedPrompt(
         text=resolved_text,
@@ -210,3 +223,65 @@ async def _resolve_prop_tag(
     if appearance:
         return f"{display_name} ({appearance})"
     return display_name
+
+
+async def resolve_scene_tags(
+    scene_description: str | None,
+    start_frame_prompt: str | None,
+    end_frame_prompt: str | None,
+    video_motion_prompt: str | None,
+    production_bible_id: uuid.UUID,
+    session: AsyncSession,
+) -> dict[str, str]:
+    """Resolve tags in all prompt fields for a scene/shot at once.
+
+    Returns a dict with resolved versions of each field.
+    Fields without tags or None fields are returned unchanged.
+    This is a convenience wrapper to avoid calling resolve_tags 4 times.
+
+    Args:
+        scene_description: Scene description (may contain tags)
+        start_frame_prompt: Start keyframe prompt
+        end_frame_prompt: End keyframe prompt
+        video_motion_prompt: Video motion prompt
+        production_bible_id: UUID of the production bible
+        session: Async SQLAlchemy session
+
+    Returns:
+        Dict with keys: scene_description, start_frame_prompt, end_frame_prompt,
+        video_motion_prompt — each resolved. Also 'character_refs' and 'set_context'
+        aggregated from all resolutions, and 'unresolved_tags'.
+    """
+    fields = {
+        "scene_description": scene_description,
+        "start_frame_prompt": start_frame_prompt,
+        "end_frame_prompt": end_frame_prompt,
+        "video_motion_prompt": video_motion_prompt,
+    }
+
+    result: dict = {}
+    all_character_refs: list[dict] = []
+    all_set_context: list[dict] = []
+    all_unresolved: list[str] = []
+
+    for key, text in fields.items():
+        if not text or not has_tags(text):
+            result[key] = text or ""
+            continue
+
+        resolved = await resolve_tags(text, production_bible_id, session)
+        result[key] = resolved.text
+        all_character_refs.extend(resolved.character_refs)
+        all_set_context.extend(resolved.set_context)
+        all_unresolved.extend(resolved.unresolved_tags)
+
+    result["character_refs"] = all_character_refs
+    result["set_context"] = all_set_context
+    result["unresolved_tags"] = all_unresolved
+
+    if all_unresolved:
+        logger.warning(
+            "Unresolved tags during scene tag resolution: %s", all_unresolved
+        )
+
+    return result

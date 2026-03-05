@@ -422,7 +422,27 @@ async def generate_storyboard(
             parts.append(f"  Props: {props}")
         screenplay_enrichment = "\n".join(parts) + "\n\n"
 
-    full_prompt = f"{system_prompt}{filled_context}\n\n{screenplay_enrichment}Script: {scene.prompt}"
+    # Phase 22: Resolve [CHAR:TAG], [SET:TAG], [PROP:TAG] in scene prompt
+    # before sending to LLM. Original prompt preserved in DB, resolved text
+    # used only for generation. Skips resolution if no bible_id or no tags.
+    resolved_prompt_text = scene.prompt
+    if scene.production_bible_id:
+        from vidpipe.services.tag_resolver import has_tags, resolve_tags
+        if has_tags(scene.prompt):
+            resolved = await resolve_tags(scene.prompt, scene.production_bible_id, session)
+            resolved_prompt_text = resolved.text
+            if resolved.unresolved_tags:
+                logger.warning(
+                    "Scene %s: unresolved tags in prompt: %s",
+                    scene.id, resolved.unresolved_tags,
+                )
+            else:
+                logger.info(
+                    "Scene %s: resolved tags in prompt for generation",
+                    scene.id,
+                )
+
+    full_prompt = f"{system_prompt}{filled_context}\n\n{screenplay_enrichment}Script: {resolved_prompt_text}"
 
     # Set generation_status on empty shots before generating
     for s in empty_shots:

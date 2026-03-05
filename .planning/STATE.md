@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 22-01-PLAN.md
-last_updated: "2026-03-05T13:57:37.697Z"
-last_activity: 2026-03-05 — Completed 22-01 (Database schema foundation)
+stopped_at: Completed 22-03-PLAN.md
+last_updated: "2026-03-05T14:03:55.876Z"
+last_activity: 2026-03-05 — Completed 22-02 (Asset Library CRUD API)
 progress:
   total_phases: 22
   completed_phases: 21
   total_plans: 64
-  completed_plans: 59
+  completed_plans: 61
   percent: 94
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 22 of 22 (Asset Library & Actor-Character Model)
-Plan: 1 of 6 complete
-Status: Executing Phase 22 — Database schema foundation complete
-Last activity: 2026-03-05 — Completed 22-01 (Database schema foundation)
+Plan: 2 of 6 complete
+Status: Executing Phase 22 — Asset Library CRUD API complete
+Last activity: 2026-03-05 — Completed 22-02 (Asset Library CRUD API)
 
-Progress: [█████████░] 94% (Phase 22, Plan 1 of 6)
+Progress: [█████████░] 94% (Phase 22, Plan 2 of 6)
 
 ## Performance Metrics
 
@@ -81,6 +81,8 @@ Progress: [█████████░] 94% (Phase 22, Plan 1 of 6)
 | Phase 21 P01 | 2min | 2 tasks | 3 files |
 | Phase 21 P02 | 2min | 2 tasks | 4 files |
 | Phase 22 P01 | 3min | 2 tasks | 2 files |
+| Phase 22 P02 | 4min | 2 tasks | 3 files |
+| Phase 22 P03 | 4min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -303,6 +305,9 @@ Recent decisions affecting current work:
 - **22-01:** library_sets/library_props table naming avoids collision with existing sets/props tables
 - **22-01:** SoundAsset unified with category discrimination (SCORE_THEME/SFX/AMBIENCE/FOLEY/UI) rather than separate tables
 - **22-01:** CastBinding has dedicated tag column for tag resolution plus prompt_tags for additional injection
+- [Phase 22-02]: Shared _save_upload() helper consolidates dual-backend storage logic across all entity upload endpoints
+- [Phase 22]: SoundBinding tag uniqueness only checked when tag provided (optional field)
+- [Phase 22]: Tag resolver removes unresolved tags from prompt text (replaces with plain name) to avoid polluting generation
 
 ### Roadmap Evolution
 
@@ -328,6 +333,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-05T13:57:37.693Z
-Stopped at: Completed 22-01-PLAN.md
+Last session: 2026-03-05T14:03:55.873Z
+Stopped at: Completed 22-03-PLAN.md
 Resume file: None

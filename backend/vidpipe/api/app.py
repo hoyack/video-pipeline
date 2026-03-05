@@ -21,6 +21,7 @@ from vidpipe.api.screenplay import screenplay_router
 from vidpipe.api.sound import sound_router
 from vidpipe.api.audio_gen import audio_gen_router
 from vidpipe.api.bindings import bindings_router
+from vidpipe.api.asset_library import asset_library_router
 
 # Configure root logger so application logs (pipeline stages, S3, etc.) reach stdout
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -81,6 +82,7 @@ app.include_router(screenplay_router)
 app.include_router(sound_router)
 app.include_router(audio_gen_router)
 app.include_router(bindings_router)
+app.include_router(asset_library_router)
 
 # Serve frontend static files in production (after API routes take priority)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"

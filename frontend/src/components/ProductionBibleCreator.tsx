@@ -20,17 +20,33 @@ import {
   getExtractionProgress,
   importSceneToProductionBible,
 } from "../api/client.ts";
+import type {
+  SetBinding,
+  PropBinding,
+  SoundBinding,
+} from "../api/types.ts";
 import { AssetUploader } from "./AssetUploader.tsx";
 import { AssetEditor } from "./AssetEditor.tsx";
 import { CharacterDetail } from "./CharacterDetail.tsx";
 import { SetDetail } from "./SetDetail.tsx";
 import { SoundDepartment } from "./SoundDepartment.tsx";
+import { CastingSection } from "./CastingSection.tsx";
+import { AssetPicker } from "./AssetPicker.tsx";
 import {
   listCharacters,
   listSets,
   listProps,
   listScoreThemes,
   listSFXItems,
+  listSetBindings,
+  createSetBinding,
+  deleteSetBinding,
+  listPropBindings,
+  createPropBinding,
+  deletePropBinding,
+  listSoundBindings,
+  createSoundBinding,
+  deleteSoundBinding,
 } from "../api/client.ts";
 
 interface ProductionBibleCreatorProps {
@@ -137,6 +153,27 @@ export function ProductionBibleCreator({
   });
   const [showRawAssets, setShowRawAssets] = useState(false);
 
+  // Binding state for Art Dept (sets, props) and Sound tabs
+  const [setBindings, setSetBindings] = useState<SetBinding[]>([]);
+  const [propBindings, setPropBindings] = useState<PropBinding[]>([]);
+  const [soundBindings, setSoundBindings] = useState<SoundBinding[]>([]);
+  const [setPickerOpen, setSetPickerOpen] = useState(false);
+  const [propPickerOpen, setPropPickerOpen] = useState(false);
+  const [soundPickerOpen, setSoundPickerOpen] = useState(false);
+
+  // Binding create form state
+  const [bindingFormType, setBindingFormType] = useState<"set" | "prop" | "sound" | null>(null);
+  const [bindingFormAsset, setBindingFormAsset] = useState<{ id: string; name: string; primary_ref_url?: string | null } | null>(null);
+  const [bindingFormName, setBindingFormName] = useState("");
+  const [bindingFormTag, setBindingFormTag] = useState("");
+  const [bindingFormNotes, setBindingFormNotes] = useState("");
+  const [bindingFormSaving, setBindingFormSaving] = useState(false);
+
+  // Collapsible legacy sections
+  const [showLegacyCasting, setShowLegacyCasting] = useState(false);
+  const [showLegacyArt, setShowLegacyArt] = useState(false);
+  const [showLegacySound, setShowLegacySound] = useState(false);
+
   // Lightbox state for Stage 3 image preview
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxName, setLightboxName] = useState("");
@@ -197,6 +234,82 @@ export function ProductionBibleCreator({
       // Fallback: open in new tab if clipboard write fails
       window.open(imageUrl, "_blank");
     }
+  };
+
+  // Binding form helpers
+  const generateBindingTag = (name: string): string =>
+    name.toUpperCase().replace(/[^A-Z0-9\s]/g, "").trim().replace(/\s+/g, "_");
+
+  const handleBindingPickerSelect = (
+    type: "set" | "prop" | "sound",
+    asset: { id: string; name: string; primary_ref_url?: string | null },
+  ) => {
+    setBindingFormType(type);
+    setBindingFormAsset(asset);
+    setBindingFormName(asset.name);
+    setBindingFormTag(type === "sound" ? "" : generateBindingTag(asset.name));
+    setBindingFormNotes("");
+  };
+
+  const handleSaveBinding = async () => {
+    if (!bindingFormAsset || !bindingFormType) return;
+    const bibleId = productionBibleId || manifest?.production_bible_id;
+    if (!bibleId) return;
+
+    setBindingFormSaving(true);
+    try {
+      if (bindingFormType === "set") {
+        const created = await createSetBinding(bibleId, {
+          library_set_id: bindingFormAsset.id,
+          tag: bindingFormTag.trim() || generateBindingTag(bindingFormAsset.name),
+          production_name: bindingFormName.trim() || undefined,
+          lighting_override: bindingFormNotes.trim() || undefined,
+        });
+        setSetBindings((prev) => [...prev, created]);
+      } else if (bindingFormType === "prop") {
+        const created = await createPropBinding(bibleId, {
+          library_prop_id: bindingFormAsset.id,
+          tag: bindingFormTag.trim() || generateBindingTag(bindingFormAsset.name),
+          production_name: bindingFormName.trim() || undefined,
+          notes: bindingFormNotes.trim() || undefined,
+        });
+        setPropBindings((prev) => [...prev, created]);
+      } else if (bindingFormType === "sound") {
+        const created = await createSoundBinding(bibleId, {
+          sound_asset_id: bindingFormAsset.id,
+          tag: bindingFormTag.trim() || undefined,
+          usage_notes: bindingFormNotes.trim() || undefined,
+        });
+        setSoundBindings((prev) => [...prev, created]);
+      }
+      setBindingFormType(null);
+      setBindingFormAsset(null);
+    } catch {
+      // silently fail
+    } finally {
+      setBindingFormSaving(false);
+    }
+  };
+
+  const handleDeleteSetBinding = async (id: string) => {
+    try {
+      await deleteSetBinding(id);
+      setSetBindings((prev) => prev.filter((b) => b.id !== id));
+    } catch { /* ignore */ }
+  };
+
+  const handleDeletePropBinding = async (id: string) => {
+    try {
+      await deletePropBinding(id);
+      setPropBindings((prev) => prev.filter((b) => b.id !== id));
+    } catch { /* ignore */ }
+  };
+
+  const handleDeleteSoundBinding = async (id: string) => {
+    try {
+      await deleteSoundBinding(id);
+      setSoundBindings((prev) => prev.filter((b) => b.id !== id));
+    } catch { /* ignore */ }
   };
 
   const isNewBible = !productionBibleId;
@@ -262,6 +375,28 @@ export function ProductionBibleCreator({
       }
     };
     fetchCounts();
+  }, [productionBibleId, manifest?.production_bible_id, currentStage]);
+
+  // Fetch bindings for Art Dept and Sound tabs
+  useEffect(() => {
+    const bibleId = productionBibleId || manifest?.production_bible_id;
+    if (!bibleId || currentStage !== 3) return;
+
+    const fetchBindings = async () => {
+      try {
+        const [sets, props, sounds] = await Promise.all([
+          listSetBindings(bibleId),
+          listPropBindings(bibleId),
+          listSoundBindings(bibleId),
+        ]);
+        setSetBindings(sets);
+        setPropBindings(props);
+        setSoundBindings(sounds);
+      } catch {
+        // silently ignore
+      }
+    };
+    fetchBindings();
   }, [productionBibleId, manifest?.production_bible_id, currentStage]);
 
   // Polling for Stage 2 (PROCESSING)
@@ -1041,20 +1176,288 @@ export function ProductionBibleCreator({
 
         {/* Entity components per department tab */}
         {activeTab === "casting" && manifest?.production_bible_id && (
-          <div className="mb-8">
-            <CharacterDetail productionBibleId={manifest.production_bible_id} />
+          <div className="mb-8 space-y-6">
+            {/* Cast bindings from Asset Library */}
+            <CastingSection bibleId={manifest.production_bible_id} />
+
+            {/* Legacy bible-scoped characters */}
+            <div>
+              <button
+                onClick={() => setShowLegacyCasting(!showLegacyCasting)}
+                className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 mb-2"
+              >
+                <span className={`transition-transform ${showLegacyCasting ? "rotate-90" : ""}`}>&#9654;</span>
+                Legacy Characters
+              </button>
+              {showLegacyCasting && (
+                <CharacterDetail productionBibleId={manifest.production_bible_id} />
+              )}
+            </div>
           </div>
         )}
 
         {activeTab === "art" && manifest?.production_bible_id && (
-          <div className="mb-8">
-            <SetDetail productionBibleId={manifest.production_bible_id} />
+          <div className="mb-8 space-y-6">
+            {/* Bound Sets */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Sets</h3>
+                <button
+                  onClick={() => setSetPickerOpen(true)}
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+                >
+                  + Add Set
+                </button>
+              </div>
+
+              {/* Set binding create form */}
+              {bindingFormType === "set" && bindingFormAsset && (
+                <div className="mb-3 rounded-lg border border-blue-800 bg-gray-900/80 p-4">
+                  <h4 className="text-sm font-medium text-white mb-3">
+                    Bind Set: <span className="text-blue-400">{bindingFormAsset.name}</span>
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Production Name</label>
+                      <input type="text" value={bindingFormName} onChange={(e) => setBindingFormName(e.target.value)}
+                        className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Tag</label>
+                      <input type="text" value={bindingFormTag} onChange={(e) => setBindingFormTag(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+                        className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white font-mono outline-none focus:border-blue-500" />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-xs text-gray-400 mb-1">Lighting Override (optional)</label>
+                    <textarea value={bindingFormNotes} onChange={(e) => setBindingFormNotes(e.target.value)} rows={2}
+                      className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500 resize-none" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveBinding} disabled={bindingFormSaving}
+                      className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50">
+                      {bindingFormSaving ? "Saving..." : "Add Set"}
+                    </button>
+                    <button onClick={() => { setBindingFormType(null); setBindingFormAsset(null); }}
+                      className="rounded bg-gray-700 px-4 py-1.5 text-sm text-gray-300 hover:text-white transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Set binding cards */}
+              {setBindings.length === 0 && bindingFormType !== "set" ? (
+                <div className="flex min-h-[80px] items-center justify-center rounded-lg border border-dashed border-gray-700">
+                  <p className="text-sm text-gray-500">No bound sets yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {setBindings.map((b) => (
+                    <div key={b.id} className="flex items-center gap-3 rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+                      {b.primary_ref_url ? (
+                        <img src={b.primary_ref_url} alt={b.production_name || b.set_name || ""} className="w-12 h-12 rounded object-cover border border-gray-700 shrink-0" />
+                      ) : (
+                        <div className="w-12 h-12 rounded bg-gray-800 border border-gray-700 shrink-0 flex items-center justify-center text-gray-600 text-xs">No ref</div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white">{b.production_name || b.set_name}</span>
+                          <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs font-mono text-gray-300">{b.tag}</span>
+                        </div>
+                        {b.lighting_override && <div className="text-xs text-gray-500 mt-0.5 truncate">{b.lighting_override}</div>}
+                      </div>
+                      <button onClick={() => handleDeleteSetBinding(b.id)} className="rounded px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-gray-800 transition-colors shrink-0">Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <AssetPicker isOpen={setPickerOpen} onClose={() => setSetPickerOpen(false)} assetType="set"
+                onSelect={(a) => handleBindingPickerSelect("set", a)} excludeIds={setBindings.map((b) => b.library_set_id)} />
+            </div>
+
+            {/* Bound Props */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Props</h3>
+                <button
+                  onClick={() => setPropPickerOpen(true)}
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+                >
+                  + Add Prop
+                </button>
+              </div>
+
+              {/* Prop binding create form */}
+              {bindingFormType === "prop" && bindingFormAsset && (
+                <div className="mb-3 rounded-lg border border-blue-800 bg-gray-900/80 p-4">
+                  <h4 className="text-sm font-medium text-white mb-3">
+                    Bind Prop: <span className="text-blue-400">{bindingFormAsset.name}</span>
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Production Name</label>
+                      <input type="text" value={bindingFormName} onChange={(e) => setBindingFormName(e.target.value)}
+                        className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Tag</label>
+                      <input type="text" value={bindingFormTag} onChange={(e) => setBindingFormTag(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+                        className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white font-mono outline-none focus:border-blue-500" />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-xs text-gray-400 mb-1">Notes (optional)</label>
+                    <textarea value={bindingFormNotes} onChange={(e) => setBindingFormNotes(e.target.value)} rows={2}
+                      className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500 resize-none" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveBinding} disabled={bindingFormSaving}
+                      className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50">
+                      {bindingFormSaving ? "Saving..." : "Add Prop"}
+                    </button>
+                    <button onClick={() => { setBindingFormType(null); setBindingFormAsset(null); }}
+                      className="rounded bg-gray-700 px-4 py-1.5 text-sm text-gray-300 hover:text-white transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Prop binding cards */}
+              {propBindings.length === 0 && bindingFormType !== "prop" ? (
+                <div className="flex min-h-[80px] items-center justify-center rounded-lg border border-dashed border-gray-700">
+                  <p className="text-sm text-gray-500">No bound props yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {propBindings.map((b) => (
+                    <div key={b.id} className="flex items-center gap-3 rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+                      {b.primary_ref_url ? (
+                        <img src={b.primary_ref_url} alt={b.production_name || b.prop_name || ""} className="w-12 h-12 rounded object-cover border border-gray-700 shrink-0" />
+                      ) : (
+                        <div className="w-12 h-12 rounded bg-gray-800 border border-gray-700 shrink-0 flex items-center justify-center text-gray-600 text-xs">No ref</div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white">{b.production_name || b.prop_name}</span>
+                          <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs font-mono text-gray-300">{b.tag}</span>
+                        </div>
+                        {b.notes && <div className="text-xs text-gray-500 mt-0.5 truncate">{b.notes}</div>}
+                      </div>
+                      <button onClick={() => handleDeletePropBinding(b.id)} className="rounded px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-gray-800 transition-colors shrink-0">Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <AssetPicker isOpen={propPickerOpen} onClose={() => setPropPickerOpen(false)} assetType="prop"
+                onSelect={(a) => handleBindingPickerSelect("prop", a)} excludeIds={propBindings.map((b) => b.library_prop_id)} />
+            </div>
+
+            {/* Legacy art dept entities */}
+            <div>
+              <button
+                onClick={() => setShowLegacyArt(!showLegacyArt)}
+                className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 mb-2"
+              >
+                <span className={`transition-transform ${showLegacyArt ? "rotate-90" : ""}`}>&#9654;</span>
+                Legacy Sets & Props
+              </button>
+              {showLegacyArt && (
+                <SetDetail productionBibleId={manifest.production_bible_id} />
+              )}
+            </div>
           </div>
         )}
 
         {activeTab === "sound" && manifest?.production_bible_id && (
-          <div className="mb-8">
-            <SoundDepartment productionBibleId={manifest.production_bible_id} />
+          <div className="mb-8 space-y-6">
+            {/* Bound Sound Assets */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Sound Assets</h3>
+                <button
+                  onClick={() => setSoundPickerOpen(true)}
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+                >
+                  + Add Sound
+                </button>
+              </div>
+
+              {/* Sound binding create form */}
+              {bindingFormType === "sound" && bindingFormAsset && (
+                <div className="mb-3 rounded-lg border border-blue-800 bg-gray-900/80 p-4">
+                  <h4 className="text-sm font-medium text-white mb-3">
+                    Bind Sound: <span className="text-blue-400">{bindingFormAsset.name}</span>
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Tag (optional)</label>
+                      <input type="text" value={bindingFormTag} onChange={(e) => setBindingFormTag(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+                        className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white font-mono outline-none focus:border-blue-500" />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-xs text-gray-400 mb-1">Usage Notes (optional)</label>
+                    <textarea value={bindingFormNotes} onChange={(e) => setBindingFormNotes(e.target.value)} rows={2}
+                      className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500 resize-none" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveBinding} disabled={bindingFormSaving}
+                      className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50">
+                      {bindingFormSaving ? "Saving..." : "Add Sound"}
+                    </button>
+                    <button onClick={() => { setBindingFormType(null); setBindingFormAsset(null); }}
+                      className="rounded bg-gray-700 px-4 py-1.5 text-sm text-gray-300 hover:text-white transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Sound binding cards grouped by category */}
+              {soundBindings.length === 0 && bindingFormType !== "sound" ? (
+                <div className="flex min-h-[80px] items-center justify-center rounded-lg border border-dashed border-gray-700">
+                  <p className="text-sm text-gray-500">No bound sound assets yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {soundBindings.map((b) => (
+                    <div key={b.id} className="flex items-center gap-3 rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white">{b.sound_name}</span>
+                          {b.sound_category && (
+                            <span className="rounded-full bg-purple-900/50 px-2 py-0.5 text-xs text-purple-300">{b.sound_category}</span>
+                          )}
+                          {b.tag && (
+                            <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs font-mono text-gray-300">{b.tag}</span>
+                          )}
+                        </div>
+                        {b.usage_notes && <div className="text-xs text-gray-500 mt-0.5 truncate">{b.usage_notes}</div>}
+                      </div>
+                      <button onClick={() => handleDeleteSoundBinding(b.id)} className="rounded px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-gray-800 transition-colors shrink-0">Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <AssetPicker isOpen={soundPickerOpen} onClose={() => setSoundPickerOpen(false)} assetType="sound"
+                onSelect={(a) => handleBindingPickerSelect("sound", a)} excludeIds={soundBindings.map((b) => b.sound_asset_id)} />
+            </div>
+
+            {/* Legacy sound entities */}
+            <div>
+              <button
+                onClick={() => setShowLegacySound(!showLegacySound)}
+                className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 mb-2"
+              >
+                <span className={`transition-transform ${showLegacySound ? "rotate-90" : ""}`}>&#9654;</span>
+                Legacy Score Themes & SFX
+              </button>
+              {showLegacySound && (
+                <SoundDepartment productionBibleId={manifest.production_bible_id} />
+              )}
+            </div>
           </div>
         )}
 

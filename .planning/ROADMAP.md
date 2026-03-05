@@ -120,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
-| 22. Asset Library & Actor-Character | 6/6 | Complete   | 2026-03-05 |
+| 22. Asset Library & Actor-Character | 6/6 | Complete    | 2026-03-05 |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)

@@ -35,6 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 19: Bible Context Fix + Code Cleanup** - Fix load_bible_context indirect lookup, remove dead manifest strings/orphan files/dead code (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 20: Entity Media Uploads** - Missing upload endpoints and UI for actor refs, wardrobe, audio, props across Production Bible entities (Issues #8, #9, #10, #11) (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure) (completed 2026-03-01)
+- [ ] **Phase 22: Asset Library & Actor-Character Model** - Global Asset Library (Actors, Sets, Props, Sound Assets), Actor vs Character distinction, binding system for Production Bibles, scene tag resolution
 
 ## Phase Details
 
@@ -119,6 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
+| 22. Asset Library & Actor-Character | 0/0 | ○ Planning | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -462,3 +464,20 @@ Plans:
 Plans:
 - [ ] 21-01-PLAN.md — Backend: bulk scene reorder endpoint, SceneListItem type fix, client function
 - [ ] 21-02-PLAN.md — Frontend: sequence DnD reorder, act field setter, duration display, within-sequence scene reorder
+
+### Phase 22: Asset Library & Actor-Character Model
+**Goal**: Introduce a global Asset Library with standalone Actor, Set, Prop, and Sound Asset entities that can be manually created, browsed, and bound into Production Bibles via a casting/binding system — replacing the current tightly-coupled asset model with a reusable, composable architecture where Actors are persistent identities cast as Characters in specific productions
+**Depends on**: Phase 21
+**Requirements**: TBD (derived from PRD)
+**PRD**: `docs/issues/production-bible-spec.md`
+**Success Criteria** (what must be TRUE):
+  1. Actor entity exists as a standalone, reusable identity with name, description, appearance refs, voice profiles, wardrobe presets, and prompt tags — independent of any Production Bible
+  2. Character entity is a binding of an Actor into a Production Bible role, with character name, arc, wardrobe overrides, voice profile selection, and behavioral notes
+  3. Set, Prop, and Sound Asset entities exist as standalone reusable entities in a global Asset Library
+  4. Asset Library is a new top-level navigation section with browsable/searchable listings for Actors, Sets, Props, and Sound Assets
+  5. Binding system allows associating standalone assets with Production Bibles (CastBinding, SetBinding, PropBinding, SoundBinding) with production-specific overrides
+  6. New Production Bible creation view includes Casting, Art Department, and Sound sections with library pickers
+  7. Scene prompts support tag syntax ([CHAR:TAG], [SET:TAG], [PROP:TAG]) with autocomplete and tag resolution at generation time
+  8. Existing Production Bible assets can be promoted to the standalone Asset Library
+  9. Migration path preserves existing data — no breaking changes to current Production Bible workflow
+**Plans:** TBD

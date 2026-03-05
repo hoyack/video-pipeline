@@ -14,6 +14,10 @@ from vidpipe.db.models import (
     Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance,
     SceneCheckpoint, Production, ProductionBible, Sequence, Screenplay, DEFAULT_USER_ID,
     Character, Wardrobe, VoiceProfile, Set, SonicIdentity, Prop, ScoreTheme, SFXItem,
+    Actor, ActorRef, ActorVoiceProfile, ActorWardrobePreset,
+    LibrarySet, LibrarySetRef, LibrarySonicIdentity,
+    LibraryProp, LibraryPropRef, SoundAsset,
+    CastBinding, SetBinding, PropBinding, SoundBinding,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +191,8 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE scenes ADD COLUMN production_id TEXT REFERENCES productions(id)",
         # ElevenLabs configuration
         "ALTER TABLE user_settings ADD COLUMN elevenlabs_api_key TEXT",
+        # GCP service account JSON (full credential file for Vertex AI)
+        "ALTER TABLE user_settings ADD COLUMN gcp_service_account_json TEXT",
         # Phase 16: Sequence grouping
         # Note: SQLite uses TEXT for UUIDs, PostgreSQL uses UUID type.
         # The correct type is set below based on driver detection.
@@ -202,6 +208,12 @@ async def _run_migrations(conn) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_screenplays_production_id ON screenplays(production_id)",
         # Phase 19: Direct Production → Production Bible FK
         "ALTER TABLE productions ADD COLUMN production_bible_id {uuid_type} REFERENCES production_bibles(id)",
+        # Phase 22: Promotion tracking columns on existing Phase 17 tables
+        "ALTER TABLE characters ADD COLUMN promoted_to_actor_id {uuid_type} REFERENCES actors(id)",
+        "ALTER TABLE sets ADD COLUMN promoted_to_library_set_id {uuid_type} REFERENCES library_sets(id)",
+        "ALTER TABLE props ADD COLUMN promoted_to_library_prop_id {uuid_type} REFERENCES library_props(id)",
+        "ALTER TABLE score_themes ADD COLUMN promoted_to_sound_asset_id {uuid_type} REFERENCES sound_assets(id)",
+        "ALTER TABLE sfx_items ADD COLUMN promoted_to_sound_asset_id {uuid_type} REFERENCES sound_assets(id)",
     ]
     for i, raw_sql in enumerate(migrations):
         sql = raw_sql.format(uuid_type=uuid_type) if "{uuid_type}" in raw_sql else raw_sql
@@ -221,6 +233,29 @@ async def _run_migrations(conn) -> None:
             # Column already exists (SQLite) or other safe-to-ignore error
 
 
+async def _enable_rls(conn) -> None:
+    """Enable Row Level Security on tables containing secrets (PostgreSQL only).
+
+    RLS with no policies blocks all access via the Supabase anon/PostgREST key.
+    The backend connects via the postgres service role which bypasses RLS.
+    Idempotent — ENABLE ROW LEVEL SECURITY is a no-op if already enabled.
+    """
+    if _is_sqlite():
+        return
+
+    tables = ["user_settings"]
+    for table in tables:
+        sp = f"rls_{table}_sp"
+        try:
+            await conn.execute(text(f"SAVEPOINT {sp}"))
+            await conn.execute(text(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"))
+            await conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+            logger.info("Enabled RLS on %s", table)
+        except Exception as e:
+            await conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+            logger.debug("RLS on %s: %s", table, e)
+
+
 async def init_database():
     """Initialize database schema on first run."""
     async with engine.begin() as conn:
@@ -230,6 +265,7 @@ async def init_database():
         await conn.run_sync(Base.metadata.create_all)
         await _run_migrations(conn)
         await _seed_default_user(conn)
+        await _enable_rls(conn)
 
 
 __all__ = [

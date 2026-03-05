@@ -231,6 +231,10 @@ class Character(Base):
     actor_refs: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of image URLs/keys
     base_appearance: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of strings
+    # Phase 22: Promotion tracking — links to library Actor
+    promoted_to_actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("actors.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
@@ -299,6 +303,10 @@ class Set(Base):
     style_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     lighting_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Phase 22: Promotion tracking — links to library LibrarySet
+    promoted_to_library_set_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("library_sets.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
@@ -343,6 +351,10 @@ class Prop(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     associated_characters: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of character UUID strings
     prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Phase 22: Promotion tracking — links to library LibraryProp
+    promoted_to_library_prop_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("library_props.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
@@ -370,6 +382,10 @@ class ScoreTheme(Base):
     reference_audio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     adapter_type: Mapped[str] = mapped_column(String(50), default="MUSIC_GEN")
+    # Phase 22: Promotion tracking — links to library SoundAsset
+    promoted_to_sound_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("sound_assets.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
@@ -395,6 +411,10 @@ class SFXItem(Base):
     source_audio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of strings
+    # Phase 22: Promotion tracking — links to library SoundAsset
+    promoted_to_sound_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("sound_assets.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),

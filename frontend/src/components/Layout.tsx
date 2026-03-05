@@ -21,6 +21,7 @@ const NAV_ITEMS: { href: string; label: string; match: (path: string) => boolean
       path.startsWith("/scenes/"),
   },
   { href: "/production-bibles", label: "Production Bibles", match: (path) => path.startsWith("/production-bibles") },
+  { href: "/asset-library", label: "Asset Library", match: (path) => path.startsWith("/asset-library") },
   { href: "/settings", label: "Settings", match: (path) => path === "/settings" },
 ];
 

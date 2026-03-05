@@ -10,6 +10,8 @@ import { ProductionBibleCreator } from "./components/ProductionBibleCreator.tsx"
 import { SettingsPage } from "./components/SettingsPage.tsx";
 import { ProductionList } from "./components/ProductionList.tsx";
 import { ProductionDetail } from "./components/ProductionDetail.tsx";
+import { AssetLibrary } from "./components/AssetLibrary.tsx";
+import { ActorLibraryDetail } from "./components/ActorLibraryDetail.tsx";
 import { createDraftScene } from "./api/client.ts";
 import { ShowCostProvider } from "./hooks/useShowCost.tsx";
 
@@ -100,6 +102,12 @@ function App() {
               onEditManifest={(id) => navigate(`/production-bibles/${id}/edit`)}
               onViewManifest={(id) => navigate(`/production-bibles/${id}/edit`)}
             />
+          </Route>
+          <Route path="/asset-library/actors/:id">
+            {(params) => <ActorLibraryDetail actorId={params.id} />}
+          </Route>
+          <Route path="/asset-library">
+            <AssetLibrary />
           </Route>
           <Route path="/settings">
             <SettingsPage />

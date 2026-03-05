@@ -14,6 +14,7 @@ import {
   deleteSFXItem,
   uploadScoreThemeAudio,
   uploadSFXAudio,
+  generateSFX,
 } from "../api/client.ts";
 import { AudioPlayer } from "./AudioPlayer.tsx";
 
@@ -154,6 +155,16 @@ export function SoundDepartment({ productionBibleId }: SoundDepartmentProps) {
     try {
       const updated = await uploadScoreThemeAudio(themeId, file);
       setScoreThemes((prev) => prev.map((t) => (t.score_theme_id === themeId ? updated : t)));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleGenerateSfx = async (sfxId: string) => {
+    setError(null);
+    try {
+      const updated = await generateSFX(sfxId);
+      setSfxItems((prev) => prev.map((s) => (s.sfx_item_id === sfxId ? updated : s)));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -331,6 +342,7 @@ export function SoundDepartment({ productionBibleId }: SoundDepartmentProps) {
                 onUpdate={handleUpdateSfx}
                 onDelete={handleDeleteSfx}
                 onUploadAudio={handleUploadSfxAudio}
+                onGenerate={handleGenerateSfx}
               />
             ))}
           </div>
@@ -531,6 +543,7 @@ function SFXItemRow({
   onUpdate,
   onDelete,
   onUploadAudio,
+  onGenerate,
 }: {
   sfx: SFXItemResponse;
   isExpanded: boolean;
@@ -538,12 +551,14 @@ function SFXItemRow({
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onUploadAudio: (sfxId: string, file: File) => Promise<void>;
+  onGenerate: (sfxId: string) => Promise<void>;
 }) {
   const [name, setName] = useState(sfx.name);
   const [category, setCategory] = useState(sfx.category);
   const [generationPrompt, setGenerationPrompt] = useState(sfx.generation_prompt ?? "");
   const [tags, setTags] = useState(sfx.tags?.join(", ") ?? "");
   const [saving, setSaving] = useState(false);
+  const [generatingSfx, setGeneratingSfx] = useState(false);
 
   useEffect(() => {
     setName(sfx.name);
@@ -672,6 +687,17 @@ function SFXItemRow({
                   className="hidden"
                 />
               </label>
+              <button
+                onClick={async () => {
+                  setGeneratingSfx(true);
+                  try { await onGenerate(sfx.sfx_item_id); } finally { setGeneratingSfx(false); }
+                }}
+                disabled={generatingSfx || !sfx.generation_prompt}
+                title={!sfx.generation_prompt ? "Set a generation prompt first" : "Generate SFX audio"}
+                className="text-xs px-3 py-1.5 rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {generatingSfx ? "Generating..." : "Generate"}
+              </button>
             </div>
             <button
               onClick={handleSave}

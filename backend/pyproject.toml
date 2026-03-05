@@ -31,6 +31,7 @@ dependencies = [
     "ollama>=0.4.0",
     "tenacity>=8.0",
     "python-multipart>=0.0.6",
+    "elevenlabs>=1.0",
 ]
 
 [project.optional-dependencies]

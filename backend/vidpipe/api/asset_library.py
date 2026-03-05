@@ -20,7 +20,10 @@ import re
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from pathlib import Path
+
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 
@@ -179,6 +182,35 @@ class SoundAssetUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _generate_thumbnail(content: bytes, size: int = 256) -> bytes:
+    """Generate a center-crop square thumbnail from image bytes."""
+    from io import BytesIO
+    from PIL import Image
+
+    img = Image.open(BytesIO(content))
+    img = img.convert("RGB")
+
+    # Center-crop to square
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    img = img.crop((left, top, left + side, top + side))
+
+    # Resize to target
+    img = img.resize((size, size), Image.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+def _thumb_path_from_original(original_path: str) -> str:
+    """Derive thumbnail path from original image path."""
+    p = Path(original_path)
+    return str(p.with_name(p.stem + "_thumb.jpg"))
+
+
 async def _save_upload(
     content: bytes,
     content_type: str,
@@ -188,6 +220,10 @@ async def _save_upload(
     """Save uploaded file via dual-backend storage pattern. Returns stored path/key."""
     storage = get_storage_backend()
 
+    # Generate thumbnail for image uploads
+    is_image = content_type.startswith("image/")
+    thumb_bytes = await asyncio.to_thread(_generate_thumbnail, content) if is_image else None
+
     if isinstance(storage, LocalStorageBackend):
         from vidpipe.config import settings as _settings
 
@@ -195,16 +231,25 @@ async def _save_upload(
         local_dir.mkdir(parents=True, exist_ok=True)
         local_path = local_dir / filename
         await asyncio.to_thread(local_path.write_bytes, content)
+        if thumb_bytes:
+            thumb_path = Path(_thumb_path_from_original(str(local_path)))
+            await asyncio.to_thread(thumb_path.write_bytes, thumb_bytes)
         return str(local_path)
     else:
         key = f"asset-library/{storage_prefix}/{filename}"
         await storage.put(key, content, content_type)
+        if thumb_bytes:
+            thumb_key = _thumb_path_from_original(key)
+            await storage.put(thumb_key, thumb_bytes, "image/jpeg")
         # Write local copy for serving
         from vidpipe.config import settings as _settings
 
         local_path = _settings.storage.tmp_dir / key
         local_path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(local_path.write_bytes, content)
+        if thumb_bytes:
+            thumb_local = Path(_thumb_path_from_original(str(local_path)))
+            await asyncio.to_thread(thumb_local.write_bytes, thumb_bytes)
         return key
 
 
@@ -232,6 +277,39 @@ def _validate_audio_upload(file: UploadFile, content: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Helpers — file serving
+# ---------------------------------------------------------------------------
+
+
+async def _serve_ref_image(image_url: str, thumbnail: bool = False):
+    """Serve a reference image (or its thumbnail) from local storage or S3."""
+    target = _thumb_path_from_original(image_url) if thumbnail else image_url
+    storage = get_storage_backend()
+    if isinstance(storage, LocalStorageBackend):
+        file_path = Path(target)
+        # Fall back to original if thumbnail doesn't exist yet
+        if thumbnail and not file_path.exists():
+            file_path = Path(image_url)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Image file not found on disk")
+        suffix = file_path.suffix.lower()
+        media = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+        return FileResponse(path=str(file_path), media_type=media.get(suffix.lstrip("."), "image/png"))
+    else:
+        from vidpipe.services.file_manager import FileManager
+        try:
+            data = await FileManager().read_bytes(target)
+        except Exception:
+            if thumbnail:
+                data = await FileManager().read_bytes(image_url)
+            else:
+                raise HTTPException(status_code=404, detail="Image not found")
+        suffix = target.rsplit(".", 1)[-1].lower() if "." in target else "png"
+        media = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+        return Response(content=data, media_type=media.get(suffix, "image/png"))
+
+
+# ---------------------------------------------------------------------------
 # Helpers — serialization
 # ---------------------------------------------------------------------------
 
@@ -240,7 +318,7 @@ def _actor_ref_to_dict(r: ActorRef) -> dict:
     return {
         "id": str(r.id),
         "actor_id": str(r.actor_id),
-        "image_url": r.image_url,
+        "image_url": f"/api/asset-library/actor-refs/{r.id}/image",
         "label": r.label,
         "is_primary": r.is_primary,
         "created_at": r.created_at.isoformat(),
@@ -254,7 +332,7 @@ def _voice_profile_to_dict(vp: ActorVoiceProfile) -> dict:
         "voice_id": vp.voice_id,
         "adapter_type": vp.adapter_type,
         "style_notes": vp.style_notes,
-        "sample_url": vp.sample_url,
+        "sample_url": f"/api/asset-library/actor-voice-profiles/{vp.id}/sample" if vp.sample_url else None,
         "created_at": vp.created_at.isoformat(),
     }
 
@@ -296,7 +374,7 @@ def _library_set_ref_to_dict(r: LibrarySetRef) -> dict:
     return {
         "id": str(r.id),
         "library_set_id": str(r.library_set_id),
-        "image_url": r.image_url,
+        "image_url": f"/api/asset-library/set-refs/{r.id}/image",
         "label": r.label,
         "is_primary": r.is_primary,
         "created_at": r.created_at.isoformat(),
@@ -340,7 +418,7 @@ def _library_prop_ref_to_dict(r: LibraryPropRef) -> dict:
     return {
         "id": str(r.id),
         "library_prop_id": str(r.library_prop_id),
-        "image_url": r.image_url,
+        "image_url": f"/api/asset-library/prop-refs/{r.id}/image",
         "label": r.label,
         "is_primary": r.is_primary,
         "created_at": r.created_at.isoformat(),
@@ -419,13 +497,25 @@ async def list_actors(search: Optional[str] = None):
         bind_counts_result = await session.execute(bind_counts_q)
         bind_counts = dict(bind_counts_result.all())
 
-        # Fetch primary refs for thumbnails
+        # Fetch primary refs for thumbnails (fall back to first ref if none marked primary)
         primary_refs_q = (
             select(ActorRef)
             .where(ActorRef.actor_id.in_(actor_ids), ActorRef.is_primary == True)  # noqa: E712
         )
         primary_refs_result = await session.execute(primary_refs_q)
         primary_refs = {r.actor_id: r for r in primary_refs_result.scalars().all()}
+
+        # Fallback: for actors without a primary, pick the first ref
+        missing_ids = [aid for aid in actor_ids if aid not in primary_refs]
+        if missing_ids:
+            fallback_q = (
+                select(ActorRef)
+                .where(ActorRef.actor_id.in_(missing_ids))
+                .order_by(ActorRef.created_at)
+            )
+            for r in (await session.execute(fallback_q)).scalars().all():
+                if r.actor_id not in primary_refs:
+                    primary_refs[r.actor_id] = r
 
         return [
             {
@@ -435,7 +525,7 @@ async def list_actors(search: Optional[str] = None):
                 "prompt_tags": a.prompt_tags,
                 "ref_count": ref_counts.get(a.id, 0),
                 "binding_count": bind_counts.get(a.id, 0),
-                "primary_ref_url": primary_refs[a.id].image_url if a.id in primary_refs else None,
+                "primary_ref_url": f"/api/asset-library/actor-refs/{primary_refs[a.id].id}/image?thumb=true" if a.id in primary_refs else None,
                 "created_at": a.created_at.isoformat(),
             }
             for a in actors
@@ -605,6 +695,16 @@ async def delete_actor_ref(ref_id: str):
         return None
 
 
+@asset_library_router.get("/actor-refs/{ref_id}/image")
+async def serve_actor_ref_image(ref_id: str, thumb: bool = Query(False)):
+    """Serve an actor reference image (or its thumbnail)."""
+    async with async_session() as session:
+        ref = await session.get(ActorRef, uuid.UUID(ref_id))
+        if ref is None:
+            raise HTTPException(status_code=404, detail="Actor ref not found")
+        return await _serve_ref_image(ref.image_url, thumbnail=thumb)
+
+
 # --- Actor Voice Profiles ---
 
 
@@ -661,6 +761,97 @@ async def delete_voice_profile(profile_id: str):
         await session.delete(vp)
         await session.commit()
         return None
+
+
+class TestVoiceRequest(BaseModel):
+    text: str = "Hello, this is a sample of my voice. How does it sound?"
+
+
+@asset_library_router.post("/actor-voice-profiles/{profile_id}/test")
+async def test_voice_profile(profile_id: str, body: TestVoiceRequest):
+    """Generate a TTS sample for an actor voice profile via ElevenLabs."""
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.services.audio.base import AudioAdapterError, AudioAuthError, AudioQuotaError
+    from vidpipe.services.audio.registry import get_audio_adapter
+
+    async with async_session() as session:
+        vp = await session.get(ActorVoiceProfile, uuid.UUID(profile_id))
+        if vp is None:
+            raise HTTPException(status_code=404, detail="Voice profile not found")
+        if not vp.voice_id:
+            raise HTTPException(status_code=422, detail="Voice ID not set on voice profile.")
+
+        # Get API key from user settings
+        us_result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+        )
+        us = us_result.scalars().first()
+        if us is None or not us.elevenlabs_api_key:
+            raise HTTPException(
+                status_code=422,
+                detail="ElevenLabs API key not configured. Set it in Settings.",
+            )
+
+        adapter = get_audio_adapter(vp.adapter_type or "ELEVENLABS", us.elevenlabs_api_key)
+        try:
+            audio_bytes = await adapter.generate_voice(
+                vp.voice_id,
+                body.text,
+                style_notes=vp.style_notes,
+            )
+        except AudioAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        except AudioQuotaError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        except AudioAdapterError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+        # Store audio
+        storage = get_storage_backend()
+        filename = "sample.mp3"
+        prefix = f"actors/{vp.actor_id}/voice_samples/{vp.id}"
+
+        if isinstance(storage, LocalStorageBackend):
+            from vidpipe.config import settings as _settings
+            local_dir = _settings.storage.tmp_dir / "asset-library" / prefix
+            local_dir.mkdir(parents=True, exist_ok=True)
+            local_path = local_dir / filename
+            await asyncio.to_thread(local_path.write_bytes, audio_bytes)
+            vp.sample_url = str(local_path)
+        else:
+            key = f"asset-library/{prefix}/{filename}"
+            await storage.put(key, audio_bytes, "audio/mpeg")
+            from vidpipe.config import settings as _settings
+            local_path = _settings.storage.tmp_dir / key
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(local_path.write_bytes, audio_bytes)
+            vp.sample_url = key
+
+        await session.commit()
+        await session.refresh(vp)
+        return _voice_profile_to_dict(vp)
+
+
+@asset_library_router.get("/actor-voice-profiles/{profile_id}/sample")
+async def serve_voice_sample(profile_id: str):
+    """Serve the generated voice sample audio."""
+    async with async_session() as session:
+        vp = await session.get(ActorVoiceProfile, uuid.UUID(profile_id))
+        if vp is None:
+            raise HTTPException(status_code=404, detail="Voice profile not found")
+        if not vp.sample_url:
+            raise HTTPException(status_code=404, detail="No sample generated yet.")
+
+        storage = get_storage_backend()
+        if isinstance(storage, LocalStorageBackend):
+            file_path = Path(vp.sample_url)
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="Sample file not found on disk")
+            return FileResponse(path=str(file_path), media_type="audio/mpeg")
+        else:
+            from vidpipe.services.file_manager import FileManager
+            data = await FileManager().read_bytes(vp.sample_url)
+            return Response(content=data, media_type="audio/mpeg")
 
 
 # --- Actor Wardrobe Presets ---
@@ -761,6 +952,17 @@ async def list_sets(search: Optional[str] = None):
             for r in (await session.execute(primary_refs_q)).scalars().all()
         }
 
+        missing_ids = [sid for sid in set_ids if sid not in primary_refs]
+        if missing_ids:
+            fallback_q = (
+                select(LibrarySetRef)
+                .where(LibrarySetRef.library_set_id.in_(missing_ids))
+                .order_by(LibrarySetRef.created_at)
+            )
+            for r in (await session.execute(fallback_q)).scalars().all():
+                if r.library_set_id not in primary_refs:
+                    primary_refs[r.library_set_id] = r
+
         return [
             {
                 "id": str(s.id),
@@ -768,7 +970,7 @@ async def list_sets(search: Optional[str] = None):
                 "description": s.description,
                 "ref_count": ref_counts.get(s.id, 0),
                 "binding_count": bind_counts.get(s.id, 0),
-                "primary_ref_url": primary_refs[s.id].image_url if s.id in primary_refs else None,
+                "primary_ref_url": f"/api/asset-library/set-refs/{primary_refs[s.id].id}/image?thumb=true" if s.id in primary_refs else None,
                 "created_at": s.created_at.isoformat(),
             }
             for s in sets
@@ -932,6 +1134,16 @@ async def delete_set_ref(ref_id: str):
         return None
 
 
+@asset_library_router.get("/set-refs/{ref_id}/image")
+async def serve_set_ref_image(ref_id: str, thumb: bool = Query(False)):
+    """Serve a library set reference image (or its thumbnail)."""
+    async with async_session() as session:
+        ref = await session.get(LibrarySetRef, uuid.UUID(ref_id))
+        if ref is None:
+            raise HTTPException(status_code=404, detail="Set ref not found")
+        return await _serve_ref_image(ref.image_url, thumbnail=thumb)
+
+
 # ===========================================================================
 # LibraryProp endpoints
 # ===========================================================================
@@ -975,6 +1187,17 @@ async def list_props(search: Optional[str] = None):
             for r in (await session.execute(primary_refs_q)).scalars().all()
         }
 
+        missing_ids = [pid for pid in prop_ids if pid not in primary_refs]
+        if missing_ids:
+            fallback_q = (
+                select(LibraryPropRef)
+                .where(LibraryPropRef.library_prop_id.in_(missing_ids))
+                .order_by(LibraryPropRef.created_at)
+            )
+            for r in (await session.execute(fallback_q)).scalars().all():
+                if r.library_prop_id not in primary_refs:
+                    primary_refs[r.library_prop_id] = r
+
         return [
             {
                 "id": str(p.id),
@@ -982,7 +1205,7 @@ async def list_props(search: Optional[str] = None):
                 "description": p.description,
                 "ref_count": ref_counts.get(p.id, 0),
                 "binding_count": bind_counts.get(p.id, 0),
-                "primary_ref_url": primary_refs[p.id].image_url if p.id in primary_refs else None,
+                "primary_ref_url": f"/api/asset-library/prop-refs/{primary_refs[p.id].id}/image?thumb=true" if p.id in primary_refs else None,
                 "created_at": p.created_at.isoformat(),
             }
             for p in props
@@ -1126,6 +1349,16 @@ async def delete_prop_ref(ref_id: str):
         await session.delete(ref)
         await session.commit()
         return None
+
+
+@asset_library_router.get("/prop-refs/{ref_id}/image")
+async def serve_prop_ref_image(ref_id: str, thumb: bool = Query(False)):
+    """Serve a library prop reference image (or its thumbnail)."""
+    async with async_session() as session:
+        ref = await session.get(LibraryPropRef, uuid.UUID(ref_id))
+        if ref is None:
+            raise HTTPException(status_code=404, detail="Prop ref not found")
+        return await _serve_ref_image(ref.image_url, thumbnail=thumb)
 
 
 # ===========================================================================

@@ -351,10 +351,52 @@ class ComfyUIClient:
 
 
 # ---------------------------------------------------------------------------
-# Module-level lazy singleton
+# Module-level lazy singleton + DB credential cache
 # ---------------------------------------------------------------------------
 
 _comfyui_client: Optional[ComfyUIClient] = None
+_db_comfyui_host: Optional[str] = None
+_db_comfyui_key: Optional[str] = None
+
+
+async def load_comfyui_credentials_from_db() -> None:
+    """Load ComfyUI credentials from user_settings DB table.
+
+    Caches host and api_key at module level. Closes existing client
+    so next get_comfyui_client() picks up new credentials.
+    """
+    global _db_comfyui_host, _db_comfyui_key, _comfyui_client
+
+    from vidpipe.db import async_session
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+        )
+        us = result.scalar_one_or_none()
+        if not us:
+            return
+
+        _db_comfyui_host = us.comfyui_host or None
+        _db_comfyui_key = us.comfyui_api_key or None
+
+    # Close existing client so next call recreates with new creds
+    if _comfyui_client is not None:
+        await _comfyui_client.close()
+        _comfyui_client = None
+
+    if _db_comfyui_host or _db_comfyui_key:
+        logger.info("Loaded ComfyUI credentials from DB")
+
+
+def invalidate_comfyui_client() -> None:
+    """Clear cached ComfyUI credentials and client."""
+    global _db_comfyui_host, _db_comfyui_key, _comfyui_client
+    _db_comfyui_host = None
+    _db_comfyui_key = None
+    _comfyui_client = None
 
 
 async def get_comfyui_client(
@@ -363,13 +405,20 @@ async def get_comfyui_client(
 ) -> ComfyUIClient:
     """Get or create a singleton ComfyUIClient.
 
-    Falls back to environment variables COMFY_UI_HOST and COMFY_UI_KEY
-    if host/api_key are not provided.
+    Fallback chain: explicit params → DB cache → environment variables.
     """
     global _comfyui_client
 
-    resolved_host = host or os.environ.get("COMFY_UI_HOST", "https://api.comfy.org")
-    resolved_key = api_key or os.environ.get("COMFY_UI_KEY", "")
+    resolved_host = (
+        host
+        or _db_comfyui_host
+        or os.environ.get("COMFY_UI_HOST", "https://api.comfy.org")
+    )
+    resolved_key = (
+        api_key
+        or _db_comfyui_key
+        or os.environ.get("COMFY_UI_KEY", "")
+    )
 
     # Recreate if config changed
     if _comfyui_client is not None:

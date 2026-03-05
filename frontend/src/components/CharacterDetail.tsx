@@ -4,6 +4,7 @@ import type {
   WardrobeResponse,
   VoiceProfileResponse,
 } from "../api/types.ts";
+import type { VoiceInfo } from "../api/types.ts";
 import {
   listCharacters,
   createCharacter,
@@ -18,7 +19,11 @@ import {
   uploadActorRef,
   generateAppearance,
   uploadWardrobeReference,
+  searchElevenLabsVoices,
+  resolveElevenLabsVoice,
+  generateVoiceSample,
 } from "../api/client.ts";
+import { AudioPlayer } from "./AudioPlayer.tsx";
 
 interface CharacterDetailProps {
   productionBibleId: string;
@@ -443,9 +448,19 @@ export function CharacterDetail({ productionBibleId }: CharacterDetailProps) {
               {/* Voice Profile tab */}
               {activeSubTab === "voice_profile" && (
                 <VoiceProfileTab
+                  characterId={selectedCharacter.character_id}
                   voiceProfile={selectedCharacter.voice_profile}
                   onUpsert={handleUpsertVoice}
                   onDelete={handleDeleteVoice}
+                  onVoiceProfileUpdate={(vp) => {
+                    setCharacters((prev) =>
+                      prev.map((c) =>
+                        c.character_id === selectedCharacter.character_id
+                          ? { ...c, voice_profile: vp }
+                          : c,
+                      ),
+                    );
+                  }}
                 />
               )}
             </>
@@ -811,22 +826,81 @@ function WardrobeItem({
 }
 
 function VoiceProfileTab({
+  characterId,
   voiceProfile,
   onUpsert,
   onDelete,
+  onVoiceProfileUpdate,
 }: {
+  characterId: string;
   voiceProfile: VoiceProfileResponse | null;
   onUpsert: (data: { voice_id?: string; adapter_type?: string; style_notes?: string }) => Promise<void>;
   onDelete: () => Promise<void>;
+  onVoiceProfileUpdate: (vp: VoiceProfileResponse) => void;
 }) {
   const [voiceId, setVoiceId] = useState(voiceProfile?.voice_id ?? "");
   const [styleNotes, setStyleNotes] = useState(voiceProfile?.style_notes ?? "");
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+
+  // Voice name resolution
+  const [resolvedName, setResolvedName] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  // Voice search
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<VoiceInfo[]>([]);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     setVoiceId(voiceProfile?.voice_id ?? "");
     setStyleNotes(voiceProfile?.style_notes ?? "");
+    setResolvedName(null);
   }, [voiceProfile]);
+
+  // Resolve voice name when voiceId changes
+  useEffect(() => {
+    if (!voiceId || voiceId.length < 10) {
+      setResolvedName(null);
+      return;
+    }
+    let cancelled = false;
+    setResolving(true);
+    resolveElevenLabsVoice(voiceId)
+      .then((info) => {
+        if (!cancelled) setResolvedName(info.name);
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedName(null);
+      })
+      .finally(() => {
+        if (!cancelled) setResolving(false);
+      });
+    return () => { cancelled = true; };
+  }, [voiceId]);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    try {
+      const results = await searchElevenLabsVoices(searchQuery.trim());
+      setSearchResults(results);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSelectVoice = (voice: VoiceInfo) => {
+    setVoiceId(voice.voice_id);
+    setResolvedName(voice.name);
+    setShowSearch(false);
+    setSearchResults([]);
+    setSearchQuery("");
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -838,18 +912,87 @@ function VoiceProfileTab({
     setSaving(false);
   };
 
+  const handleGenerateSample = async () => {
+    setGenerating(true);
+    setGenError(null);
+    try {
+      const vp = await generateVoiceSample(characterId);
+      onVoiceProfileUpdate(vp);
+    } catch (err: unknown) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div>
         <label className="block text-xs text-gray-400 mb-1">Voice ID</label>
-        <input
-          type="text"
-          value={voiceId}
-          onChange={(e) => setVoiceId(e.target.value)}
-          className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
-          placeholder="ElevenLabs voice ID"
-        />
+        <div className="flex gap-2 items-center">
+          <input
+            type="text"
+            value={voiceId}
+            onChange={(e) => setVoiceId(e.target.value)}
+            className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
+            placeholder="ElevenLabs voice ID"
+          />
+          {resolving && <span className="text-xs text-gray-500">...</span>}
+          {resolvedName && !resolving && (
+            <span className="text-xs px-2 py-1 rounded bg-green-900/50 text-green-300 whitespace-nowrap">
+              {resolvedName}
+            </span>
+          )}
+          <button
+            onClick={() => setShowSearch(!showSearch)}
+            className="text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 whitespace-nowrap"
+          >
+            {showSearch ? "Close" : "Search"}
+          </button>
+        </div>
       </div>
+
+      {/* Voice search panel */}
+      {showSearch && (
+        <div className="rounded border border-gray-700 bg-gray-800 p-3 space-y-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
+              placeholder="Search voices by name..."
+              autoFocus
+            />
+            <button
+              onClick={handleSearch}
+              disabled={searching || !searchQuery.trim()}
+              className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              {searching ? "..." : "Search"}
+            </button>
+          </div>
+          {searchResults.length > 0 && (
+            <div className="max-h-48 overflow-y-auto space-y-1">
+              {searchResults.map((v) => (
+                <button
+                  key={v.voice_id}
+                  onClick={() => handleSelectVoice(v)}
+                  className="w-full text-left px-2 py-1.5 rounded hover:bg-gray-700 flex items-center gap-2"
+                >
+                  <span className="text-sm text-gray-200">{v.name}</span>
+                  {Object.entries(v.labels).slice(0, 3).map(([k, val]) => (
+                    <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">
+                      {val}
+                    </span>
+                  ))}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <label className="block text-xs text-gray-400 mb-1">Adapter Type</label>
@@ -872,13 +1015,23 @@ function VoiceProfileTab({
         />
       </div>
 
+      {/* Voice sample playback */}
+      {voiceProfile?.sample_audio && (
+        <AudioPlayer src={voiceProfile.sample_audio} label="Voice Sample" />
+      )}
+
+      {genError && (
+        <p className="text-xs text-red-400">{genError}</p>
+      )}
+
       <div className="flex items-center justify-between">
         <button
-          disabled
-          title="ElevenLabs adapter coming soon"
-          className="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-500 cursor-not-allowed"
+          onClick={handleGenerateSample}
+          disabled={generating || !voiceProfile?.voice_id}
+          title={!voiceProfile?.voice_id ? "Save a voice ID first" : "Generate TTS sample"}
+          className="text-xs px-3 py-1.5 rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Generate Sample
+          {generating ? "Generating..." : "Generate Sample"}
         </button>
 
         <div className="flex gap-2">

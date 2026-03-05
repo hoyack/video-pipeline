@@ -215,6 +215,11 @@ export function SettingsPage() {
   const [ollamaModels, setOllamaModels] = useState<OllamaModelEntry[]>([]);
   const [newModelName, setNewModelName] = useState("");
 
+  // GCP Service Account
+  const [hasGcpServiceAccount, setHasGcpServiceAccount] = useState(false);
+  const [serviceAccountJson, setServiceAccountJson] = useState("");
+  const [serviceAccountFileName, setServiceAccountFileName] = useState("");
+
   // ElevenLabs
   const [elevenlabsApiKey, setElevenlabsApiKey] = useState("");
   const [hasElevenlabsKey, setHasElevenlabsKey] = useState(false);
@@ -233,6 +238,7 @@ export function SettingsPage() {
         setGcpProject(s.gcp_project_id ?? "");
         setGcpLocation(s.gcp_location ?? "");
         setHasApiKey(s.has_api_key);
+        setHasGcpServiceAccount(s.has_gcp_service_account);
         setComfyuiHost(s.comfyui_host ?? "");
         setHasComfyuiKey(s.has_comfyui_key);
         setComfyuiCostPerSecond(
@@ -287,6 +293,7 @@ export function SettingsPage() {
         gcp_project_id: gcpProject || null,
         gcp_location: gcpLocation || null,
         vertex_api_key: apiKey || null,
+        ...(serviceAccountJson ? { gcp_service_account_json: serviceAccountJson } : {}),
         comfyui_host: comfyuiHost || null,
         comfyui_api_key: comfyuiApiKey || null,
         comfyui_cost_per_second: costVal ? parseFloat(costVal) : null,
@@ -298,6 +305,9 @@ export function SettingsPage() {
       });
       setSettings(res);
       setHasApiKey(res.has_api_key);
+      setHasGcpServiceAccount(res.has_gcp_service_account);
+      setServiceAccountJson("");
+      setServiceAccountFileName("");
       setApiKey("");
       setHasComfyuiKey(res.has_comfyui_key);
       setComfyuiApiKey("");
@@ -545,6 +555,89 @@ export function SettingsPage() {
                   className="text-xs text-red-400 hover:text-red-300"
                 >
                   Clear key
+                </button>
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-300">
+              Service Account JSON
+            </label>
+            <p className="mb-2 text-xs text-gray-500">
+              Upload your GCP service account key file (.json). Project ID and Location will be auto-populated if empty.
+            </p>
+            <div className="flex items-center gap-3">
+              <label className="cursor-pointer rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-300 hover:border-blue-500 hover:text-white transition-colors">
+                {serviceAccountFileName || "Choose file..."}
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const text = reader.result as string;
+                      try {
+                        const parsed = JSON.parse(text);
+                        if (!parsed.type || !parsed.project_id || !parsed.private_key) {
+                          setFeedback({ type: "error", msg: "Invalid service account JSON: missing required fields" });
+                          return;
+                        }
+                        setServiceAccountJson(text);
+                        setServiceAccountFileName(file.name);
+                        // Auto-populate project/location if empty
+                        if (!gcpProject && parsed.project_id) {
+                          setGcpProject(parsed.project_id);
+                        }
+                      } catch {
+                        setFeedback({ type: "error", msg: "Invalid JSON file" });
+                      }
+                    };
+                    reader.readAsText(file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {(hasGcpServiceAccount || serviceAccountJson) && (
+                <span className="text-xs text-green-400">
+                  {serviceAccountJson ? "Ready to upload" : "Service account is set"}
+                </span>
+              )}
+            </div>
+            {hasGcpServiceAccount && !serviceAccountJson && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setSaving(true);
+                    setFeedback(null);
+                    try {
+                      const res = await updateSettings({
+                        enabled_text_models: enabledText,
+                        enabled_image_models: enabledImage,
+                        enabled_video_models: enabledVideo,
+                        default_text_model: defaultText,
+                        default_image_model: defaultImage,
+                        default_video_model: defaultVideo,
+                        gcp_project_id: gcpProject || null,
+                        gcp_location: gcpLocation || null,
+                        clear_gcp_service_account: true,
+                      });
+                      setSettings(res);
+                      setHasGcpServiceAccount(false);
+                      setFeedback({ type: "success", msg: "Service account cleared" });
+                    } catch (err) {
+                      setFeedback({ type: "error", msg: err instanceof Error ? err.message : "Failed to clear" });
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                  disabled={saving}
+                  className="text-xs text-red-400 hover:text-red-300"
+                >
+                  Clear service account
                 </button>
               </div>
             )}

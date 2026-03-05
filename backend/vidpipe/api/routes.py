@@ -3654,6 +3654,7 @@ class UserSettingsResponse(BaseModel):
     gcp_project_id: Optional[str] = None
     gcp_location: Optional[str] = None
     has_api_key: bool = False
+    has_gcp_service_account: bool = False
     comfyui_host: Optional[str] = None
     has_comfyui_key: bool = False
     comfyui_cost_per_second: Optional[float] = None
@@ -3680,6 +3681,8 @@ class UserSettingsUpdate(BaseModel):
     gcp_location: Optional[str] = None
     vertex_api_key: Optional[str] = None
     clear_api_key: bool = False
+    gcp_service_account_json: Optional[str] = None
+    clear_gcp_service_account: bool = False
     comfyui_host: Optional[str] = None
     comfyui_api_key: Optional[str] = None
     clear_comfyui_key: bool = False
@@ -3732,6 +3735,7 @@ async def get_settings() -> UserSettingsResponse:
             gcp_project_id=settings.gcp_project_id,
             gcp_location=settings.gcp_location,
             has_api_key=bool(settings.vertex_api_key),
+            has_gcp_service_account=bool(settings.gcp_service_account_json),
             comfyui_host=settings.comfyui_host,
             has_comfyui_key=bool(settings.comfyui_api_key),
             comfyui_cost_per_second=settings.comfyui_cost_per_second,
@@ -3791,6 +3795,25 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
         elif body.vertex_api_key:
             settings.vertex_api_key = body.vertex_api_key
 
+        # GCP service account JSON
+        if body.clear_gcp_service_account:
+            settings.gcp_service_account_json = None
+        elif body.gcp_service_account_json:
+            # Validate JSON structure
+            import json as _json
+            try:
+                sa_info = _json.loads(body.gcp_service_account_json)
+            except _json.JSONDecodeError:
+                raise HTTPException(400, "Invalid JSON in gcp_service_account_json")
+            required_keys = {"type", "project_id", "private_key"}
+            missing = required_keys - set(sa_info.keys())
+            if missing:
+                raise HTTPException(400, f"Service account JSON missing keys: {missing}")
+            settings.gcp_service_account_json = body.gcp_service_account_json
+            # Auto-populate project_id from service account if not explicitly set
+            if not body.gcp_project_id and sa_info.get("project_id"):
+                settings.gcp_project_id = sa_info["project_id"]
+
         # ComfyUI fields
         if body.comfyui_host is not None:
             settings.comfyui_host = body.comfyui_host or None
@@ -3824,6 +3847,29 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
         await session.commit()
         await session.refresh(settings)
 
+        # Reload credentials for any changed GCP or ComfyUI fields
+        gcp_changed = any([
+            body.gcp_service_account_json, body.clear_gcp_service_account,
+            body.gcp_project_id is not None, body.gcp_location is not None,
+            body.vertex_api_key, body.clear_api_key,
+        ])
+        comfyui_changed = any([
+            body.comfyui_host is not None, body.comfyui_api_key,
+            body.clear_comfyui_key,
+        ])
+        if gcp_changed:
+            from vidpipe.services.vertex_client import (
+                invalidate_vertex_clients, load_vertex_credentials_from_db,
+            )
+            invalidate_vertex_clients()
+            await load_vertex_credentials_from_db()
+        if comfyui_changed:
+            from vidpipe.services.comfyui_client import (
+                invalidate_comfyui_client, load_comfyui_credentials_from_db,
+            )
+            invalidate_comfyui_client()
+            await load_comfyui_credentials_from_db()
+
         return UserSettingsResponse(
             enabled_text_models=settings.enabled_text_models,
             enabled_image_models=settings.enabled_image_models,
@@ -3834,6 +3880,7 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             gcp_project_id=settings.gcp_project_id,
             gcp_location=settings.gcp_location,
             has_api_key=bool(settings.vertex_api_key),
+            has_gcp_service_account=bool(settings.gcp_service_account_json),
             comfyui_host=settings.comfyui_host,
             has_comfyui_key=bool(settings.comfyui_api_key),
             comfyui_cost_per_second=settings.comfyui_cost_per_second,

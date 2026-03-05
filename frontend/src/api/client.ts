@@ -91,6 +91,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new ApiError(res.status, body.detail ?? res.statusText);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -1371,6 +1372,15 @@ export function updateActorVoiceProfile(
 /** DELETE /api/asset-library/actor-voice-profiles/{id} — delete voice profile */
 export function deleteActorVoiceProfile(id: string): Promise<void> {
   return request<void>(`/api/asset-library/actor-voice-profiles/${id}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/actor-voice-profiles/{id}/test — generate TTS sample */
+export function testActorVoiceProfile(id: string, text?: string): Promise<ActorVoiceProfile> {
+  return request<ActorVoiceProfile>(`/api/asset-library/actor-voice-profiles/${id}/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(text ? { text } : {}),
+  });
 }
 
 /** POST /api/asset-library/actors/{id}/wardrobe-presets — create wardrobe preset */

@@ -15,6 +15,7 @@ import {
   createActorVoiceProfile,
   updateActorVoiceProfile,
   deleteActorVoiceProfile,
+  testActorVoiceProfile,
   createActorWardrobePreset,
   updateActorWardrobePreset,
   deleteActorWardrobePreset,
@@ -93,7 +94,7 @@ export function ActorLibraryDetail({ actorId }: ActorLibraryDetailProps) {
             onClick={() => navigate("/asset-library")}
             className="text-gray-400 hover:text-gray-200 text-sm"
           >
-            Asset Library /
+            Actor /
           </button>
           <h1 className="text-xl font-bold text-white">{actor.name}</h1>
         </div>
@@ -494,43 +495,120 @@ function VoiceProfilesTab({
             onCancel={() => setEditingId(null)}
           />
         ) : (
-          <div key={vp.id} className="rounded border border-gray-700 bg-gray-800/50 p-3">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-300 font-mono">{vp.voice_id ?? "No voice ID"}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">
-                    {vp.adapter_type ?? "ELEVENLABS"}
-                  </span>
-                </div>
-                {vp.style_notes && (
-                  <p className="text-xs text-gray-400 mt-1">{vp.style_notes}</p>
-                )}
-                {vp.sample_url && (
-                  <audio controls preload="none" className="mt-2 h-8" src={vp.sample_url} />
-                )}
-              </div>
-              <div className="flex gap-1">
-                <button
-                  onClick={() => startEdit(vp)}
-                  className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDelete(vp.id)}
-                  className="text-xs px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
+          <VoiceProfileCard
+            key={vp.id}
+            vp={vp}
+            onEdit={() => startEdit(vp)}
+            onDelete={() => handleDelete(vp.id)}
+            onRefresh={onRefresh}
+            onError={onError}
+          />
         )
       )}
     </div>
   );
 }
+
+function VoiceProfileCard({
+  vp,
+  onEdit,
+  onDelete,
+  onRefresh,
+  onError,
+}: {
+  vp: ActorVoiceProfile;
+  onEdit: () => void;
+  onDelete: () => void;
+  onRefresh: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [testing, setTesting] = useState(false);
+  const [testText, setTestText] = useState("Hello, this is a sample of my voice. How does it sound?");
+  const [showTestInput, setShowTestInput] = useState(false);
+  const [sampleUrl, setSampleUrl] = useState(vp.sample_url);
+
+  const handleTest = async () => {
+    if (!vp.voice_id) {
+      onError("Voice ID not set. Edit the profile to add one.");
+      return;
+    }
+    setTesting(true);
+    try {
+      const updated = await testActorVoiceProfile(vp.id, testText);
+      setSampleUrl(updated.sample_url);
+      setShowTestInput(false);
+      onRefresh();
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="rounded border border-gray-700 bg-gray-800/50 p-3 space-y-2">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-300 font-mono">{vp.voice_id ?? "No voice ID"}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">
+              {vp.adapter_type ?? "ELEVENLABS"}
+            </span>
+          </div>
+          {vp.style_notes && (
+            <p className="text-xs text-gray-400 mt-1">{vp.style_notes}</p>
+          )}
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={() => setShowTestInput(!showTestInput)}
+            disabled={!vp.voice_id || testing}
+            className="text-xs px-2 py-1 rounded bg-green-900 text-green-300 hover:bg-green-800 disabled:opacity-50"
+          >
+            {testing ? "Generating..." : "Test Voice"}
+          </button>
+          <button
+            onClick={onEdit}
+            className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
+          >
+            Edit
+          </button>
+          <button
+            onClick={onDelete}
+            className="text-xs px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+
+      {showTestInput && (
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={testText}
+            onChange={(e) => setTestText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleTest()}
+            placeholder="Text to speak..."
+            className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-green-500 outline-none"
+          />
+          <button
+            onClick={handleTest}
+            disabled={testing || !testText.trim()}
+            className="text-xs px-3 py-1.5 rounded bg-green-600 text-white hover:bg-green-500 disabled:opacity-50"
+          >
+            {testing ? "..." : "Generate"}
+          </button>
+        </div>
+      )}
+
+      {sampleUrl && (
+        <audio controls preload="none" className="w-full h-8" src={sampleUrl} key={sampleUrl} />
+      )}
+    </div>
+  );
+}
+
 
 function VoiceProfileForm({
   voiceId,

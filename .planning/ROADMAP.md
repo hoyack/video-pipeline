@@ -120,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
-| 22. Asset Library & Actor-Character | 3/6 | In Progress|  |
+| 22. Asset Library & Actor-Character | 4/6 | In Progress|  |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -480,7 +480,7 @@ Plans:
   7. Scene prompts support tag syntax ([CHAR:TAG], [SET:TAG], [PROP:TAG]) with autocomplete and tag resolution at generation time
   8. Existing Production Bible assets can be promoted to the standalone Asset Library
   9. Migration path preserves existing data — no breaking changes to current Production Bible workflow
-**Plans:** 3/6 plans executed
+**Plans:** 4/6 plans executed
 
 Plans:
 - [ ] 22-01-PLAN.md — ORM models: standalone Actor, LibrarySet, LibraryProp, SoundAsset + binding tables + promotion columns

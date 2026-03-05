@@ -11,13 +11,16 @@ from fastapi.staticfiles import StaticFiles
 
 from vidpipe import validate_dependencies
 from vidpipe.db import init_database, shutdown
-from vidpipe.services.comfyui_client import close_comfyui_client
+from vidpipe.services.comfyui_client import close_comfyui_client, load_comfyui_credentials_from_db
+from vidpipe.services.vertex_client import load_vertex_credentials_from_db
 from vidpipe.api.routes import router
 from vidpipe.api.sequences import sequence_router
 from vidpipe.api.characters import character_router
 from vidpipe.api.sets_props import sets_props_router
 from vidpipe.api.screenplay import screenplay_router
 from vidpipe.api.sound import sound_router
+from vidpipe.api.audio_gen import audio_gen_router
+from vidpipe.api.bindings import bindings_router
 
 # Configure root logger so application logs (pipeline stages, S3, etc.) reach stdout
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -40,6 +43,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Video Pipeline API...")
     validate_dependencies()
     await init_database()
+    await load_vertex_credentials_from_db()
+    await load_comfyui_credentials_from_db()
     logger.info("API startup complete")
 
     yield
@@ -74,6 +79,8 @@ app.include_router(sets_props_router)
 app.include_router(screenplay_router)
 
 app.include_router(sound_router)
+app.include_router(audio_gen_router)
+app.include_router(bindings_router)
 
 # Serve frontend static files in production (after API routes take priority)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"

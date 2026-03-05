@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
+stopped_at: Completed 22-01-PLAN.md
+last_updated: "2026-03-05T13:57:37.697Z"
+last_activity: 2026-03-05 — Completed 22-01 (Database schema foundation)
+progress:
+  total_phases: 22
+  completed_phases: 21
+  total_plans: 64
+  completed_plans: 59
+  percent: 94
+---
+
 # Project State
 
 ## Project Reference
@@ -5,16 +21,16 @@
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 21: Sequence UI Polish
+**Current focus:** Phase 22: Asset Library & Actor-Character Model
 
 ## Current Position
 
-Phase: 21 of 21 (Sequence UI Polish)
-Plan: 2 of 2 complete
-Status: Phase 21 COMPLETE — All sequence UI features wired
-Last activity: 2026-03-01 — Completed 21-02 (Sequence UI feature wiring)
+Phase: 22 of 22 (Asset Library & Actor-Character Model)
+Plan: 1 of 6 complete
+Status: Executing Phase 22 — Database schema foundation complete
+Last activity: 2026-03-05 — Completed 22-01 (Database schema foundation)
 
-Progress: [##########] 100% (Phase 21, Plan 2 of 2)
+Progress: [█████████░] 94% (Phase 22, Plan 1 of 6)
 
 ## Performance Metrics
 
@@ -64,6 +80,7 @@ Progress: [##########] 100% (Phase 21, Plan 2 of 2)
 | Phase 20 P02 | 4min | 2 tasks | 5 files |
 | Phase 21 P01 | 2min | 2 tasks | 3 files |
 | Phase 21 P02 | 2min | 2 tasks | 4 files |
+| Phase 22 P01 | 3min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -282,6 +299,11 @@ Recent decisions affecting current work:
 - [Phase 21-02]: Sequence drag handle placed outside SequenceHeader to keep header layout clean
 - [Phase 21-02]: Act picker uses same submenu pattern as color picker for UI consistency
 
+- **22-01:** Separate actor_voice_profiles/actor_wardrobe_presets tables from existing voice_profiles/wardrobes to avoid coupling library to bible-scoped entities
+- **22-01:** library_sets/library_props table naming avoids collision with existing sets/props tables
+- **22-01:** SoundAsset unified with category discrimination (SCORE_THEME/SFX/AMBIENCE/FOLEY/UI) rather than separate tables
+- **22-01:** CastBinding has dedicated tag column for tag resolution plus prompt_tags for additional injection
+
 ### Roadmap Evolution
 
 - Phases 4-12 added: V2 studio-grade pipeline (manifest system, manifesting engine, CV analysis, adaptive prompts, multi-candidate scoring, fork integration)
@@ -306,6 +328,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-01 (execution)
-Stopped at: Completed 21-02-PLAN.md (Sequence UI feature wiring) — Phase 21 COMPLETE
+Last session: 2026-03-05T13:57:37.693Z
+Stopped at: Completed 22-01-PLAN.md
 Resume file: None

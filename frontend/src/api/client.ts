@@ -55,6 +55,24 @@ import type {
   ScreenplayResponse,
   ScreenplayUpdate,
   GeneratedSceneResult,
+  VoiceInfo,
+  ActorListItem,
+  ActorDetail,
+  ActorRefResponse,
+  ActorVoiceProfileResponse,
+  ActorWardrobePresetResponse,
+  LibrarySetListItem,
+  LibrarySetDetail,
+  LibrarySetRefResponse,
+  LibraryPropListItem,
+  LibraryPropDetail,
+  LibraryPropRefResponse,
+  SoundAssetListItem,
+  SoundAssetDetail,
+  CastBindingResponse,
+  SetBindingResponse,
+  PropBindingResponse,
+  SoundBindingResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -1221,6 +1239,558 @@ export function generateScenesFromScreenplay(
     `/api/productions/${productionId}/screenplay/generate-scenes${qs}`,
     { method: "POST" },
   );
+}
+
+// ============================================================================
+// Audio generation (ElevenLabs)
+// ============================================================================
+
+/** GET /api/elevenlabs/voices — search or list ElevenLabs voices */
+export function searchElevenLabsVoices(query?: string): Promise<VoiceInfo[]> {
+  const qs = query ? `?search=${encodeURIComponent(query)}` : "";
+  return request<VoiceInfo[]>(`/api/elevenlabs/voices${qs}`);
+}
+
+/** GET /api/elevenlabs/voices/{voiceId} — resolve voice ID to name + labels */
+export function resolveElevenLabsVoice(voiceId: string): Promise<VoiceInfo> {
+  return request<VoiceInfo>(`/api/elevenlabs/voices/${encodeURIComponent(voiceId)}`);
+}
+
+/** POST /api/characters/{id}/generate-voice-sample — generate TTS sample */
+export function generateVoiceSample(
+  characterId: string,
+  text?: string,
+): Promise<VoiceProfileResponse> {
+  const body: Record<string, string> = {};
+  if (text) body.text = text;
+  return request<VoiceProfileResponse>(
+    `/api/characters/${characterId}/generate-voice-sample`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** POST /api/sfx/{id}/generate — generate SFX audio from generation_prompt */
+export function generateSFX(sfxItemId: string): Promise<SFXItemResponse> {
+  return request<SFXItemResponse>(`/api/sfx/${sfxItemId}/generate`, {
+    method: "POST",
+  });
+}
+
+// ============================================================================
+// Phase 22: Asset Library — Actors
+// ============================================================================
+
+/** GET /api/asset-library/actors — list all actors */
+export function listActors(search?: string): Promise<ActorListItem[]> {
+  const qs = search ? `?search=${encodeURIComponent(search)}` : "";
+  return request<ActorListItem[]>(`/api/asset-library/actors${qs}`);
+}
+
+/** POST /api/asset-library/actors — create actor */
+export function createActor(
+  data: { name: string; description?: string; base_appearance_prompt?: string; prompt_tags?: string[] },
+): Promise<ActorListItem> {
+  return request<ActorListItem>("/api/asset-library/actors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/asset-library/actors/{id} — get actor detail */
+export function getActor(id: string): Promise<ActorDetail> {
+  return request<ActorDetail>(`/api/asset-library/actors/${id}`);
+}
+
+/** PUT /api/asset-library/actors/{id} — update actor */
+export function updateActor(
+  id: string,
+  data: Partial<{ name: string; description: string; base_appearance_prompt: string; prompt_tags: string[] }>,
+): Promise<ActorListItem> {
+  return request<ActorListItem>(`/api/asset-library/actors/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/asset-library/actors/{id} — delete actor */
+export function deleteActor(id: string): Promise<void> {
+  return request<void>(`/api/asset-library/actors/${id}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/actors/{id}/refs — upload actor reference image */
+export async function uploadActorLibraryRef(actorId: string, file: File, label?: string): Promise<ActorRefResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (label) formData.append("label", label);
+  const res = await fetch(`/api/asset-library/actors/${actorId}/refs`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<ActorRefResponse>;
+}
+
+/** DELETE /api/asset-library/actor-refs/{id} — delete actor ref */
+export function deleteActorLibraryRef(refId: string): Promise<void> {
+  return request<void>(`/api/asset-library/actor-refs/${refId}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/actors/{id}/voice-profiles — create voice profile */
+export function createActorVoiceProfile(
+  actorId: string,
+  data: Partial<ActorVoiceProfileResponse>,
+): Promise<ActorVoiceProfileResponse> {
+  return request<ActorVoiceProfileResponse>(`/api/asset-library/actors/${actorId}/voice-profiles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/asset-library/actor-voice-profiles/{id} — update voice profile */
+export function updateActorVoiceProfile(
+  id: string,
+  data: Partial<ActorVoiceProfileResponse>,
+): Promise<ActorVoiceProfileResponse> {
+  return request<ActorVoiceProfileResponse>(`/api/asset-library/actor-voice-profiles/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/asset-library/actor-voice-profiles/{id} — delete voice profile */
+export function deleteActorVoiceProfile(id: string): Promise<void> {
+  return request<void>(`/api/asset-library/actor-voice-profiles/${id}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/actors/{id}/wardrobe-presets — create wardrobe preset */
+export function createActorWardrobePreset(
+  actorId: string,
+  data: { label: string; description?: string },
+): Promise<ActorWardrobePresetResponse> {
+  return request<ActorWardrobePresetResponse>(`/api/asset-library/actors/${actorId}/wardrobe-presets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/asset-library/actor-wardrobe-presets/{id} — update wardrobe preset */
+export function updateActorWardrobePreset(
+  id: string,
+  data: Partial<{ label: string; description: string }>,
+): Promise<ActorWardrobePresetResponse> {
+  return request<ActorWardrobePresetResponse>(`/api/asset-library/actor-wardrobe-presets/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/asset-library/actor-wardrobe-presets/{id} — delete wardrobe preset */
+export function deleteActorWardrobePreset(id: string): Promise<void> {
+  return request<void>(`/api/asset-library/actor-wardrobe-presets/${id}`, { method: "DELETE" });
+}
+
+// ============================================================================
+// Phase 22: Asset Library — Library Sets
+// ============================================================================
+
+/** GET /api/asset-library/sets — list library sets */
+export function listLibrarySets(search?: string): Promise<LibrarySetListItem[]> {
+  const qs = search ? `?search=${encodeURIComponent(search)}` : "";
+  return request<LibrarySetListItem[]>(`/api/asset-library/sets${qs}`);
+}
+
+/** POST /api/asset-library/sets — create library set */
+export function createLibrarySet(
+  data: { name: string; description?: string; reverse_prompt?: string; style_tags?: string[]; prompt_tags?: string[]; lighting_notes?: string },
+): Promise<LibrarySetListItem> {
+  return request<LibrarySetListItem>("/api/asset-library/sets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/asset-library/sets/{id} — get library set detail */
+export function getLibrarySet(id: string): Promise<LibrarySetDetail> {
+  return request<LibrarySetDetail>(`/api/asset-library/sets/${id}`);
+}
+
+/** PUT /api/asset-library/sets/{id} — update library set */
+export function updateLibrarySet(
+  id: string,
+  data: Partial<{ name: string; description: string; reverse_prompt: string; style_tags: string[]; prompt_tags: string[]; lighting_notes: string }>,
+): Promise<LibrarySetListItem> {
+  return request<LibrarySetListItem>(`/api/asset-library/sets/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/asset-library/sets/{id} — delete library set */
+export function deleteLibrarySet(id: string): Promise<void> {
+  return request<void>(`/api/asset-library/sets/${id}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/sets/{id}/refs — upload set reference image */
+export async function uploadLibrarySetRef(setId: string, file: File, label?: string): Promise<LibrarySetRefResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (label) formData.append("label", label);
+  const res = await fetch(`/api/asset-library/sets/${setId}/refs`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<LibrarySetRefResponse>;
+}
+
+/** DELETE /api/asset-library/set-refs/{id} — delete set ref */
+export function deleteLibrarySetRef(refId: string): Promise<void> {
+  return request<void>(`/api/asset-library/set-refs/${refId}`, { method: "DELETE" });
+}
+
+// ============================================================================
+// Phase 22: Asset Library — Library Props
+// ============================================================================
+
+/** GET /api/asset-library/props — list library props */
+export function listLibraryProps(search?: string): Promise<LibraryPropListItem[]> {
+  const qs = search ? `?search=${encodeURIComponent(search)}` : "";
+  return request<LibraryPropListItem[]>(`/api/asset-library/props${qs}`);
+}
+
+/** POST /api/asset-library/props — create library prop */
+export function createLibraryProp(
+  data: { name: string; description?: string; appearance_prompt?: string; prompt_tags?: string[] },
+): Promise<LibraryPropListItem> {
+  return request<LibraryPropListItem>("/api/asset-library/props", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/asset-library/props/{id} — get library prop detail */
+export function getLibraryProp(id: string): Promise<LibraryPropDetail> {
+  return request<LibraryPropDetail>(`/api/asset-library/props/${id}`);
+}
+
+/** PUT /api/asset-library/props/{id} — update library prop */
+export function updateLibraryProp(
+  id: string,
+  data: Partial<{ name: string; description: string; appearance_prompt: string; prompt_tags: string[] }>,
+): Promise<LibraryPropListItem> {
+  return request<LibraryPropListItem>(`/api/asset-library/props/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/asset-library/props/{id} — delete library prop */
+export function deleteLibraryProp(id: string): Promise<void> {
+  return request<void>(`/api/asset-library/props/${id}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/props/{id}/refs — upload prop reference image */
+export async function uploadLibraryPropRef(propId: string, file: File, label?: string): Promise<LibraryPropRefResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (label) formData.append("label", label);
+  const res = await fetch(`/api/asset-library/props/${propId}/refs`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<LibraryPropRefResponse>;
+}
+
+/** DELETE /api/asset-library/prop-refs/{id} — delete prop ref */
+export function deleteLibraryPropRef(refId: string): Promise<void> {
+  return request<void>(`/api/asset-library/prop-refs/${refId}`, { method: "DELETE" });
+}
+
+// ============================================================================
+// Phase 22: Asset Library — Sound Assets
+// ============================================================================
+
+/** GET /api/asset-library/sounds — list sound assets */
+export function listSoundAssets(search?: string, category?: string): Promise<SoundAssetListItem[]> {
+  const params: string[] = [];
+  if (search) params.push(`search=${encodeURIComponent(search)}`);
+  if (category) params.push(`category=${encodeURIComponent(category)}`);
+  const qs = params.length ? `?${params.join("&")}` : "";
+  return request<SoundAssetListItem[]>(`/api/asset-library/sounds${qs}`);
+}
+
+/** POST /api/asset-library/sounds — create sound asset */
+export function createSoundAsset(
+  data: { name: string; category: string; subcategory?: string; description?: string; generation_prompt?: string; tags?: string[] },
+): Promise<SoundAssetDetail> {
+  return request<SoundAssetDetail>("/api/asset-library/sounds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/asset-library/sounds/{id} — get sound asset detail */
+export function getSoundAsset(id: string): Promise<SoundAssetDetail> {
+  return request<SoundAssetDetail>(`/api/asset-library/sounds/${id}`);
+}
+
+/** PUT /api/asset-library/sounds/{id} — update sound asset */
+export function updateSoundAsset(
+  id: string,
+  data: Partial<{ name: string; category: string; subcategory: string; description: string; generation_prompt: string; tags: string[] }>,
+): Promise<SoundAssetDetail> {
+  return request<SoundAssetDetail>(`/api/asset-library/sounds/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/asset-library/sounds/{id} — delete sound asset */
+export function deleteSoundAsset(id: string): Promise<void> {
+  return request<void>(`/api/asset-library/sounds/${id}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/sounds/{id}/upload-audio — upload audio file */
+export async function uploadSoundAssetAudio(id: string, file: File): Promise<SoundAssetDetail> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/asset-library/sounds/${id}/upload-audio`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<SoundAssetDetail>;
+}
+
+// ============================================================================
+// Phase 22: Bindings — Cast, Set, Prop, Sound
+// ============================================================================
+
+// --- Cast Bindings ---
+
+/** GET /api/production-bibles/{id}/cast — list cast bindings */
+export function listCastBindings(bibleId: string): Promise<CastBindingResponse[]> {
+  return request<CastBindingResponse[]>(`/api/production-bibles/${bibleId}/cast`);
+}
+
+/** POST /api/production-bibles/{id}/cast — create cast binding */
+export function createCastBinding(
+  bibleId: string,
+  data: {
+    actor_id: string;
+    tag: string;
+    character_name: string;
+    role: string;
+    character_description?: string;
+    character_arc?: string;
+    wardrobe_override?: Record<string, unknown>;
+    voice_profile_id?: string;
+    behavioral_notes?: string;
+    prompt_tags?: string[];
+  },
+): Promise<CastBindingResponse> {
+  return request<CastBindingResponse>(`/api/production-bibles/${bibleId}/cast`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/cast-bindings/{id} — update cast binding */
+export function updateCastBinding(
+  id: string,
+  data: Partial<{
+    tag: string;
+    character_name: string;
+    character_description: string;
+    character_arc: string;
+    role: string;
+    wardrobe_override: Record<string, unknown>;
+    voice_profile_id: string;
+    behavioral_notes: string;
+    prompt_tags: string[];
+  }>,
+): Promise<CastBindingResponse> {
+  return request<CastBindingResponse>(`/api/cast-bindings/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/cast-bindings/{id} — delete cast binding */
+export function deleteCastBinding(id: string): Promise<void> {
+  return request<void>(`/api/cast-bindings/${id}`, { method: "DELETE" });
+}
+
+// --- Set Bindings ---
+
+/** GET /api/production-bibles/{id}/set-bindings — list set bindings */
+export function listSetBindings(bibleId: string): Promise<SetBindingResponse[]> {
+  return request<SetBindingResponse[]>(`/api/production-bibles/${bibleId}/set-bindings`);
+}
+
+/** POST /api/production-bibles/{id}/set-bindings — create set binding */
+export function createSetBinding(
+  bibleId: string,
+  data: {
+    library_set_id: string;
+    tag: string;
+    production_name?: string;
+    lighting_override?: string;
+    sonic_override?: string;
+    prompt_tags?: string[];
+  },
+): Promise<SetBindingResponse> {
+  return request<SetBindingResponse>(`/api/production-bibles/${bibleId}/set-bindings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/set-bindings/{id} — update set binding */
+export function updateSetBinding(
+  id: string,
+  data: Partial<{
+    tag: string;
+    production_name: string;
+    lighting_override: string;
+    sonic_override: string;
+    prompt_tags: string[];
+  }>,
+): Promise<SetBindingResponse> {
+  return request<SetBindingResponse>(`/api/set-bindings/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/set-bindings/{id} — delete set binding */
+export function deleteSetBinding(id: string): Promise<void> {
+  return request<void>(`/api/set-bindings/${id}`, { method: "DELETE" });
+}
+
+// --- Prop Bindings ---
+
+/** GET /api/production-bibles/{id}/prop-bindings — list prop bindings */
+export function listPropBindings(bibleId: string): Promise<PropBindingResponse[]> {
+  return request<PropBindingResponse[]>(`/api/production-bibles/${bibleId}/prop-bindings`);
+}
+
+/** POST /api/production-bibles/{id}/prop-bindings — create prop binding */
+export function createPropBinding(
+  bibleId: string,
+  data: {
+    library_prop_id: string;
+    tag: string;
+    production_name?: string;
+    notes?: string;
+    prompt_tags?: string[];
+  },
+): Promise<PropBindingResponse> {
+  return request<PropBindingResponse>(`/api/production-bibles/${bibleId}/prop-bindings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/prop-bindings/{id} — update prop binding */
+export function updatePropBinding(
+  id: string,
+  data: Partial<{
+    tag: string;
+    production_name: string;
+    notes: string;
+    prompt_tags: string[];
+  }>,
+): Promise<PropBindingResponse> {
+  return request<PropBindingResponse>(`/api/prop-bindings/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/prop-bindings/{id} — delete prop binding */
+export function deletePropBinding(id: string): Promise<void> {
+  return request<void>(`/api/prop-bindings/${id}`, { method: "DELETE" });
+}
+
+// --- Sound Bindings ---
+
+/** GET /api/production-bibles/{id}/sound-bindings — list sound bindings */
+export function listSoundBindings(bibleId: string): Promise<SoundBindingResponse[]> {
+  return request<SoundBindingResponse[]>(`/api/production-bibles/${bibleId}/sound-bindings`);
+}
+
+/** POST /api/production-bibles/{id}/sound-bindings — create sound binding */
+export function createSoundBinding(
+  bibleId: string,
+  data: {
+    sound_asset_id: string;
+    tag?: string;
+    usage_notes?: string;
+    prompt_tags?: string[];
+  },
+): Promise<SoundBindingResponse> {
+  return request<SoundBindingResponse>(`/api/production-bibles/${bibleId}/sound-bindings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/sound-bindings/{id} — update sound binding */
+export function updateSoundBinding(
+  id: string,
+  data: Partial<{
+    tag: string;
+    usage_notes: string;
+    prompt_tags: string[];
+  }>,
+): Promise<SoundBindingResponse> {
+  return request<SoundBindingResponse>(`/api/sound-bindings/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/sound-bindings/{id} — delete sound binding */
+export function deleteSoundBinding(id: string): Promise<void> {
+  return request<void>(`/api/sound-bindings/${id}`, { method: "DELETE" });
 }
 
 export { ApiError };

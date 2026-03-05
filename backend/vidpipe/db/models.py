@@ -402,6 +402,327 @@ class SFXItem(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 22: Asset Library & Actor-Character Model
+# Standalone library entities (Actor, LibrarySet, LibraryProp, SoundAsset)
+# with sub-entity tables and binding tables to Production Bibles.
+# ---------------------------------------------------------------------------
+
+
+class Actor(Base):
+    """Standalone Actor entity in the Asset Library.
+
+    Actors exist independently of any Production Bible and can be bound
+    to multiple bibles via CastBinding. Sub-entities: ActorRef (1:N),
+    ActorVoiceProfile (1:N), ActorWardrobePreset (1:N).
+
+    Spec reference: Phase 22 - ALIB-01
+    """
+    __tablename__ = "actors"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    base_appearance_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class ActorRef(Base):
+    """Reference image for an Actor (1:N sub-entity).
+
+    Stores front/profile/3-4 angle reference images for visual consistency.
+
+    Spec reference: Phase 22 - ALIB-01
+    """
+    __tablename__ = "actor_refs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id"), index=True)
+    image_url: Mapped[str] = mapped_column(String(500))
+    label: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # front/profile/3-4
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class ActorVoiceProfile(Base):
+    """Voice profile for an Actor (1:N sub-entity).
+
+    Separate from existing VoiceProfile (which has character_id FK) to avoid
+    coupling library entities to bible-scoped entities.
+
+    Spec reference: Phase 22 - ALIB-01
+    """
+    __tablename__ = "actor_voice_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id"), index=True)
+    voice_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    adapter_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # ELEVENLABS/BARK/XTTS/CUSTOM
+    style_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sample_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class ActorWardrobePreset(Base):
+    """Wardrobe preset for an Actor (1:N sub-entity).
+
+    Separate from existing Wardrobe (which has character_id FK) to avoid
+    coupling library entities to bible-scoped entities.
+
+    Spec reference: Phase 22 - ALIB-01
+    """
+    __tablename__ = "actor_wardrobe_presets"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id"), index=True)
+    label: Mapped[str] = mapped_column(String(200))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reference_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # list of image URLs
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class LibrarySet(Base):
+    """Standalone Set entity in the Asset Library.
+
+    Named 'library_sets' to avoid collision with existing 'sets' table
+    (bible-scoped). Can be bound to bibles via SetBinding.
+
+    Spec reference: Phase 22 - ALIB-03
+    """
+    __tablename__ = "library_sets"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reverse_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    style_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    lighting_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class LibrarySetRef(Base):
+    """Reference image for a LibrarySet (1:N sub-entity).
+
+    Spec reference: Phase 22 - ALIB-03
+    """
+    __tablename__ = "library_set_refs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    library_set_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("library_sets.id"), index=True)
+    image_url: Mapped[str] = mapped_column(String(500))
+    label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class LibrarySonicIdentity(Base):
+    """Sonic identity for a LibrarySet (1:1 sub-entity).
+
+    Separate from existing SonicIdentity (which has set_id FK).
+
+    Spec reference: Phase 22 - ALIB-03
+    """
+    __tablename__ = "library_sonic_identities"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    library_set_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("library_sets.id"), unique=True, index=True  # 1:1 enforced
+    )
+    ambience_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reference_audio_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class LibraryProp(Base):
+    """Standalone Prop entity in the Asset Library.
+
+    Named 'library_props' to avoid collision with existing 'props' table.
+    Can be bound to bibles via PropBinding.
+
+    Spec reference: Phase 22 - ALIB-05
+    """
+    __tablename__ = "library_props"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appearance_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class LibraryPropRef(Base):
+    """Reference image for a LibraryProp (1:N sub-entity).
+
+    Spec reference: Phase 22 - ALIB-05
+    """
+    __tablename__ = "library_prop_refs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    library_prop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("library_props.id"), index=True)
+    image_url: Mapped[str] = mapped_column(String(500))
+    label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class SoundAsset(Base):
+    """Standalone Sound entity in the Asset Library (unified).
+
+    Combines score themes, SFX, ambience, foley, and UI sounds into a
+    single entity with category discrimination.
+
+    Spec reference: Phase 22 - ALIB-09
+    """
+    __tablename__ = "sound_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(30))  # SCORE_THEME/SFX/AMBIENCE/FOLEY/UI
+    subcategory: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    audio_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    generation_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class CastBinding(Base):
+    """Binds an Actor to a Production Bible with role and overrides.
+
+    The tag column enables tag resolution in prompt injection (e.g. KING_ALDRIC).
+    UniqueConstraints prevent duplicate actor or tag within the same bible.
+
+    Spec reference: Phase 22 - ALIB-01
+    """
+    __tablename__ = "cast_bindings"
+    __table_args__ = (
+        UniqueConstraint("production_bible_id", "actor_id", name="uq_cast_bible_actor"),
+        UniqueConstraint("production_bible_id", "tag", name="uq_cast_bible_tag"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id"), index=True)
+    tag: Mapped[str] = mapped_column(String(100))  # e.g. KING_ALDRIC
+    character_name: Mapped[str] = mapped_column(Text)
+    character_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    character_arc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(String(30))  # LEAD/SUPPORTING/EXTRA/NARRATOR
+    wardrobe_override: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    voice_profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("actor_voice_profiles.id"), nullable=True
+    )
+    behavioral_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class SetBinding(Base):
+    """Binds a LibrarySet to a Production Bible with overrides.
+
+    Spec reference: Phase 22 - ALIB-03
+    """
+    __tablename__ = "set_bindings"
+    __table_args__ = (
+        UniqueConstraint("production_bible_id", "library_set_id", name="uq_set_bible_library_set"),
+        UniqueConstraint("production_bible_id", "tag", name="uq_set_bible_tag"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    library_set_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("library_sets.id"), index=True)
+    tag: Mapped[str] = mapped_column(String(100))
+    production_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    lighting_override: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sonic_override: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class PropBinding(Base):
+    """Binds a LibraryProp to a Production Bible with overrides.
+
+    Spec reference: Phase 22 - ALIB-05
+    """
+    __tablename__ = "prop_bindings"
+    __table_args__ = (
+        UniqueConstraint("production_bible_id", "library_prop_id", name="uq_prop_bible_library_prop"),
+        UniqueConstraint("production_bible_id", "tag", name="uq_prop_bible_tag"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    library_prop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("library_props.id"), index=True)
+    tag: Mapped[str] = mapped_column(String(100))
+    production_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
+class SoundBinding(Base):
+    """Binds a SoundAsset to a Production Bible with usage notes.
+
+    Spec reference: Phase 22 - ALIB-09
+    """
+    __tablename__ = "sound_bindings"
+    __table_args__ = (
+        UniqueConstraint("production_bible_id", "sound_asset_id", name="uq_sound_bible_sound_asset"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_bible_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_bibles.id"), index=True
+    )
+    sound_asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sound_assets.id"), index=True)
+    tag: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    usage_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+
 class Screenplay(Base):
     """Screenplay entity attached 1:1 to a Production.
 
@@ -727,6 +1048,9 @@ class UserSettings(Base):
     ollama_endpoint: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     ollama_models: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     # ^ list of {"id": "ollama/llama3.1", "label": "Llama 3.1", "enabled": true, "vision": false}
+
+    # GCP service account JSON (full credential file contents)
+    gcp_service_account_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # ElevenLabs configuration
     elevenlabs_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

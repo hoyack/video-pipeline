@@ -120,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
-| 22. Asset Library & Actor-Character | 0/0 | ○ Planning | — |
+| 22. Asset Library & Actor-Character | 0/6 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -468,7 +468,7 @@ Plans:
 ### Phase 22: Asset Library & Actor-Character Model
 **Goal**: Introduce a global Asset Library with standalone Actor, Set, Prop, and Sound Asset entities that can be manually created, browsed, and bound into Production Bibles via a casting/binding system — replacing the current tightly-coupled asset model with a reusable, composable architecture where Actors are persistent identities cast as Characters in specific productions
 **Depends on**: Phase 21
-**Requirements**: TBD (derived from PRD)
+**Requirements**: ALIB-01, ALIB-02, ALIB-03, ALIB-04, ALIB-05, ALIB-06, ALIB-07, ALIB-08, ALIB-09
 **PRD**: `docs/issues/production-bible-spec.md`
 **Success Criteria** (what must be TRUE):
   1. Actor entity exists as a standalone, reusable identity with name, description, appearance refs, voice profiles, wardrobe presets, and prompt tags — independent of any Production Bible
@@ -480,4 +480,12 @@ Plans:
   7. Scene prompts support tag syntax ([CHAR:TAG], [SET:TAG], [PROP:TAG]) with autocomplete and tag resolution at generation time
   8. Existing Production Bible assets can be promoted to the standalone Asset Library
   9. Migration path preserves existing data — no breaking changes to current Production Bible workflow
-**Plans:** TBD
+**Plans:** 6 plans in 3 waves
+
+Plans:
+- [ ] 22-01-PLAN.md — ORM models: standalone Actor, LibrarySet, LibraryProp, SoundAsset + binding tables + promotion columns
+- [ ] 22-02-PLAN.md — Asset Library CRUD API (actors, sets, props, sounds) + TypeScript types
+- [ ] 22-03-PLAN.md — Binding CRUD API + tag resolver service + frontend API client functions
+- [ ] 22-04-PLAN.md — Frontend: AssetLibrary view with tabs, ActorLibraryDetail, routing + navigation
+- [ ] 22-05-PLAN.md — Frontend: AssetPicker modal, CastingSection, ProductionBibleCreator binding integration
+- [ ] 22-06-PLAN.md — Promote-to-library endpoints + tag resolver pipeline wiring

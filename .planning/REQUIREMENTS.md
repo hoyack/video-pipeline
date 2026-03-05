@@ -315,8 +315,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCRN-13 | Phase 18 | Complete |
 | SCRN-14 | Phase 18 | Complete |
 | SCRN-15 | Phase 18 | Complete |
+| ALIB-01 | Phase 22 | In Progress |
+| ALIB-02 | Phase 22 | In Progress |
+| ALIB-03 | Phase 22 | In Progress |
+| ALIB-04 | Phase 22 | In Progress |
+| ALIB-05 | Phase 22 | In Progress |
+| ALIB-06 | Phase 22 | In Progress |
+| ALIB-07 | Phase 22 | In Progress |
+| ALIB-08 | Phase 22 | In Progress |
+| ALIB-09 | Phase 22 | In Progress |
 
-**Coverage:**
+## Asset Library & Actor-Character Model
+
+- [ ] **ALIB-01**: Actor entity exists as standalone identity with name, description, base_appearance_prompt, prompt_tags, appearance_refs (ActorRef[]), voice_profiles (ActorVoiceProfile[]), wardrobe_presets (ActorWardrobePreset[])
+- [ ] **ALIB-02**: Character is a CastBinding of an Actor into a Production Bible role with character_name, character_arc, role (LEAD/SUPPORTING/EXTRA/NARRATOR), wardrobe_override, voice_profile_id, behavioral_notes, prompt_tags
+- [ ] **ALIB-03**: Standalone LibrarySet, LibraryProp, and SoundAsset entities exist in global Asset Library independent of Production Bibles
+- [ ] **ALIB-04**: Asset Library is a new top-level navigation section with browsable/searchable listings for Actors, Sets, Props, and Sound Assets
+- [ ] **ALIB-05**: Binding system (CastBinding, SetBinding, PropBinding, SoundBinding) connects library assets to Production Bibles with production-specific overrides
+- [ ] **ALIB-06**: Production Bible creation view includes Casting, Art Department, and Sound sections with library pickers for adding bound assets
+- [ ] **ALIB-07**: Scene prompts support tag syntax ([CHAR:TAG], [SET:TAG], [PROP:TAG]) with tag resolution at generation time via binding lookup
+- [ ] **ALIB-08**: Existing bible-scoped Characters, Sets, Props can be promoted to standalone Asset Library entities with auto-created bindings back
+- [ ] **ALIB-09**: Migration preserves existing data; promoted_to columns track promotion state; existing scenes without tags continue to work
+
+**Coverage:
 - v1 requirements: 41 total (all complete)
 - LLM Provider Abstraction: 7 total (all complete)
 - Storyboard Asset Binding: 4 total (all complete)
@@ -325,9 +346,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 - Sequences: 4 total (all complete)
 - Production Bible Entity Expansion: 20 total (all complete)
 - Screenplay System: 15 total (all complete)
-- **Total mapped: 109 requirements across 18 phases**
+- **Total mapped: 118 requirements across 19 phases**
+- Asset Library & Actor-Character Model: 9 total (in progress)
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-14*
-*Last updated: 2026-03-01 after v1.0 milestone audit gap closure*
+*Last updated: 2026-03-05 after Phase 22 planning*

@@ -444,6 +444,7 @@ export interface UserSettingsResponse {
   gcp_project_id: string | null;
   gcp_location: string | null;
   has_api_key: boolean;
+  has_gcp_service_account: boolean;
   comfyui_host: string | null;
   has_comfyui_key: boolean;
   comfyui_cost_per_second: number | null;
@@ -467,6 +468,8 @@ export interface UserSettingsUpdate {
   gcp_location?: string | null;
   vertex_api_key?: string | null;
   clear_api_key?: boolean;
+  gcp_service_account_json?: string | null;
+  clear_gcp_service_account?: boolean;
   comfyui_host?: string | null;
   comfyui_api_key?: string | null;
   clear_comfyui_key?: boolean;
@@ -821,6 +824,287 @@ export interface GeneratedSceneResult {
   title: string;
   scene_number: number;
 }
+
+// ============================================================================
+// Audio generation types (ElevenLabs adapter)
+// ============================================================================
+
+/** Voice info from ElevenLabs voice search/resolve */
+export interface VoiceInfo {
+  voice_id: string;
+  name: string;
+  labels: Record<string, string>;
+  preview_url: string | null;
+}
+
+// ============================================================================
+// Phase 22: Asset Library & Actor-Character Model
+// ============================================================================
+
+/** Actor reference image */
+export interface ActorRef {
+  id: string;
+  actor_id: string;
+  image_url: string;
+  label: string | null;
+  is_primary: boolean;
+  created_at: string;
+}
+
+/** Actor voice profile (library-level) */
+export interface ActorVoiceProfile {
+  id: string;
+  actor_id: string;
+  voice_id: string | null;
+  adapter_type: string | null;
+  style_notes: string | null;
+  sample_url: string | null;
+  created_at: string;
+}
+
+/** Actor wardrobe preset (library-level) */
+export interface ActorWardrobePreset {
+  id: string;
+  actor_id: string;
+  label: string;
+  description: string | null;
+  reference_images: string[] | null;
+  created_at: string;
+}
+
+/** Full actor detail with sub-entities */
+export interface Actor {
+  id: string;
+  name: string;
+  description: string | null;
+  base_appearance_prompt: string | null;
+  prompt_tags: string[] | null;
+  refs: ActorRef[];
+  voice_profiles: ActorVoiceProfile[];
+  wardrobe_presets: ActorWardrobePreset[];
+  binding_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Actor list item (compact, from GET /api/asset-library/actors) */
+export interface ActorListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  prompt_tags: string[] | null;
+  ref_count: number;
+  binding_count: number;
+  primary_ref_url: string | null;
+  created_at: string;
+}
+
+/** Library set reference image */
+export interface LibrarySetRef {
+  id: string;
+  library_set_id: string;
+  image_url: string;
+  label: string | null;
+  is_primary: boolean;
+  created_at: string;
+}
+
+/** Library sonic identity (1:1 with library set) */
+export interface LibrarySonicIdentity {
+  id: string;
+  library_set_id: string;
+  ambience_description: string | null;
+  reference_audio_url: string | null;
+  generation_prompt: string | null;
+  created_at: string;
+}
+
+/** Full library set detail */
+export interface LibrarySet {
+  id: string;
+  name: string;
+  description: string | null;
+  reverse_prompt: string | null;
+  style_tags: string[] | null;
+  prompt_tags: string[] | null;
+  lighting_notes: string | null;
+  refs: LibrarySetRef[];
+  sonic_identity: LibrarySonicIdentity | null;
+  binding_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Library set list item (compact) */
+export interface LibrarySetListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  ref_count: number;
+  binding_count: number;
+  primary_ref_url: string | null;
+  created_at: string;
+}
+
+/** Library prop reference image */
+export interface LibraryPropRef {
+  id: string;
+  library_prop_id: string;
+  image_url: string;
+  label: string | null;
+  is_primary: boolean;
+  created_at: string;
+}
+
+/** Full library prop detail */
+export interface LibraryProp {
+  id: string;
+  name: string;
+  description: string | null;
+  appearance_prompt: string | null;
+  prompt_tags: string[] | null;
+  refs: LibraryPropRef[];
+  binding_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Library prop list item (compact) */
+export interface LibraryPropListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  ref_count: number;
+  binding_count: number;
+  primary_ref_url: string | null;
+  created_at: string;
+}
+
+/** Full sound asset detail */
+export interface SoundAsset {
+  id: string;
+  name: string;
+  category: "SCORE_THEME" | "SFX" | "AMBIENCE" | "FOLEY" | "UI";
+  subcategory: string | null;
+  description: string | null;
+  audio_url: string | null;
+  generation_prompt: string | null;
+  tags: string[] | null;
+  binding_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Sound asset list item (compact) */
+export interface SoundAssetListItem {
+  id: string;
+  name: string;
+  category: string;
+  subcategory: string | null;
+  description: string | null;
+  has_audio: boolean;
+  binding_count: number;
+  created_at: string;
+}
+
+// === Binding Types ===
+
+/** Cast binding (actor to production bible) */
+export interface CastBinding {
+  id: string;
+  production_bible_id: string;
+  actor_id: string;
+  tag: string;
+  character_name: string;
+  character_description: string | null;
+  character_arc: string | null;
+  role: "LEAD" | "SUPPORTING" | "EXTRA" | "NARRATOR";
+  wardrobe_override: Record<string, unknown>[] | null;
+  voice_profile_id: string | null;
+  behavioral_notes: string | null;
+  prompt_tags: string[] | null;
+  actor_name: string | null;
+  primary_ref_url: string | null;
+  actor?: Actor;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Set binding (library set to production bible) */
+export interface SetBinding {
+  id: string;
+  production_bible_id: string;
+  library_set_id: string;
+  tag: string;
+  production_name: string | null;
+  lighting_override: string | null;
+  sonic_override: string | null;
+  prompt_tags: string[] | null;
+  set_name: string | null;
+  primary_ref_url: string | null;
+  library_set?: LibrarySet;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Prop binding (library prop to production bible) */
+export interface PropBinding {
+  id: string;
+  production_bible_id: string;
+  library_prop_id: string;
+  tag: string;
+  production_name: string | null;
+  notes: string | null;
+  prompt_tags: string[] | null;
+  prop_name: string | null;
+  primary_ref_url: string | null;
+  library_prop?: LibraryProp;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Sound binding (sound asset to production bible) */
+export interface SoundBinding {
+  id: string;
+  production_bible_id: string;
+  sound_asset_id: string;
+  tag: string | null;
+  usage_notes: string | null;
+  prompt_tags: string[] | null;
+  sound_name: string | null;
+  sound_category: string | null;
+  sound_asset?: SoundAsset;
+  created_at: string;
+  updated_at: string;
+}
+
+// Backward-compat aliases for existing code using Response-suffixed names
+/** @deprecated Use ActorRef */
+export type ActorRefResponse = ActorRef;
+/** @deprecated Use ActorVoiceProfile */
+export type ActorVoiceProfileResponse = ActorVoiceProfile;
+/** @deprecated Use ActorWardrobePreset */
+export type ActorWardrobePresetResponse = ActorWardrobePreset;
+/** @deprecated Use Actor */
+export type ActorDetail = Actor;
+/** @deprecated Use LibrarySetRef */
+export type LibrarySetRefResponse = LibrarySetRef;
+/** @deprecated Use LibrarySet */
+export type LibrarySetDetail = LibrarySet;
+/** @deprecated Use LibraryPropRef */
+export type LibraryPropRefResponse = LibraryPropRef;
+/** @deprecated Use LibraryProp */
+export type LibraryPropDetail = LibraryProp;
+/** @deprecated Use SoundAsset */
+export type SoundAssetDetail = SoundAsset;
+/** @deprecated Use CastBinding */
+export type CastBindingResponse = CastBinding;
+/** @deprecated Use SetBinding */
+export type SetBindingResponse = SetBinding;
+/** @deprecated Use PropBinding */
+export type PropBindingResponse = PropBinding;
+/** @deprecated Use SoundBinding */
+export type SoundBindingResponse = SoundBinding;
 
 /** Processing progress response */
 export interface ProcessingProgress {

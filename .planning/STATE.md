@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 22-06-PLAN.md
-last_updated: "2026-03-05T14:03:55.876Z"
-last_activity: 2026-03-05 — Completed 22-02 (Asset Library CRUD API)
+status: completed
+stopped_at: Completed 22-05-PLAN.md
+last_updated: "2026-03-05T14:17:44.673Z"
+last_activity: 2026-03-05 — Completed 22-06 (Promote-to-Library & Tag Pipeline Integration)
 progress:
   total_phases: 22
-  completed_phases: 21
+  completed_phases: 22
   total_plans: 64
-  completed_plans: 63
-  percent: 95
+  completed_plans: 64
+  percent: 100
 ---
 
 # Project State
@@ -85,6 +85,7 @@ Progress: [██████████] 100% (Phase 22, Plan 6 of 6)
 | Phase 22 P03 | 4min | 2 tasks | 5 files |
 | Phase 22 P04 | 3min | 2 tasks | 4 files |
 | Phase 22 P06 | 5min | 2 tasks | 3 files |
+| Phase 22 P05 | 4min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -318,6 +319,7 @@ Recent decisions affecting current work:
 - **22-04:** Create modal shared across all entity types with tab-specific fields (e.g. category for sounds)
 - **22-04:** ActorLibraryDetail is separate from CharacterDetail to avoid coupling library and bible concerns
 - **22-04:** Usage tab shows placeholder -- full binding data requires backend expansion of getActor response
+- [Phase 22]: AssetPicker uses card grid for visual assets, table for sound; legacy entities in collapsible sections below binding sections
 
 ### Roadmap Evolution
 
@@ -343,6 +345,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-05T14:10:15Z
-Stopped at: Completed 22-06-PLAN.md
+Last session: 2026-03-05T14:17:44.670Z
+Stopped at: Completed 22-05-PLAN.md
 Resume file: None

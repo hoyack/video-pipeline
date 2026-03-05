@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 19: Bible Context Fix + Code Cleanup** - Fix load_bible_context indirect lookup, remove dead manifest strings/orphan files/dead code (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 20: Entity Media Uploads** - Missing upload endpoints and UI for actor refs, wardrobe, audio, props across Production Bible entities (Issues #8, #9, #10, #11) (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure) (completed 2026-03-01)
-- [ ] **Phase 22: Asset Library & Actor-Character Model** - Global Asset Library (Actors, Sets, Props, Sound Assets), Actor vs Character distinction, binding system for Production Bibles, scene tag resolution
+- [x] **Phase 22: Asset Library & Actor-Character Model** - Global Asset Library (Actors, Sets, Props, Sound Assets), Actor vs Character distinction, binding system for Production Bibles, scene tag resolution (completed 2026-03-05)
 
 ## Phase Details
 
@@ -120,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 19. Bible Context Fix + Cleanup | 2/2 | Complete    | 2026-03-01 |
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
-| 22. Asset Library & Actor-Character | 5/6 | In Progress|  |
+| 22. Asset Library & Actor-Character | 6/6 | Complete   | 2026-03-05 |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -480,7 +480,7 @@ Plans:
   7. Scene prompts support tag syntax ([CHAR:TAG], [SET:TAG], [PROP:TAG]) with autocomplete and tag resolution at generation time
   8. Existing Production Bible assets can be promoted to the standalone Asset Library
   9. Migration path preserves existing data — no breaking changes to current Production Bible workflow
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 - [ ] 22-01-PLAN.md — ORM models: standalone Actor, LibrarySet, LibraryProp, SoundAsset + binding tables + promotion columns

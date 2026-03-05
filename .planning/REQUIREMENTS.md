@@ -334,7 +334,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 - [x] **ALIB-05**: Binding system (CastBinding, SetBinding, PropBinding, SoundBinding) connects library assets to Production Bibles with production-specific overrides
 - [ ] **ALIB-06**: Production Bible creation view includes Casting, Art Department, and Sound sections with library pickers for adding bound assets
 - [x] **ALIB-07**: Scene prompts support tag syntax ([CHAR:TAG], [SET:TAG], [PROP:TAG]) with tag resolution at generation time via binding lookup
-- [ ] **ALIB-08**: Existing bible-scoped Characters, Sets, Props can be promoted to standalone Asset Library entities with auto-created bindings back
+- [x] **ALIB-08**: Existing bible-scoped Characters, Sets, Props can be promoted to standalone Asset Library entities with auto-created bindings back
 - [x] **ALIB-09**: Migration preserves existing data; promoted_to columns track promotion state; existing scenes without tags continue to work
 
 **Coverage:

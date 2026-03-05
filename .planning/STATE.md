@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 22-04-PLAN.md
+stopped_at: Completed 22-06-PLAN.md
 last_updated: "2026-03-05T14:03:55.876Z"
 last_activity: 2026-03-05 — Completed 22-02 (Asset Library CRUD API)
 progress:
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 22 of 22 (Asset Library & Actor-Character Model)
-Plan: 4 of 6 complete
-Status: Executing Phase 22 — Asset Library Frontend Views complete
-Last activity: 2026-03-05 — Completed 22-04 (Asset Library Frontend Views)
+Plan: 6 of 6 complete
+Status: Phase 22 COMPLETE — Asset Library & Actor-Character Model
+Last activity: 2026-03-05 — Completed 22-06 (Promote-to-Library & Tag Pipeline Integration)
 
-Progress: [█████████░] 95% (Phase 22, Plan 4 of 6)
+Progress: [██████████] 100% (Phase 22, Plan 6 of 6)
 
 ## Performance Metrics
 
@@ -84,6 +84,7 @@ Progress: [█████████░] 95% (Phase 22, Plan 4 of 6)
 | Phase 22 P02 | 4min | 2 tasks | 3 files |
 | Phase 22 P03 | 4min | 2 tasks | 5 files |
 | Phase 22 P04 | 3min | 2 tasks | 4 files |
+| Phase 22 P06 | 5min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -309,6 +310,10 @@ Recent decisions affecting current work:
 - [Phase 22-02]: Shared _save_upload() helper consolidates dual-backend storage logic across all entity upload endpoints
 - [Phase 22]: SoundBinding tag uniqueness only checked when tag provided (optional field)
 - [Phase 22]: Tag resolver removes unresolved tags from prompt text (replaces with plain name) to avoid polluting generation
+- **22-06:** Character role mapping: PROTAGONIST/ANTAGONIST -> LEAD, SUPPORTING/EXTRA/NARRATOR direct-mapped
+- **22-06:** SFXItem category mapping: IMPACT/MECHANICAL -> SFX, NATURAL/AMBIENCE -> AMBIENCE; original category preserved as subcategory
+- **22-06:** Tag resolution integrated at storyboard.py level (before LLM call) to keep keyframes/video_gen code unchanged
+- **22-06:** Resolved prompt text sent to LLM only; original tagged prompt preserved in scene.prompt DB column
 - **22-04:** Actors tab uses card grid with thumbnails; Sound Assets uses table view (audio assets lack thumbnails)
 - **22-04:** Create modal shared across all entity types with tab-specific fields (e.g. category for sounds)
 - **22-04:** ActorLibraryDetail is separate from CharacterDetail to avoid coupling library and bible concerns
@@ -338,6 +343,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-05T14:08:46Z
-Stopped at: Completed 22-04-PLAN.md
+Last session: 2026-03-05T14:10:15Z
+Stopped at: Completed 22-06-PLAN.md
 Resume file: None

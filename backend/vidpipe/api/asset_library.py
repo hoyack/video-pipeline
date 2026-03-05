@@ -16,6 +16,7 @@ Spec reference: Phase 22 - ALIB-01, ALIB-03, ALIB-04
 
 import asyncio
 import logging
+import re
 import uuid
 from typing import Optional
 
@@ -30,15 +31,23 @@ from vidpipe.db.models import (
     ActorVoiceProfile,
     ActorWardrobePreset,
     CastBinding,
+    Character,
     LibraryProp,
     LibraryPropRef,
     LibrarySet,
     LibrarySetRef,
     LibrarySonicIdentity,
+    Prop,
     PropBinding,
+    ScoreTheme,
+    Set,
     SetBinding,
+    SFXItem,
+    SonicIdentity,
     SoundAsset,
     SoundBinding,
+    VoiceProfile,
+    Wardrobe,
 )
 from vidpipe.services.storage_backend import LocalStorageBackend, get_storage_backend
 
@@ -1294,3 +1303,359 @@ async def upload_sound_audio(sound_id: str, file: UploadFile = File(...)):
         )
 
         return _sound_asset_to_dict(sa, bind_result.scalar() or 0)
+
+
+# ---------------------------------------------------------------------------
+# Promote-to-Library Endpoints
+# ---------------------------------------------------------------------------
+
+
+def _derive_tag(name: str) -> str:
+    """Derive a tag from an entity name: 'King Aldric' -> 'KING_ALDRIC'."""
+    cleaned = re.sub(r"[^a-zA-Z0-9\s]", "", name)
+    return cleaned.strip().upper().replace(" ", "_")[:50]
+
+
+_ROLE_MAP = {
+    "PROTAGONIST": "LEAD",
+    "ANTAGONIST": "LEAD",
+    "SUPPORTING": "SUPPORTING",
+    "EXTRA": "EXTRA",
+    "NARRATOR": "NARRATOR",
+}
+
+
+@asset_library_router.post("/characters/{character_id}/promote-to-library", status_code=200)
+async def promote_character(character_id: str):
+    """Promote a bible-scoped Character to a library Actor + CastBinding.
+
+    Copies character data, wardrobe items, voice profile, and actor refs
+    into library entities. Sets promoted_to_actor_id on the Character.
+    Returns 409 if already promoted.
+    """
+    async with async_session() as session:
+        char = await session.get(Character, uuid.UUID(character_id))
+        if char is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        if char.promoted_to_actor_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Already promoted to Actor {char.promoted_to_actor_id}",
+            )
+
+        # 1. Create Actor
+        actor = Actor(
+            name=char.name,
+            description=char.description,
+            base_appearance_prompt=char.base_appearance,
+            prompt_tags=char.prompt_tags,
+        )
+        session.add(actor)
+        await session.flush()  # Get actor.id
+
+        # 2. Copy Wardrobe items
+        ward_result = await session.execute(
+            select(Wardrobe).where(Wardrobe.character_id == char.id)
+        )
+        for w in ward_result.scalars().all():
+            preset = ActorWardrobePreset(
+                actor_id=actor.id,
+                label=w.label,
+                description=w.prompt_descriptor,
+                reference_images=w.reference_images,
+            )
+            session.add(preset)
+
+        # 3. Copy VoiceProfile (1:1)
+        vp_result = await session.execute(
+            select(VoiceProfile).where(VoiceProfile.character_id == char.id)
+        )
+        vp = vp_result.scalars().first()
+        new_voice_profile_id = None
+        if vp is not None:
+            avp = ActorVoiceProfile(
+                actor_id=actor.id,
+                voice_id=vp.voice_id,
+                adapter_type=vp.adapter_type,
+                style_notes=vp.style_notes,
+                sample_url=vp.sample_audio,
+            )
+            session.add(avp)
+            await session.flush()
+            new_voice_profile_id = avp.id
+
+        # 4. Copy actor_refs (JSON list of image URLs on the Character)
+        if char.actor_refs:
+            for ref_url in char.actor_refs:
+                if isinstance(ref_url, str) and ref_url.strip():
+                    ar = ActorRef(
+                        actor_id=actor.id,
+                        image_url=ref_url,
+                    )
+                    session.add(ar)
+
+        # 5. Create CastBinding
+        role = _ROLE_MAP.get(char.role, "SUPPORTING")
+        binding = CastBinding(
+            production_bible_id=char.production_bible_id,
+            actor_id=actor.id,
+            tag=_derive_tag(char.name),
+            character_name=char.name,
+            character_description=char.description,
+            character_arc=char.arc,
+            role=role,
+            voice_profile_id=new_voice_profile_id,
+        )
+        session.add(binding)
+        await session.flush()
+
+        # 6. Set promoted_to
+        char.promoted_to_actor_id = actor.id
+        await session.commit()
+
+        return {
+            "actor_id": str(actor.id),
+            "cast_binding_id": str(binding.id),
+            "tag": binding.tag,
+        }
+
+
+@asset_library_router.post("/sets/{set_id}/promote-to-library", status_code=200)
+async def promote_set(set_id: str):
+    """Promote a bible-scoped Set to a LibrarySet + SetBinding.
+
+    Copies set data, reference image, and sonic identity.
+    Returns 409 if already promoted.
+    """
+    async with async_session() as session:
+        s = await session.get(Set, uuid.UUID(set_id))
+        if s is None:
+            raise HTTPException(status_code=404, detail="Set not found")
+
+        if s.promoted_to_library_set_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Already promoted to LibrarySet {s.promoted_to_library_set_id}",
+            )
+
+        # 1. Create LibrarySet
+        lib_set = LibrarySet(
+            name=s.name,
+            reverse_prompt=s.reverse_prompt,
+            style_tags=s.style_tags,
+            prompt_tags=s.prompt_tags,
+            lighting_notes=s.lighting_notes,
+        )
+        session.add(lib_set)
+        await session.flush()
+
+        # 2. Copy reference image
+        if s.reference_image:
+            ref = LibrarySetRef(
+                library_set_id=lib_set.id,
+                image_url=s.reference_image,
+                is_primary=True,
+            )
+            session.add(ref)
+
+        # 3. Copy SonicIdentity if exists
+        si_result = await session.execute(
+            select(SonicIdentity).where(SonicIdentity.set_id == s.id)
+        )
+        si = si_result.scalars().first()
+        if si is not None:
+            lsi = LibrarySonicIdentity(
+                library_set_id=lib_set.id,
+                ambience_description=si.ambience_description,
+                reference_audio_url=si.reference_audio,
+                generation_prompt=si.generation_prompt,
+            )
+            session.add(lsi)
+
+        # 4. Create SetBinding
+        binding = SetBinding(
+            production_bible_id=s.production_bible_id,
+            library_set_id=lib_set.id,
+            tag=_derive_tag(s.name),
+            production_name=s.name,
+        )
+        session.add(binding)
+        await session.flush()
+
+        # 5. Set promoted_to
+        s.promoted_to_library_set_id = lib_set.id
+        await session.commit()
+
+        return {
+            "library_set_id": str(lib_set.id),
+            "set_binding_id": str(binding.id),
+            "tag": binding.tag,
+        }
+
+
+@asset_library_router.post("/props/{prop_id}/promote-to-library", status_code=200)
+async def promote_prop(prop_id: str):
+    """Promote a bible-scoped Prop to a LibraryProp + PropBinding.
+
+    Copies prop data and reference image. Returns 409 if already promoted.
+    """
+    async with async_session() as session:
+        p = await session.get(Prop, uuid.UUID(prop_id))
+        if p is None:
+            raise HTTPException(status_code=404, detail="Prop not found")
+
+        if p.promoted_to_library_prop_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Already promoted to LibraryProp {p.promoted_to_library_prop_id}",
+            )
+
+        # 1. Create LibraryProp
+        lib_prop = LibraryProp(
+            name=p.name,
+            description=p.description,
+            appearance_prompt=p.description,
+            prompt_tags=p.prompt_tags,
+        )
+        session.add(lib_prop)
+        await session.flush()
+
+        # 2. Copy reference image
+        if p.reference_image:
+            ref = LibraryPropRef(
+                library_prop_id=lib_prop.id,
+                image_url=p.reference_image,
+                is_primary=True,
+            )
+            session.add(ref)
+
+        # 3. Create PropBinding
+        binding = PropBinding(
+            production_bible_id=p.production_bible_id,
+            library_prop_id=lib_prop.id,
+            tag=_derive_tag(p.name),
+            production_name=p.name,
+        )
+        session.add(binding)
+        await session.flush()
+
+        # 4. Set promoted_to
+        p.promoted_to_library_prop_id = lib_prop.id
+        await session.commit()
+
+        return {
+            "library_prop_id": str(lib_prop.id),
+            "prop_binding_id": str(binding.id),
+            "tag": binding.tag,
+        }
+
+
+@asset_library_router.post("/score-themes/{theme_id}/promote-to-library", status_code=200)
+async def promote_score_theme(theme_id: str):
+    """Promote a bible-scoped ScoreTheme to a SoundAsset + SoundBinding.
+
+    Returns 409 if already promoted.
+    """
+    async with async_session() as session:
+        st = await session.get(ScoreTheme, uuid.UUID(theme_id))
+        if st is None:
+            raise HTTPException(status_code=404, detail="Score theme not found")
+
+        if st.promoted_to_sound_asset_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Already promoted to SoundAsset {st.promoted_to_sound_asset_id}",
+            )
+
+        # 1. Create SoundAsset
+        sa = SoundAsset(
+            name=st.name,
+            category="SCORE_THEME",
+            description=st.usage_notes,
+            audio_url=st.reference_audio,
+            generation_prompt=st.generation_prompt,
+            tags=(st.mood_descriptors or []),
+        )
+        session.add(sa)
+        await session.flush()
+
+        # 2. Create SoundBinding
+        binding = SoundBinding(
+            production_bible_id=st.production_bible_id,
+            sound_asset_id=sa.id,
+            tag=_derive_tag(st.name),
+            usage_notes=st.usage_notes,
+        )
+        session.add(binding)
+        await session.flush()
+
+        # 3. Set promoted_to
+        st.promoted_to_sound_asset_id = sa.id
+        await session.commit()
+
+        return {
+            "sound_asset_id": str(sa.id),
+            "sound_binding_id": str(binding.id),
+            "tag": binding.tag,
+        }
+
+
+@asset_library_router.post("/sfx-items/{sfx_id}/promote-to-library", status_code=200)
+async def promote_sfx_item(sfx_id: str):
+    """Promote a bible-scoped SFXItem to a SoundAsset + SoundBinding.
+
+    Maps SFXItem category to SoundAsset category. Returns 409 if already promoted.
+    """
+    async with async_session() as session:
+        sfx = await session.get(SFXItem, uuid.UUID(sfx_id))
+        if sfx is None:
+            raise HTTPException(status_code=404, detail="SFX item not found")
+
+        if sfx.promoted_to_sound_asset_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Already promoted to SoundAsset {sfx.promoted_to_sound_asset_id}",
+            )
+
+        # Map SFXItem category to SoundAsset category
+        category_map = {
+            "IMPACT": "SFX",
+            "MECHANICAL": "SFX",
+            "NATURAL": "AMBIENCE",
+            "UI": "UI",
+            "FOLEY": "FOLEY",
+            "AMBIENCE": "AMBIENCE",
+        }
+        sa_category = category_map.get(sfx.category, "SFX")
+
+        # 1. Create SoundAsset
+        sa = SoundAsset(
+            name=sfx.name,
+            category=sa_category,
+            subcategory=sfx.category,  # preserve original category as subcategory
+            audio_url=sfx.source_audio,
+            generation_prompt=sfx.generation_prompt,
+            tags=sfx.tags,
+        )
+        session.add(sa)
+        await session.flush()
+
+        # 2. Create SoundBinding
+        binding = SoundBinding(
+            production_bible_id=sfx.production_bible_id,
+            sound_asset_id=sa.id,
+            tag=_derive_tag(sfx.name),
+        )
+        session.add(binding)
+        await session.flush()
+
+        # 3. Set promoted_to
+        sfx.promoted_to_sound_asset_id = sa.id
+        await session.commit()
+
+        return {
+            "sound_asset_id": str(sa.id),
+            "sound_binding_id": str(binding.id),
+            "tag": binding.tag,
+        }

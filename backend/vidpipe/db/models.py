@@ -1074,6 +1074,7 @@ class UserSettings(Base):
 
     # ElevenLabs configuration
     elevenlabs_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    default_voice_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

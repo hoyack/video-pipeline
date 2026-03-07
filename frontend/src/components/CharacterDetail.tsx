@@ -18,6 +18,7 @@ import {
   migrateEntities,
   uploadActorRef,
   generateAppearance,
+  getEnabledModels,
   uploadWardrobeReference,
   searchElevenLabsVoices,
   resolveElevenLabsVoice,
@@ -855,9 +856,19 @@ function VoiceProfileTab({
   const [searching, setSearching] = useState(false);
 
   useEffect(() => {
-    setVoiceId(voiceProfile?.voice_id ?? "");
     setStyleNotes(voiceProfile?.style_notes ?? "");
     setResolvedName(null);
+    if (voiceProfile?.voice_id) {
+      setVoiceId(voiceProfile.voice_id);
+    } else {
+      // Pre-fill default voice ID from settings when no existing profile
+      setVoiceId("");
+      getEnabledModels()
+        .then((ms) => {
+          if (ms.default_voice_id) setVoiceId(ms.default_voice_id);
+        })
+        .catch(() => {});
+    }
   }, [voiceProfile]);
 
   // Resolve voice name when voiceId changes

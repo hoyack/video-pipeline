@@ -19,6 +19,7 @@ import {
   createActorWardrobePreset,
   updateActorWardrobePreset,
   deleteActorWardrobePreset,
+  getEnabledModels,
 } from "../api/client.ts";
 
 interface ActorLibraryDetailProps {
@@ -455,7 +456,14 @@ function VoiceProfilesTab({
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium text-gray-300">Voice Profiles</h4>
         <button
-          onClick={() => { setShowAdd(true); setVoiceId(""); setStyleNotes(""); }}
+          onClick={() => {
+            setShowAdd(true);
+            setVoiceId("");
+            setStyleNotes("");
+            getEnabledModels()
+              .then((ms) => { if (ms.default_voice_id) setVoiceId(ms.default_voice_id); })
+              .catch(() => {});
+          }}
           className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-500"
         >
           + Add

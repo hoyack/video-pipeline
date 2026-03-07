@@ -454,6 +454,7 @@ export interface UserSettingsResponse {
   ollama_models: OllamaModelEntry[] | null;
   show_cost: boolean;
   has_elevenlabs_key: boolean;
+  default_voice_id: string | null;
 }
 
 /** Request body for PUT /api/settings */
@@ -482,6 +483,7 @@ export interface UserSettingsUpdate {
   show_cost?: boolean;
   elevenlabs_api_key?: string | null;
   clear_elevenlabs_key?: boolean;
+  default_voice_id?: string | null;
 }
 
 /** Lightweight response from GET /api/settings/models */
@@ -495,6 +497,7 @@ export interface EnabledModelsResponse {
   comfyui_cost_per_second: number | null;
   ollama_models: OllamaModelEntry[] | null;
   show_cost: boolean;
+  default_voice_id: string | null;
 }
 
 /** Request body for POST /api/scenes/{id}/shots/{idx}/regenerate-text */

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { getSettings, updateSettings } from "../api/client.ts";
 import {
@@ -131,41 +131,6 @@ function ModelToggleRow({
 }
 
 // ---------------------------------------------------------------------------
-// Default model dropdown
-// ---------------------------------------------------------------------------
-
-function DefaultModelSelect({
-  allModels,
-  enabled,
-  defaultModel,
-  onDefaultChange,
-}: {
-  allModels: { id: string; label: string }[];
-  enabled: string[];
-  defaultModel: string | null;
-  onDefaultChange: (id: string | null) => void;
-}) {
-  const enabledModels = allModels.filter((m) => enabled.includes(m.id));
-  return (
-    <div className="flex items-center gap-3 pt-1">
-      <label className="text-sm text-gray-400">Default:</label>
-      <select
-        value={defaultModel ?? ""}
-        onChange={(e) => onDefaultChange(e.target.value || null)}
-        className="rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
-      >
-        <option value="">None</option>
-        {enabledModels.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Input field helper
 // ---------------------------------------------------------------------------
 
@@ -223,6 +188,7 @@ export function SettingsPage() {
   // ElevenLabs
   const [elevenlabsApiKey, setElevenlabsApiKey] = useState("");
   const [hasElevenlabsKey, setHasElevenlabsKey] = useState(false);
+  const [defaultVoiceId, setDefaultVoiceId] = useState("");
 
   // ---- Load settings ----
   useEffect(() => {
@@ -252,6 +218,7 @@ export function SettingsPage() {
         setOllamaModels(s.ollama_models ?? []);
         setShowCostLocal(s.show_cost);
         setHasElevenlabsKey(s.has_elevenlabs_key);
+        setDefaultVoiceId(s.default_voice_id ?? "");
       })
       .catch(() =>
         setFeedback({ type: "error", msg: "Failed to load settings" }),
@@ -302,6 +269,7 @@ export function SettingsPage() {
         ollama_endpoint: ollamaEndpoint || null,
         ollama_models: ollamaModels,
         elevenlabs_api_key: elevenlabsApiKey || null,
+        default_voice_id: defaultVoiceId || null,
       });
       setSettings(res);
       setHasApiKey(res.has_api_key);
@@ -447,6 +415,26 @@ export function SettingsPage() {
     setOllamaModels(ollamaModels.filter((m) => m.id !== id));
   }
 
+  // ---- Enabled model lists for Default Models section ----
+  const enabledTextModels = useMemo(() => {
+    const enabledSet = new Set(enabledText);
+    const base = TEXT_MODELS.filter((m) => enabledSet.has(m.id));
+    const ollamaText = ollamaModels
+      .filter((m) => m.enabled)
+      .map((m) => ({ id: m.id, label: `${m.label} (Ollama)` }));
+    return [...base, ...ollamaText];
+  }, [enabledText, ollamaModels]);
+
+  const enabledImageModels = useMemo(() => {
+    const enabledSet = new Set(enabledImage);
+    return IMAGE_MODELS.filter((m) => enabledSet.has(m.id));
+  }, [enabledImage]);
+
+  const enabledVideoModels = useMemo(() => {
+    const enabledSet = new Set(enabledVideo);
+    return VIDEO_MODELS.filter((m) => enabledSet.has(m.id));
+  }, [enabledVideo]);
+
   // ---- Loading state ----
   if (loading) {
     return (
@@ -497,6 +485,135 @@ export function SettingsPage() {
           </button>
         </div>
       </section>
+
+      {/* ================================================================
+          Default Models
+          ================================================================ */}
+      <CollapsibleCard title="Default Models">
+        <p className="text-xs text-gray-500 -mt-2 mb-1">
+          Pre-selected models when creating a new scene. All optional.
+        </p>
+
+        {/* Text Model */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-300">Text Model</label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setDefaultText(null)}
+              className={clsx(
+                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                defaultText === null
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+              )}
+            >
+              None
+            </button>
+            {enabledTextModels.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setDefaultText(m.id)}
+                className={clsx(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                  defaultText === m.id
+                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Image Model */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-300">Image Model</label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setDefaultImage(null)}
+              className={clsx(
+                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                defaultImage === null
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+              )}
+            >
+              None
+            </button>
+            {enabledImageModels.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setDefaultImage(m.id)}
+                className={clsx(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                  defaultImage === m.id
+                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Video Model */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-300">Video Model</label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setDefaultVideo(null)}
+              className={clsx(
+                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                defaultVideo === null
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+              )}
+            >
+              None
+            </button>
+            {enabledVideoModels.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setDefaultVideo(m.id)}
+                className={clsx(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                  defaultVideo === m.id
+                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Default Voice ID */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-300">
+            Voice ID
+            <span className="ml-2 text-xs text-gray-500 font-normal">ElevenLabs</span>
+          </label>
+          <input
+            type="text"
+            value={defaultVoiceId}
+            onChange={(e) => setDefaultVoiceId(e.target.value)}
+            placeholder="e.g. EXAVITQu4vr4xnSDxMaL"
+            className={inputClass}
+          />
+          <p className="text-xs text-gray-500">
+            Pre-filled when creating new voice profiles on characters and actors.
+          </p>
+        </div>
+      </CollapsibleCard>
 
       {/* ================================================================
           Vertex Studio
@@ -666,12 +783,6 @@ export function SettingsPage() {
               />
             ))}
           </div>
-          <DefaultModelSelect
-            allModels={TEXT_MODELS.map((m) => ({ id: m.id, label: m.label }))}
-            enabled={enabledText}
-            defaultModel={defaultText}
-            onDefaultChange={setDefaultText}
-          />
         </SettingsContainer>
 
         {/* --- Image Models --- */}
@@ -695,12 +806,6 @@ export function SettingsPage() {
               />
             ))}
           </div>
-          <DefaultModelSelect
-            allModels={IMAGE_MODELS.map((m) => ({ id: m.id, label: m.label }))}
-            enabled={enabledImage}
-            defaultModel={defaultImage}
-            onDefaultChange={setDefaultImage}
-          />
         </SettingsContainer>
 
         {/* --- Video Models --- */}
@@ -724,12 +829,6 @@ export function SettingsPage() {
               />
             ))}
           </div>
-          <DefaultModelSelect
-            allModels={VIDEO_MODELS.map((m) => ({ id: m.id, label: m.label }))}
-            enabled={enabledVideo}
-            defaultModel={defaultVideo}
-            onDefaultChange={setDefaultVideo}
-          />
         </SettingsContainer>
       </CollapsibleCard>
 

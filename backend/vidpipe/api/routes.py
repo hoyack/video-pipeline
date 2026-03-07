@@ -3667,6 +3667,7 @@ class UserSettingsResponse(BaseModel):
     show_cost: bool = True
     # ElevenLabs configuration
     has_elevenlabs_key: bool = False
+    default_voice_id: Optional[str] = None
 
 
 class UserSettingsUpdate(BaseModel):
@@ -3698,6 +3699,7 @@ class UserSettingsUpdate(BaseModel):
     # ElevenLabs configuration
     elevenlabs_api_key: Optional[str] = None
     clear_elevenlabs_key: bool = False
+    default_voice_id: Optional[str] = None
 
 
 class EnabledModelsResponse(BaseModel):
@@ -3713,6 +3715,7 @@ class EnabledModelsResponse(BaseModel):
     ollama_models: Optional[list] = None
     # Display preferences
     show_cost: bool = True
+    default_voice_id: Optional[str] = None
 
 
 @router.get("/settings")
@@ -3745,6 +3748,7 @@ async def get_settings() -> UserSettingsResponse:
             ollama_models=settings.ollama_models,
             show_cost=bool(settings.show_cost),
             has_elevenlabs_key=bool(settings.elevenlabs_api_key),
+            default_voice_id=settings.default_voice_id,
         )
 
 
@@ -3765,7 +3769,8 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
         if invalid:
             raise HTTPException(400, f"Invalid video model IDs: {invalid}")
     if body.default_text_model and body.default_text_model not in ALLOWED_TEXT_MODELS:
-        raise HTTPException(400, f"Invalid default text model: {body.default_text_model}")
+        if not body.default_text_model.startswith("ollama/"):
+            raise HTTPException(400, f"Invalid default text model: {body.default_text_model}")
     if body.default_image_model and body.default_image_model not in ALLOWED_IMAGE_MODELS:
         raise HTTPException(400, f"Invalid default image model: {body.default_image_model}")
     if body.default_video_model and body.default_video_model not in ALLOWED_VIDEO_MODELS:
@@ -3843,6 +3848,8 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             settings.elevenlabs_api_key = None
         elif body.elevenlabs_api_key:
             settings.elevenlabs_api_key = body.elevenlabs_api_key
+        if body.default_voice_id is not None:
+            settings.default_voice_id = body.default_voice_id or None
 
         await session.commit()
         await session.refresh(settings)
@@ -3890,6 +3897,7 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             ollama_models=settings.ollama_models,
             show_cost=bool(settings.show_cost),
             has_elevenlabs_key=bool(settings.elevenlabs_api_key),
+            default_voice_id=settings.default_voice_id,
         )
 
 
@@ -3913,6 +3921,7 @@ async def get_enabled_models() -> EnabledModelsResponse:
             comfyui_cost_per_second=settings.comfyui_cost_per_second,
             ollama_models=settings.ollama_models,
             show_cost=bool(settings.show_cost),
+            default_voice_id=settings.default_voice_id,
         )
 
 

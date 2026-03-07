@@ -69,3 +69,25 @@ class VisualPromptScoreOutput(BaseModel):
     prompt_adherence: float = Field(
         description="Score 0.0-10.0 for how well the clip follows the generation prompt"
     )
+
+
+class SetMetadataOutput(BaseModel):
+    """Structured output for auto-generating library set metadata from a reference image.
+
+    Used by the asset library generate-metadata endpoint to produce
+    description, reverse_prompt, and lighting_notes in one vision call.
+    """
+    description: str = Field(
+        description="Visual description of the set/environment for a production bible. "
+        "Describe the location type, architecture, atmosphere, color palette, and notable features. ~60-100 words."
+    )
+    reverse_prompt: str = Field(
+        description="Detailed text-to-image prompt to recreate this set/environment. "
+        "Include: location type, architecture/layout, lighting, weather, depth/perspective, "
+        "key landmarks, color palette, atmosphere, camera framing. ~120-180 words."
+    )
+    lighting_notes: str = Field(
+        description="Concise lighting description for the set. Include: time of day, "
+        "light sources (natural/artificial), direction, color temperature, shadows, "
+        "mood/atmosphere created by the lighting. ~30-60 words."
+    )

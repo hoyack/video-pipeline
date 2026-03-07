@@ -3651,6 +3651,7 @@ class UserSettingsResponse(BaseModel):
     default_text_model: Optional[str] = None
     default_image_model: Optional[str] = None
     default_video_model: Optional[str] = None
+    default_vision_model: Optional[str] = None
     gcp_project_id: Optional[str] = None
     gcp_location: Optional[str] = None
     has_api_key: bool = False
@@ -3678,6 +3679,7 @@ class UserSettingsUpdate(BaseModel):
     default_text_model: Optional[str] = None
     default_image_model: Optional[str] = None
     default_video_model: Optional[str] = None
+    default_vision_model: Optional[str] = None
     gcp_project_id: Optional[str] = None
     gcp_location: Optional[str] = None
     vertex_api_key: Optional[str] = None
@@ -3710,6 +3712,7 @@ class EnabledModelsResponse(BaseModel):
     default_text_model: Optional[str] = None
     default_image_model: Optional[str] = None
     default_video_model: Optional[str] = None
+    default_vision_model: Optional[str] = None
     comfyui_cost_per_second: Optional[float] = None
     # Phase 13: Ollama models for dynamic model list
     ollama_models: Optional[list] = None
@@ -3735,6 +3738,7 @@ async def get_settings() -> UserSettingsResponse:
             default_text_model=settings.default_text_model,
             default_image_model=settings.default_image_model,
             default_video_model=settings.default_video_model,
+            default_vision_model=settings.default_vision_model,
             gcp_project_id=settings.gcp_project_id,
             gcp_location=settings.gcp_location,
             has_api_key=bool(settings.vertex_api_key),
@@ -3775,6 +3779,9 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
         raise HTTPException(400, f"Invalid default image model: {body.default_image_model}")
     if body.default_video_model and body.default_video_model not in ALLOWED_VIDEO_MODELS:
         raise HTTPException(400, f"Invalid default video model: {body.default_video_model}")
+    if body.default_vision_model and body.default_vision_model not in ALLOWED_TEXT_MODELS:
+        if not body.default_vision_model.startswith("ollama/"):
+            raise HTTPException(400, f"Invalid default vision model: {body.default_vision_model}")
 
     async with async_session() as session:
         result = await session.execute(
@@ -3791,6 +3798,8 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
         settings.default_text_model = body.default_text_model
         settings.default_image_model = body.default_image_model
         settings.default_video_model = body.default_video_model
+        if body.default_vision_model is not None:
+            settings.default_vision_model = body.default_vision_model or None
         settings.gcp_project_id = body.gcp_project_id
         settings.gcp_location = body.gcp_location
 
@@ -3884,6 +3893,7 @@ async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
             default_text_model=settings.default_text_model,
             default_image_model=settings.default_image_model,
             default_video_model=settings.default_video_model,
+            default_vision_model=settings.default_vision_model,
             gcp_project_id=settings.gcp_project_id,
             gcp_location=settings.gcp_location,
             has_api_key=bool(settings.vertex_api_key),
@@ -3918,6 +3928,7 @@ async def get_enabled_models() -> EnabledModelsResponse:
             default_text_model=settings.default_text_model,
             default_image_model=settings.default_image_model,
             default_video_model=settings.default_video_model,
+            default_vision_model=settings.default_vision_model,
             comfyui_cost_per_second=settings.comfyui_cost_per_second,
             ollama_models=settings.ollama_models,
             show_cost=bool(settings.show_cost),

@@ -34,6 +34,7 @@ export function AssetLibrary() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Debounce search
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -94,16 +95,16 @@ export function AssetLibrary() {
 
       {/* Tab content */}
       {activeTab === "actors" && (
-        <ActorsGrid search={debouncedSearch} onSelect={(id) => navigate(`/asset-library/actors/${id}`)} />
+        <ActorsGrid search={debouncedSearch} refreshKey={refreshKey} onSelect={(id) => navigate(`/asset-library/actors/${id}`)} />
       )}
       {activeTab === "sets" && (
-        <SetsGrid search={debouncedSearch} />
+        <SetsGrid search={debouncedSearch} refreshKey={refreshKey} onSelect={(id) => navigate(`/asset-library/sets/${id}`)} />
       )}
       {activeTab === "props" && (
-        <PropsGrid search={debouncedSearch} />
+        <PropsGrid search={debouncedSearch} refreshKey={refreshKey} onSelect={(id) => navigate(`/asset-library/props/${id}`)} />
       )}
       {activeTab === "sounds" && (
-        <SoundsList search={debouncedSearch} />
+        <SoundsList search={debouncedSearch} refreshKey={refreshKey} />
       )}
 
       {/* Create modal */}
@@ -113,7 +114,15 @@ export function AssetLibrary() {
           onClose={() => setShowCreateModal(false)}
           onCreated={(id) => {
             setShowCreateModal(false);
-            if (activeTab === "actors") navigate(`/asset-library/actors/${id}`);
+            if (activeTab === "actors") {
+              navigate(`/asset-library/actors/${id}`);
+            } else if (activeTab === "sets") {
+              navigate(`/asset-library/sets/${id}`);
+            } else if (activeTab === "props") {
+              navigate(`/asset-library/props/${id}`);
+            } else {
+              setRefreshKey((k) => k + 1);
+            }
           }}
         />
       )}
@@ -125,7 +134,7 @@ export function AssetLibrary() {
 // Actors Grid
 // ============================================================================
 
-function ActorsGrid({ search, onSelect }: { search: string; onSelect: (id: string) => void }) {
+function ActorsGrid({ search, refreshKey, onSelect }: { search: string; refreshKey: number; onSelect: (id: string) => void }) {
   const [actors, setActors] = useState<ActorListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -137,7 +146,7 @@ function ActorsGrid({ search, onSelect }: { search: string; onSelect: (id: strin
       .catch(() => { if (!cancelled) setActors([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [search]);
+  }, [search, refreshKey]);
 
   if (loading) return <LoadingSpinner />;
   if (actors.length === 0) return <EmptyState entity="actors" />;
@@ -203,7 +212,7 @@ function ActorsGrid({ search, onSelect }: { search: string; onSelect: (id: strin
 // Sets Grid
 // ============================================================================
 
-function SetsGrid({ search }: { search: string }) {
+function SetsGrid({ search, refreshKey, onSelect }: { search: string; refreshKey: number; onSelect: (id: string) => void }) {
   const [sets, setSets] = useState<LibrarySetListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -215,7 +224,7 @@ function SetsGrid({ search }: { search: string }) {
       .catch(() => { if (!cancelled) setSets([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [search]);
+  }, [search, refreshKey]);
 
   if (loading) return <LoadingSpinner />;
   if (sets.length === 0) return <EmptyState entity="sets" />;
@@ -223,9 +232,10 @@ function SetsGrid({ search }: { search: string }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {sets.map((set) => (
-        <div
+        <button
           key={set.id}
-          className="rounded-lg border border-gray-800 bg-gray-900/50 p-4"
+          onClick={() => onSelect(set.id)}
+          className="text-left rounded-lg border border-gray-800 bg-gray-900/50 p-4 hover:border-gray-600 transition-colors"
         >
           <div className="flex gap-3">
             {set.primary_ref_url ? (
@@ -258,7 +268,7 @@ function SetsGrid({ search }: { search: string }) {
               </div>
             </div>
           </div>
-        </div>
+        </button>
       ))}
     </div>
   );
@@ -268,7 +278,7 @@ function SetsGrid({ search }: { search: string }) {
 // Props Grid
 // ============================================================================
 
-function PropsGrid({ search }: { search: string }) {
+function PropsGrid({ search, refreshKey, onSelect }: { search: string; refreshKey: number; onSelect: (id: string) => void }) {
   const [props, setProps] = useState<LibraryPropListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -280,7 +290,7 @@ function PropsGrid({ search }: { search: string }) {
       .catch(() => { if (!cancelled) setProps([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [search]);
+  }, [search, refreshKey]);
 
   if (loading) return <LoadingSpinner />;
   if (props.length === 0) return <EmptyState entity="props" />;
@@ -288,9 +298,10 @@ function PropsGrid({ search }: { search: string }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {props.map((prop) => (
-        <div
+        <button
           key={prop.id}
-          className="rounded-lg border border-gray-800 bg-gray-900/50 p-4"
+          onClick={() => onSelect(prop.id)}
+          className="text-left rounded-lg border border-gray-800 bg-gray-900/50 p-4 hover:border-gray-600 transition-colors"
         >
           <div className="flex gap-3">
             {prop.primary_ref_url ? (
@@ -318,7 +329,7 @@ function PropsGrid({ search }: { search: string }) {
               </div>
             </div>
           </div>
-        </div>
+        </button>
       ))}
     </div>
   );
@@ -328,7 +339,7 @@ function PropsGrid({ search }: { search: string }) {
 // Sound Assets List
 // ============================================================================
 
-function SoundsList({ search }: { search: string }) {
+function SoundsList({ search, refreshKey }: { search: string; refreshKey: number }) {
   const [sounds, setSounds] = useState<SoundAssetListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
@@ -342,7 +353,7 @@ function SoundsList({ search }: { search: string }) {
       .catch(() => { if (!cancelled) setSounds([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [search, categoryFilter]);
+  }, [search, categoryFilter, refreshKey]);
 
   const categoryBadgeColor = (cat: string) => {
     switch (cat) {

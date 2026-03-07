@@ -194,6 +194,7 @@ async def _run_migrations(conn) -> None:
         # GCP service account JSON (full credential file for Vertex AI)
         "ALTER TABLE user_settings ADD COLUMN gcp_service_account_json TEXT",
         "ALTER TABLE user_settings ADD COLUMN default_voice_id VARCHAR(200)",
+        "ALTER TABLE user_settings ADD COLUMN default_vision_model VARCHAR(100)",
         # Phase 16: Sequence grouping
         # Note: SQLite uses TEXT for UUIDs, PostgreSQL uses UUID type.
         # The correct type is set below based on driver detection.

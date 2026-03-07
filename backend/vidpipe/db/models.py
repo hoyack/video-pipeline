@@ -1048,6 +1048,7 @@ class UserSettings(Base):
     default_text_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     default_image_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     default_video_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    default_vision_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # GCP configuration
     gcp_project_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

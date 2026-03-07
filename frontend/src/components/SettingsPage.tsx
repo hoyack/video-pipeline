@@ -159,6 +159,7 @@ export function SettingsPage() {
   const [defaultText, setDefaultText] = useState<string | null>(null);
   const [defaultImage, setDefaultImage] = useState<string | null>(null);
   const [defaultVideo, setDefaultVideo] = useState<string | null>(null);
+  const [defaultVision, setDefaultVision] = useState<string | null>(null);
 
   // Vertex Studio / GCP
   const [gcpProject, setGcpProject] = useState("");
@@ -201,6 +202,7 @@ export function SettingsPage() {
         setDefaultText(s.default_text_model);
         setDefaultImage(s.default_image_model);
         setDefaultVideo(s.default_video_model);
+        setDefaultVision(s.default_vision_model);
         setGcpProject(s.gcp_project_id ?? "");
         setGcpLocation(s.gcp_location ?? "");
         setHasApiKey(s.has_api_key);
@@ -257,6 +259,7 @@ export function SettingsPage() {
         default_text_model: defaultText,
         default_image_model: defaultImage,
         default_video_model: defaultVideo,
+        default_vision_model: defaultVision,
         gcp_project_id: gcpProject || null,
         gcp_location: gcpLocation || null,
         vertex_api_key: apiKey || null,
@@ -307,6 +310,7 @@ export function SettingsPage() {
         default_text_model: defaultText,
         default_image_model: defaultImage,
         default_video_model: defaultVideo,
+        default_vision_model: defaultVision,
         gcp_project_id: gcpProject || null,
         gcp_location: gcpLocation || null,
         clear_api_key: true,
@@ -336,6 +340,7 @@ export function SettingsPage() {
         default_text_model: defaultText,
         default_image_model: defaultImage,
         default_video_model: defaultVideo,
+        default_vision_model: defaultVision,
         gcp_project_id: gcpProject || null,
         gcp_location: gcpLocation || null,
         clear_comfyui_key: true,
@@ -365,6 +370,7 @@ export function SettingsPage() {
         default_text_model: defaultText,
         default_image_model: defaultImage,
         default_video_model: defaultVideo,
+        default_vision_model: defaultVision,
         gcp_project_id: gcpProject || null,
         gcp_location: gcpLocation || null,
         clear_elevenlabs_key: true,
@@ -434,6 +440,15 @@ export function SettingsPage() {
     const enabledSet = new Set(enabledVideo);
     return VIDEO_MODELS.filter((m) => enabledSet.has(m.id));
   }, [enabledVideo]);
+
+  const enabledVisionModels = useMemo(() => {
+    const enabledSet = new Set(enabledText);
+    const base = TEXT_MODELS.filter((m) => enabledSet.has(m.id));
+    const ollamaVision = ollamaModels
+      .filter((m) => m.enabled && m.vision)
+      .map((m) => ({ id: m.id, label: `${m.label} (Ollama)` }));
+    return [...base, ...ollamaVision];
+  }, [enabledText, ollamaModels]);
 
   // ---- Loading state ----
   if (loading) {
@@ -586,6 +601,45 @@ export function SettingsPage() {
                 className={clsx(
                   "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
                   defaultVideo === m.id
+                    ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                    : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Vision Model */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-300">
+            Vision Model
+            <span className="ml-2 text-xs text-gray-500 font-normal">
+              For image analysis and reverse-prompting
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setDefaultVision(null)}
+              className={clsx(
+                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                defaultVision === null
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
+              )}
+            >
+              None
+            </button>
+            {enabledVisionModels.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setDefaultVision(m.id)}
+                className={clsx(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                  defaultVision === m.id
                     ? "border-blue-500 bg-blue-500/20 text-blue-300"
                     : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600",
                 )}

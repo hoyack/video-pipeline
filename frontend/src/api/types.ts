@@ -441,6 +441,7 @@ export interface UserSettingsResponse {
   default_text_model: string | null;
   default_image_model: string | null;
   default_video_model: string | null;
+  default_vision_model: string | null;
   gcp_project_id: string | null;
   gcp_location: string | null;
   has_api_key: boolean;
@@ -465,6 +466,7 @@ export interface UserSettingsUpdate {
   default_text_model?: string | null;
   default_image_model?: string | null;
   default_video_model?: string | null;
+  default_vision_model?: string | null;
   gcp_project_id?: string | null;
   gcp_location?: string | null;
   vertex_api_key?: string | null;
@@ -494,6 +496,7 @@ export interface EnabledModelsResponse {
   default_text_model: string | null;
   default_image_model: string | null;
   default_video_model: string | null;
+  default_vision_model: string | null;
   comfyui_cost_per_second: number | null;
   ollama_models: OllamaModelEntry[] | null;
   show_cost: boolean;

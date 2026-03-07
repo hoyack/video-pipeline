@@ -54,6 +54,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         if (ms.default_text_model) setTextModel(ms.default_text_model);
         if (ms.default_image_model) setImageModel(ms.default_image_model);
         if (ms.default_video_model) setVideoModel(ms.default_video_model);
+        if (ms.default_vision_model) setVisionModel(ms.default_vision_model);
       })
       .catch(() => {/* settings not available — use all models */});
   }, []);

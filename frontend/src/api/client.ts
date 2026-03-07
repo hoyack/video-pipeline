@@ -1471,6 +1471,29 @@ export async function uploadLibrarySetRef(setId: string, file: File, label?: str
   return res.json() as Promise<LibrarySetRefResponse>;
 }
 
+/** POST /api/asset-library/sets/{id}/generate-metadata — auto-generate description, reverse_prompt, lighting_notes */
+export function generateLibrarySetMetadata(
+  setId: string,
+): Promise<{ description: string; reverse_prompt: string; lighting_notes: string }> {
+  return request<{ description: string; reverse_prompt: string; lighting_notes: string }>(
+    `/api/asset-library/sets/${setId}/generate-metadata`,
+    { method: "POST" },
+  );
+}
+
+/** POST /api/asset-library/sets/{id}/generate-image — generate reference image from prompt */
+export function generateLibrarySetImage(
+  setId: string,
+  prompt: string,
+  imageModel?: string,
+): Promise<{ id: string; library_set_id: string; image_url: string; label: string | null; is_primary: boolean; created_at: string }> {
+  return request(`/api/asset-library/sets/${setId}/generate-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, image_model: imageModel || undefined }),
+  });
+}
+
 /** DELETE /api/asset-library/set-refs/{id} — delete set ref */
 export function deleteLibrarySetRef(refId: string): Promise<void> {
   return request<void>(`/api/asset-library/set-refs/${refId}`, { method: "DELETE" });

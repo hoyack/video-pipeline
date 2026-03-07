@@ -1063,6 +1063,168 @@ async def update_set(set_id: str, body: LibrarySetUpdate):
         )
 
 
+@asset_library_router.post("/sets/{set_id}/generate-metadata")
+async def generate_set_metadata(set_id: str):
+    """Auto-generate description, reverse_prompt, and lighting_notes from the set's primary reference image.
+
+    Uses the user's default vision model to analyze the image and produce structured metadata.
+    """
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.services.llm import get_adapter
+    from vidpipe.schemas.llm_vision import SetMetadataOutput
+    from vidpipe.services.file_manager import FileManager
+
+    async with async_session() as session:
+        ls = await session.get(LibrarySet, uuid.UUID(set_id))
+        if ls is None:
+            raise HTTPException(status_code=404, detail="Library set not found")
+
+        # Find primary ref (or first ref)
+        refs_result = await session.execute(
+            select(LibrarySetRef)
+            .where(LibrarySetRef.library_set_id == ls.id)
+            .order_by(LibrarySetRef.is_primary.desc(), LibrarySetRef.created_at)
+        )
+        refs = list(refs_result.scalars().all())
+        if not refs:
+            raise HTTPException(status_code=422, detail="No reference images uploaded. Upload an image first.")
+
+        ref = refs[0]
+
+        # Read image bytes
+        file_mgr = FileManager()
+        try:
+            image_bytes = await file_mgr.read_bytes(ref.image_url)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Reference image file not found")
+
+        suffix = ref.image_url.rsplit(".", 1)[-1].lower() if "." in ref.image_url else "png"
+        mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+        mime_type = mime_map.get(suffix, "image/jpeg")
+
+        # Get user's default vision model
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+
+        user_settings = settings  # pass through for adapter API key resolution
+
+    # Build prompt
+    prompt = """You are a visual prompt engineer for AI video generation.
+Analyze this SET/ENVIRONMENT image and produce a JSON response with:
+
+1. "description": Visual description of the set/environment for a production bible. Describe the location type, architecture, atmosphere, color palette, and notable features. ~60-100 words.
+
+2. "reverse_prompt": Detailed text-to-image prompt to recreate this set/environment in an AI image/video generator. Include: location type, architecture/layout, lighting (time of day, sources, mood), weather, depth/perspective, key landmarks, color palette, atmosphere, any people/objects present, camera framing. Be specific enough that the generated result would be recognizable as this place. Write in prompt style, not prose. ~120-180 words.
+
+3. "lighting_notes": Concise lighting description. Include: time of day, light sources (natural/artificial), direction, color temperature, shadows, mood/atmosphere created by the lighting. ~30-60 words."""
+
+    if ls.name:
+        prompt += f"\n\nSet name: {ls.name}"
+
+    try:
+        adapter = get_adapter(vision_model, user_settings=user_settings)
+        result = await adapter.analyze_image(
+            image_bytes=image_bytes,
+            prompt=prompt,
+            schema=SetMetadataOutput,
+            mime_type=mime_type,
+            temperature=0.4,
+            max_retries=3,
+        )
+        return result.model_dump()
+    except Exception as e:
+        logger.error("Generate set metadata failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate metadata: {e}")
+
+
+class GenerateSetImageRequest(BaseModel):
+    prompt: str
+    image_model: Optional[str] = None
+
+
+@asset_library_router.post("/sets/{set_id}/generate-image")
+async def generate_set_image(set_id: str, body: GenerateSetImageRequest):
+    """Generate a reference image for a library set from a text prompt.
+
+    Uses the user's default image model. The generated image is saved as a new
+    reference on the set and returned.
+    """
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.pipeline.keyframes import COMFYUI_IMAGE_MODELS
+
+    if not body.prompt.strip():
+        raise HTTPException(status_code=422, detail="Prompt cannot be empty")
+
+    async with async_session() as session:
+        ls = await session.get(LibrarySet, uuid.UUID(set_id))
+        if ls is None:
+            raise HTTPException(status_code=404, detail="Library set not found")
+
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        image_model = body.image_model or (settings.default_image_model if settings else None) or "gemini-2.5-flash-image"
+
+    # Validate model
+    from vidpipe.api.routes import ALLOWED_IMAGE_MODELS
+    if image_model not in ALLOWED_IMAGE_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid image model: {image_model}")
+
+    # Generate the image — route to ComfyUI or Vertex AI
+    try:
+        if image_model in COMFYUI_IMAGE_MODELS:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui
+            image_bytes = await _generate_image_comfyui(
+                comfy_client, body.prompt.strip(), seed=random.randint(0, 2**32 - 1),
+            )
+        else:
+            from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+            from google.genai import types
+            client = get_vertex_client(location=location_for_model(image_model))
+            response = await client.aio.models.generate_content(
+                model=image_model,
+                contents=[body.prompt.strip()],
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                ),
+            )
+
+            image_bytes = None
+            if response.candidates:
+                for part in (response.candidates[0].content.parts or []):
+                    if part.inline_data:
+                        image_bytes = part.inline_data.data
+                        break
+
+        if not image_bytes:
+            raise ValueError("No image generated — the model returned no image. Try a more descriptive prompt.")
+    except Exception as e:
+        logger.error("Generate set image failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate image: {e}")
+
+    # Save as a new ref on the set
+    filename = f"generated_{uuid.uuid4().hex[:8]}.png"
+    stored_path = await _save_upload(
+        image_bytes,
+        "image/png",
+        filename,
+        f"sets/{set_id}/refs",
+    )
+
+    async with async_session() as session:
+        ref = LibrarySetRef(
+            library_set_id=uuid.UUID(set_id),
+            image_url=stored_path,
+            label="AI Generated",
+            is_primary=False,
+        )
+        session.add(ref)
+        await session.commit()
+        await session.refresh(ref)
+        return _library_set_ref_to_dict(ref)
+
+
 @asset_library_router.delete("/sets/{set_id}", status_code=204)
 async def delete_set(set_id: str):
     """Delete library set. Returns 409 if set bindings exist."""

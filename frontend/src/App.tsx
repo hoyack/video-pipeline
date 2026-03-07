@@ -12,6 +12,7 @@ import { ProductionList } from "./components/ProductionList.tsx";
 import { ProductionDetail } from "./components/ProductionDetail.tsx";
 import { AssetLibrary } from "./components/AssetLibrary.tsx";
 import { ActorLibraryDetail } from "./components/ActorLibraryDetail.tsx";
+import { LibrarySetDetail } from "./components/LibrarySetDetail.tsx";
 import { createDraftScene } from "./api/client.ts";
 import { ShowCostProvider } from "./hooks/useShowCost.tsx";
 
@@ -105,6 +106,9 @@ function App() {
           </Route>
           <Route path="/asset-library/actors/:id">
             {(params) => <ActorLibraryDetail actorId={params.id} />}
+          </Route>
+          <Route path="/asset-library/sets/:id">
+            {(params) => <LibrarySetDetail setId={params.id} />}
           </Route>
           <Route path="/asset-library">
             <AssetLibrary />

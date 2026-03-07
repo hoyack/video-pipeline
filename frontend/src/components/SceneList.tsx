@@ -145,9 +145,22 @@ export function SceneList({ onSelectScene, onNewScene, onNewDraft }: SceneListPr
     return (
       <div className="text-center py-12">
         <p className="text-gray-500">No scenes yet.</p>
-        <p className="mt-1 text-sm text-gray-600">
-          Create one from the Generate tab.
-        </p>
+        <div className="mt-4 flex items-center justify-center gap-3">
+          <button
+            onClick={onNewScene}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
+          >
+            + New Scene
+          </button>
+          {onNewDraft && (
+            <button
+              onClick={onNewDraft}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
+            >
+              + New Draft
+            </button>
+          )}
+        </div>
       </div>
     );
   }

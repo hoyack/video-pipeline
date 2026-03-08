@@ -50,7 +50,7 @@ from vidpipe.services import manifest_service
 # ---------------------------------------------------------------------------
 # ComfyUI model IDs (routed to ComfyUI instead of Veo)
 # ---------------------------------------------------------------------------
-COMFYUI_VIDEO_MODELS = {"wan-2.2-ref-i2v", "wan-2.2-i2v"}
+COMFYUI_VIDEO_MODELS = {"wan-2.2-i2v"}
 
 
 logger = logging.getLogger(__name__)

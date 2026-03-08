@@ -63,7 +63,7 @@ Routing via wouter. State via React hooks (no Redux). Vite dev server proxies `/
 
 ## ComfyUI Routing (CRITICAL)
 
-`COMFYUI_VIDEO_MODELS` in `video_gen.py` is the router (`wan-2.2-ref-i2v`, `wan-2.2-i2v`). **Both the main pipeline AND `_regenerate_clip` in `routes.py` must check this set.** Missing the check in either place causes silent routing failures — clips will be sent to Veo instead of ComfyUI (or vice versa) with no error, just wrong output. ComfyUI is actively used in production.
+`COMFYUI_VIDEO_MODELS` in `video_gen.py` is the router (`wan-2.2-i2v`). **Both the main pipeline AND `_regenerate_clip` in `routes.py` must check this set.** Missing the check in either place causes silent routing failures — clips will be sent to Veo instead of ComfyUI (or vice versa) with no error, just wrong output. ComfyUI is actively used in production.
 
 ## Database (Per Worktree)
 

@@ -50,6 +50,7 @@ ALLOWED_IMAGE_MODELS = {
     "gemini-2.5-flash-image",
     "gemini-3-pro-image-preview",
     "qwen-fast",
+    "qwen-image-edit",
 }
 ALLOWED_VIDEO_MODELS = {
     "veo-2.0-generate-001",
@@ -59,12 +60,11 @@ ALLOWED_VIDEO_MODELS = {
     "veo-3.1-generate-001",
     "veo-3.1-fast-generate-preview",
     "veo-3.1-fast-generate-001",
-    "wan-2.2-ref-i2v",
     "wan-2.2-i2v",
 }
 
 # Video models that support audio generation
-AUDIO_CAPABLE_MODELS = ALLOWED_VIDEO_MODELS - {"veo-2.0-generate-001", "wan-2.2-ref-i2v", "wan-2.2-i2v"}
+AUDIO_CAPABLE_MODELS = ALLOWED_VIDEO_MODELS - {"veo-2.0-generate-001", "wan-2.2-i2v"}
 
 # Allowed clip durations per video model
 ALLOWED_DURATIONS: dict[str, list[int]] = {
@@ -75,7 +75,6 @@ ALLOWED_DURATIONS: dict[str, list[int]] = {
     "veo-3.1-generate-001": [4, 6, 8],
     "veo-3.1-fast-generate-preview": [4, 6, 8],
     "veo-3.1-fast-generate-001": [4, 6, 8],
-    "wan-2.2-ref-i2v": [5],
     "wan-2.2-i2v": [5],
 }
 
@@ -94,6 +93,7 @@ IMAGE_MODEL_COST: dict[str, float] = {
     "gemini-2.5-flash-image": 0.04,
     "gemini-3-pro-image-preview": 0.13,
     "qwen-fast": 0.0,
+    "qwen-image-edit": 0.0,
 }
 
 VIDEO_MODEL_COST_SILENT: dict[str, float] = {
@@ -104,7 +104,6 @@ VIDEO_MODEL_COST_SILENT: dict[str, float] = {
     "veo-3.1-generate-001": 0.40,
     "veo-3.1-fast-generate-preview": 0.10,
     "veo-3.1-fast-generate-001": 0.10,
-    "wan-2.2-ref-i2v": 0.0,
     "wan-2.2-i2v": 0.0,
 }
 
@@ -116,7 +115,6 @@ VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
     "veo-3.1-generate-001": 0.40,
     "veo-3.1-fast-generate-preview": 0.15,
     "veo-3.1-fast-generate-001": 0.15,
-    "wan-2.2-ref-i2v": 0.0,
     "wan-2.2-i2v": 0.0,
 }
 

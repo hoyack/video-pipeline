@@ -50,7 +50,7 @@ def _detect_image_mime(data: bytes) -> str:
 # ---------------------------------------------------------------------------
 # ComfyUI image models (routed to ComfyUI instead of Vertex AI)
 # ---------------------------------------------------------------------------
-COMFYUI_IMAGE_MODELS = {"qwen-fast"}
+COMFYUI_IMAGE_MODELS = {"qwen-fast", "qwen-image-edit"}
 
 # ---------------------------------------------------------------------------
 # Identity emphasis escalation prefixes for face verification retry
@@ -374,6 +374,73 @@ async def _generate_image_comfyui(
     return image_bytes
 
 
+async def _generate_image_comfyui_edit(
+    comfy_client,
+    prompt: str,
+    input_image_bytes: bytes,
+    seed: int,
+) -> bytes:
+    """Generate an edited image via ComfyUI Cloud using the Qwen Image Edit workflow.
+
+    Uploads the input image, builds the edit workflow, queues it, polls until
+    success, then downloads the output image.
+
+    Args:
+        comfy_client: ComfyUIClient instance
+        prompt: Edit instruction describing what to change
+        input_image_bytes: PNG/JPEG bytes of the image to edit
+        seed: Random seed for reproducibility
+
+    Returns:
+        PNG image data as bytes
+
+    Raises:
+        RuntimeError: On ComfyUI job failure or timeout
+        ValueError: If no image output found in history
+    """
+    from vidpipe.services.comfyui_client import (
+        build_qwen_image_edit_workflow,
+        find_comfyui_image_output,
+    )
+
+    # Upload the input image to ComfyUI
+    input_filename = await comfy_client.upload_image(
+        input_image_bytes, "image_qwen_image_edit_input_image.png"
+    )
+
+    workflow = build_qwen_image_edit_workflow(
+        prompt=prompt, input_image_filename=input_filename, seed=seed,
+    )
+    prompt_id = await comfy_client.queue_prompt(workflow)
+    logger.info(f"ComfyUI Qwen Image Edit queued: prompt_id={prompt_id}")
+
+    # Poll until completion
+    max_polls = 120
+    poll_interval = 3
+    for attempt in range(max_polls):
+        await asyncio.sleep(poll_interval)
+        status, error_msg = await comfy_client.poll_status(prompt_id)
+        if status == "success":
+            break
+        if status in ("error", "failed", "cancelled"):
+            raise RuntimeError(
+                f"ComfyUI job {prompt_id} failed: status={status}, error={error_msg}"
+            )
+    else:
+        raise RuntimeError(
+            f"ComfyUI job {prompt_id} timed out after {max_polls * poll_interval}s"
+        )
+
+    # Fetch history and extract output image
+    history = await comfy_client.get_history(prompt_id)
+    filename, subfolder = find_comfyui_image_output(history, prompt_id)
+    image_bytes = await comfy_client.download_output(filename, subfolder)
+    logger.info(
+        f"ComfyUI Qwen Image Edit complete: {filename} ({len(image_bytes)} bytes)"
+    )
+    return image_bytes
+
+
 async def generate_keyframes(
     session: AsyncSession,
     scene: Scene,
@@ -682,6 +749,8 @@ async def generate_keyframes(
                         + enriched_prompt
                     )
                     if is_comfyui:
+                        # qwen-image-edit needs an input image; for shot 0 start
+                        # there's none, so fall back to qwen-fast txt2img
                         start_frame_bytes = await _generate_image_comfyui(
                             comfy_client, prompt_with_emphasis, seed=scene.seed,
                         )
@@ -785,11 +854,19 @@ async def generate_keyframes(
                         + conditioning_prompt
                     )
                     if is_comfyui:
-                        # ComfyUI text-only: no image conditioning, use offset seed
-                        end_frame_bytes = await _generate_image_comfyui(
-                            comfy_client, prompt_with_emphasis,
-                            seed=scene.seed + shot.shot_index + 1000,
-                        )
+                        if image_model == "qwen-image-edit":
+                            # Use image-edit workflow with start frame as input
+                            end_frame_bytes = await _generate_image_comfyui_edit(
+                                comfy_client, prompt_with_emphasis,
+                                input_image_bytes=start_frame_bytes,
+                                seed=scene.seed + shot.shot_index + 1000,
+                            )
+                        else:
+                            # ComfyUI text-only: no image conditioning, use offset seed
+                            end_frame_bytes = await _generate_image_comfyui(
+                                comfy_client, prompt_with_emphasis,
+                                seed=scene.seed + shot.shot_index + 1000,
+                            )
                     else:
                         end_frame_bytes = await _generate_image_conditioned(
                             image_client, start_frame_bytes, prompt_with_emphasis,

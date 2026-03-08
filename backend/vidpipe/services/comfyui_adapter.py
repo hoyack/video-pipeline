@@ -20,7 +20,6 @@ from typing import Optional
 
 from vidpipe.services.comfyui_client import (
     ComfyUIClient,
-    build_wan22_flf2v_workflow,
     build_wan22_i2v_workflow,
     wan_resolution,
 )
@@ -152,13 +151,11 @@ class ComfyUIVideoAdapter:
             aspect_ratio: "16:9" or "9:16".
             seed: Random seed for reproducibility.
             shot_index: Shot number (for filename prefixes).
-            video_model: Model ID (e.g. "wan-2.2-i2v" or "wan-2.2-ref-i2v").
+            video_model: Model ID (e.g. "wan-2.2-i2v").
 
         Returns:
             Operation ID in format "comfyui:{prompt_id}".
         """
-        is_i2v = video_model == "wan-2.2-i2v"
-
         # Upload start keyframe
         start_fn = await self.client.upload_image(
             start_frame_bytes, f"shot_{shot_index}_start.png"
@@ -167,41 +164,15 @@ class ComfyUIVideoAdapter:
 
         width, height = wan_resolution(aspect_ratio)
 
-        if is_i2v:
-            workflow = build_wan22_i2v_workflow(
-                prompt=video_prompt,
-                negative_prompt=WAN_I2V_NEGATIVE_PROMPT,
-                image_filename=start_fn,
-                width=width,
-                height=height,
-                length=81,  # 81 frames @ 16fps ≈ 5s
-                seed=seed,
-            )
-        else:
-            # FLF2V: upload end keyframe + optional character references
-            end_fn = await self.client.upload_image(
-                end_frame_bytes, f"shot_{shot_index}_end.png"
-            )
-            logger.info("Shot %d: uploaded end keyframe as %s", shot_index, end_fn)
-
-            char_ref_fns: list[str] = []
-            for i, ref_bytes in enumerate(char_ref_bytes[:2]):
-                fn = await self.client.upload_image(
-                    ref_bytes, f"shot_{shot_index}_charref{i + 1:02d}.png"
-                )
-                char_ref_fns.append(fn)
-
-            workflow = build_wan22_flf2v_workflow(
-                prompt=video_prompt,
-                start_keyframe_filename=start_fn,
-                end_keyframe_filename=end_fn,
-                char_ref_01_filename=char_ref_fns[0] if len(char_ref_fns) > 0 else None,
-                char_ref_02_filename=char_ref_fns[1] if len(char_ref_fns) > 1 else None,
-                width=width,
-                height=height,
-                length=81,
-                seed=seed,
-            )
+        workflow = build_wan22_i2v_workflow(
+            prompt=video_prompt,
+            negative_prompt=WAN_I2V_NEGATIVE_PROMPT,
+            image_filename=start_fn,
+            width=width,
+            height=height,
+            length=81,  # 81 frames @ 16fps ≈ 5s
+            seed=seed,
+        )
 
         # Log what we injected into the workflow for diagnostics
         _log_workflow_injection(workflow, shot_index, video_model)

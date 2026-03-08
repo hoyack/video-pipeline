@@ -534,6 +534,58 @@ def find_comfyui_image_output(history: dict, prompt_id: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Qwen Image Edit workflow builder
+# ---------------------------------------------------------------------------
+
+_QWEN_IMAGE_EDIT_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "qwen-image-edit.json"
+)
+
+_cached_qwen_image_edit_template: Optional[dict] = None
+
+
+def _load_qwen_image_edit_template() -> dict:
+    """Load the Qwen Image Edit API-format workflow template, caching the result."""
+    global _cached_qwen_image_edit_template
+    if _cached_qwen_image_edit_template is None:
+        with open(_QWEN_IMAGE_EDIT_TEMPLATE_PATH) as f:
+            _cached_qwen_image_edit_template = json.load(f)
+        logger.info("Loaded Qwen Image Edit template from %s", _QWEN_IMAGE_EDIT_TEMPLATE_PATH)
+    return _cached_qwen_image_edit_template
+
+
+def build_qwen_image_edit_workflow(
+    *,
+    prompt: str,
+    input_image_filename: str,
+    seed: int = 0,
+) -> dict:
+    """Build ComfyUI API-format workflow for Qwen Image Edit.
+
+    This model takes an input image and an edit instruction prompt,
+    then produces an edited version of the image.
+
+    Injects runtime parameters into the cached template:
+    - Node 102:76: positive prompt (edit instruction)
+    - Node 102:3: KSampler seed
+    - Node 78: LoadImage filename
+
+    Args:
+        prompt: Edit instruction describing what to change
+        input_image_filename: Server-side filename of the uploaded input image
+        seed: Random seed for reproducibility
+
+    Returns:
+        ComfyUI API-format prompt dict
+    """
+    workflow = copy.deepcopy(_load_qwen_image_edit_template())
+    workflow["102:76"]["inputs"]["prompt"] = prompt
+    workflow["102:3"]["inputs"]["seed"] = seed
+    workflow["78"]["inputs"]["image"] = input_image_filename
+    return workflow
+
+
+# ---------------------------------------------------------------------------
 # Wan 2.2 I2V workflow builder
 # ---------------------------------------------------------------------------
 

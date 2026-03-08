@@ -148,19 +148,12 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
     }
   }, [isPartialMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Override ComfyUI cost from user settings if configured
-  const comfyuiCostOverride = modelSettings?.comfyui_cost_per_second;
   // In partial mode, compute total_duration from shot count * default clip for cost estimation
   const effectiveTotalDuration = isPartialMode ? directShotCount * clipDuration : totalDuration;
 
   const effectiveCost = useMemo(() => {
-    const base = estimatePartialCost(effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, runThrough);
-    if (videoModel === "wan-2.2-ref-i2v" && comfyuiCostOverride != null && comfyuiCostOverride > 0 && runThrough !== "storyboard" && runThrough !== "keyframes") {
-      const shots = Math.ceil(effectiveTotalDuration / clipDuration);
-      return base + shots * clipDuration * comfyuiCostOverride;
-    }
-    return base;
-  }, [effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, comfyuiCostOverride, runThrough]);
+    return estimatePartialCost(effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, runThrough);
+  }, [effectiveTotalDuration, clipDuration, textModel, imageModel, videoModel, audioActive, runThrough]);
   const cost = effectiveCost;
 
   function handleVideoModelChange(id: string) {
@@ -210,11 +203,9 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
     }
   }
 
-  const videoCostPerSecond = videoModel === "wan-2.2-ref-i2v" && comfyuiCostOverride != null
-    ? comfyuiCostOverride
-    : audioActive
-      ? selectedVideoModel.costPerSecondAudio
-      : selectedVideoModel.costPerSecond;
+  const videoCostPerSecond = audioActive
+    ? selectedVideoModel.costPerSecondAudio
+    : selectedVideoModel.costPerSecond;
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto max-w-2xl space-y-6">

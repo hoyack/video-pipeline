@@ -1486,11 +1486,16 @@ export function generateLibrarySetImage(
   setId: string,
   prompt: string,
   imageModel?: string,
+  referenceImageId?: string,
 ): Promise<{ id: string; library_set_id: string; image_url: string; label: string | null; is_primary: boolean; created_at: string }> {
   return request(`/api/asset-library/sets/${setId}/generate-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, image_model: imageModel || undefined }),
+    body: JSON.stringify({
+      prompt,
+      image_model: imageModel || undefined,
+      reference_image_id: referenceImageId || undefined,
+    }),
   });
 }
 
@@ -1561,6 +1566,62 @@ export async function uploadLibraryPropRef(propId: string, file: File, label?: s
 /** DELETE /api/asset-library/prop-refs/{id} — delete prop ref */
 export function deleteLibraryPropRef(refId: string): Promise<void> {
   return request<void>(`/api/asset-library/prop-refs/${refId}`, { method: "DELETE" });
+}
+
+/** POST /api/asset-library/actors/{id}/generate-metadata — auto-generate description, base_appearance_prompt */
+export function generateActorMetadata(
+  actorId: string,
+): Promise<{ description: string; base_appearance_prompt: string }> {
+  return request<{ description: string; base_appearance_prompt: string }>(
+    `/api/asset-library/actors/${actorId}/generate-metadata`,
+    { method: "POST" },
+  );
+}
+
+/** POST /api/asset-library/actors/{id}/generate-image — generate reference image from prompt */
+export function generateActorImage(
+  actorId: string,
+  prompt: string,
+  imageModel?: string,
+  referenceImageId?: string,
+): Promise<{ id: string; actor_id: string; image_url: string; label: string | null; is_primary: boolean; created_at: string }> {
+  return request(`/api/asset-library/actors/${actorId}/generate-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      image_model: imageModel || undefined,
+      reference_image_id: referenceImageId || undefined,
+    }),
+  });
+}
+
+/** POST /api/asset-library/props/{id}/generate-metadata — auto-generate description, appearance_prompt */
+export function generatePropMetadata(
+  propId: string,
+): Promise<{ description: string; appearance_prompt: string }> {
+  return request<{ description: string; appearance_prompt: string }>(
+    `/api/asset-library/props/${propId}/generate-metadata`,
+    { method: "POST" },
+  );
+}
+
+/** POST /api/asset-library/props/{id}/generate-image — generate reference image from prompt */
+export function generatePropImage(
+  propId: string,
+  prompt: string,
+  imageModel?: string,
+  referenceImageId?: string,
+): Promise<{ id: string; library_prop_id: string; image_url: string; label: string | null; is_primary: boolean; created_at: string }> {
+  return request(`/api/asset-library/props/${propId}/generate-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      image_model: imageModel || undefined,
+      reference_image_id: referenceImageId || undefined,
+    }),
+  });
 }
 
 // ============================================================================

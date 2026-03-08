@@ -91,3 +91,33 @@ class SetMetadataOutput(BaseModel):
         "light sources (natural/artificial), direction, color temperature, shadows, "
         "mood/atmosphere created by the lighting. ~30-60 words."
     )
+
+
+class ActorMetadataOutput(BaseModel):
+    """Structured output for auto-generating actor metadata from a reference image."""
+    description: str = Field(
+        description="Physical appearance description of the character/person for a production bible. "
+        "Describe body type, face shape, hair, skin tone, distinguishing features, "
+        "typical expression, and overall presence. ~60-100 words."
+    )
+    base_appearance_prompt: str = Field(
+        description="Detailed text-to-image prompt to recreate this character's appearance. "
+        "Include: gender, age range, ethnicity, body type, hair (style/color/length), "
+        "face details (eyes, nose, jawline), skin tone, distinguishing marks, "
+        "default clothing style, posture, expression. Be specific enough for consistent "
+        "identity across generations. ~120-180 words."
+    )
+
+
+class PropMetadataOutput(BaseModel):
+    """Structured output for auto-generating prop metadata from a reference image."""
+    description: str = Field(
+        description="Physical description of the prop/object for a production bible. "
+        "Describe shape, size, materials, color, condition, and notable features. ~60-100 words."
+    )
+    appearance_prompt: str = Field(
+        description="Detailed text-to-image prompt to recreate this prop/object. "
+        "Include: object type, dimensions/proportions, material/texture, color palette, "
+        "wear/condition, distinctive details, lighting interaction (reflective, matte, etc.), "
+        "viewing angle. ~80-120 words."
+    )

@@ -253,6 +253,82 @@ async def _save_upload(
         return key
 
 
+async def _load_existing_ref_image(entity_id: str, entity_type: str) -> Optional[bytes]:
+    """Load the primary (or first) reference image bytes for an entity.
+
+    Returns None if no reference images exist. Used by qwen-image-edit to
+    obtain the input image for editing.
+    """
+    from vidpipe.services.file_manager import FileManager
+
+    uid = uuid.UUID(entity_id)
+    async with async_session() as session:
+        if entity_type == "set":
+            stmt = select(LibrarySetRef).where(
+                LibrarySetRef.library_set_id == uid
+            ).order_by(LibrarySetRef.is_primary.desc(), LibrarySetRef.created_at.desc()).limit(1)
+            ref = (await session.execute(stmt)).scalar_one_or_none()
+            image_url = ref.image_url if ref else None
+        elif entity_type == "actor":
+            stmt = select(ActorRef).where(
+                ActorRef.actor_id == uid
+            ).order_by(ActorRef.is_primary.desc(), ActorRef.created_at.desc()).limit(1)
+            ref = (await session.execute(stmt)).scalar_one_or_none()
+            image_url = ref.image_url if ref else None
+        elif entity_type == "prop":
+            stmt = select(LibraryPropRef).where(
+                LibraryPropRef.library_prop_id == uid
+            ).order_by(LibraryPropRef.is_primary.desc(), LibraryPropRef.created_at.desc()).limit(1)
+            ref = (await session.execute(stmt)).scalar_one_or_none()
+            image_url = ref.image_url if ref else None
+        else:
+            return None
+
+    if not image_url:
+        return None
+
+    try:
+        file_mgr = FileManager()
+        return await file_mgr.read_bytes(image_url)
+    except Exception as e:
+        logger.warning(f"Could not load ref image for {entity_type}/{entity_id}: {e}")
+        return None
+
+
+async def _load_ref_image_by_id(ref_id: str) -> Optional[bytes]:
+    """Load reference image bytes by the ref record ID.
+
+    Checks LibrarySetRef, ActorRef, and LibraryPropRef tables.
+    """
+    from vidpipe.services.file_manager import FileManager
+
+    uid = uuid.UUID(ref_id)
+    image_url = None
+    async with async_session() as session:
+        # Try set ref
+        ref = await session.get(LibrarySetRef, uid)
+        if ref:
+            image_url = ref.image_url
+        else:
+            ref = await session.get(ActorRef, uid)
+            if ref:
+                image_url = ref.image_url
+            else:
+                ref = await session.get(LibraryPropRef, uid)
+                if ref:
+                    image_url = ref.image_url
+
+    if not image_url:
+        return None
+
+    try:
+        file_mgr = FileManager()
+        return await file_mgr.read_bytes(image_url)
+    except Exception as e:
+        logger.warning(f"Could not load ref image by id {ref_id}: {e}")
+        return None
+
+
 def _validate_image_upload(file: UploadFile, content: bytes) -> None:
     """Validate image file type and size (10MB limit)."""
     if file.content_type not in ("image/png", "image/jpeg", "image/webp"):
@@ -705,6 +781,202 @@ async def serve_actor_ref_image(ref_id: str, thumb: bool = Query(False)):
         return await _serve_ref_image(ref.image_url, thumbnail=thumb)
 
 
+# --- Actor Generate Metadata / Image ---
+
+
+@asset_library_router.post("/actors/{actor_id}/generate-metadata")
+async def generate_actor_metadata(actor_id: str):
+    """Auto-generate description and base_appearance_prompt from the actor's primary reference image."""
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.services.llm import get_adapter
+    from vidpipe.schemas.llm_vision import ActorMetadataOutput
+    from vidpipe.services.file_manager import FileManager
+
+    async with async_session() as session:
+        actor = await session.get(Actor, uuid.UUID(actor_id))
+        if actor is None:
+            raise HTTPException(status_code=404, detail="Actor not found")
+
+        refs_result = await session.execute(
+            select(ActorRef)
+            .where(ActorRef.actor_id == actor.id)
+            .order_by(ActorRef.is_primary.desc(), ActorRef.created_at)
+        )
+        refs = list(refs_result.scalars().all())
+        if not refs:
+            raise HTTPException(status_code=422, detail="No reference images uploaded. Upload an image first.")
+
+        ref = refs[0]
+
+        file_mgr = FileManager()
+        try:
+            image_bytes = await file_mgr.read_bytes(ref.image_url)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Reference image file not found")
+
+        suffix = ref.image_url.rsplit(".", 1)[-1].lower() if "." in ref.image_url else "png"
+        mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+        mime_type = mime_map.get(suffix, "image/jpeg")
+
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+        user_settings = settings
+
+    prompt = """You are a visual prompt engineer for AI video generation.
+Analyze this CHARACTER/PERSON image and produce a JSON response with:
+
+1. "description": Physical appearance description of the character/person for a production bible. Describe body type, face shape, hair, skin tone, distinguishing features, typical expression, and overall presence. ~60-100 words.
+
+2. "base_appearance_prompt": Detailed text-to-image prompt to recreate this character's appearance in an AI image/video generator. Include: gender, age range, ethnicity, body type, hair (style/color/length), face details (eyes, nose, jawline), skin tone, distinguishing marks, default clothing style, posture, expression. Be specific enough for consistent identity across generations. Write in prompt style, not prose. ~120-180 words."""
+
+    if actor.name:
+        prompt += f"\n\nCharacter name: {actor.name}"
+
+    try:
+        adapter = get_adapter(vision_model, user_settings=user_settings)
+        result = await adapter.analyze_image(
+            image_bytes=image_bytes,
+            prompt=prompt,
+            schema=ActorMetadataOutput,
+            mime_type=mime_type,
+            temperature=0.4,
+            max_retries=3,
+        )
+        return result.model_dump()
+    except Exception as e:
+        logger.error("Generate actor metadata failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate metadata: {e}")
+
+
+class GenerateActorImageRequest(BaseModel):
+    prompt: str
+    image_model: Optional[str] = None
+    reference_image_id: Optional[str] = None
+
+
+@asset_library_router.post("/actors/{actor_id}/generate-image")
+async def generate_actor_image(actor_id: str, body: GenerateActorImageRequest):
+    """Generate a reference image for an actor from a text prompt."""
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.pipeline.keyframes import COMFYUI_IMAGE_MODELS
+
+    if not body.prompt.strip():
+        raise HTTPException(status_code=422, detail="Prompt cannot be empty")
+
+    async with async_session() as session:
+        actor = await session.get(Actor, uuid.UUID(actor_id))
+        if actor is None:
+            raise HTTPException(status_code=404, detail="Actor not found")
+
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        image_model = body.image_model or (settings.default_image_model if settings else None) or "gemini-2.5-flash-image"
+
+    from vidpipe.api.routes import ALLOWED_IMAGE_MODELS
+    if image_model not in ALLOWED_IMAGE_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid image model: {image_model}")
+
+    ref_bytes = None
+    if body.reference_image_id:
+        ref_bytes = await _load_ref_image_by_id(body.reference_image_id)
+        if not ref_bytes:
+            raise HTTPException(status_code=404, detail="Reference image not found or unreadable")
+    elif image_model == "qwen-image-edit":
+        ref_bytes = await _load_existing_ref_image(actor_id, "actor")
+
+    # Build prompt — when a reference image is provided, emphasize identity preservation
+    user_prompt = body.prompt.strip()
+    if ref_bytes:
+        wrapped_prompt = (
+            "Generate a SINGLE photorealistic image of the SAME person shown in the "
+            "reference photo above. This is the most important requirement — the generated "
+            "person MUST have the same face, head shape, skin tone, hair (or lack thereof), "
+            "and distinguishing features as the reference photo. Do NOT change the person's "
+            "identity. Use the text description below only for pose, setting, and clothing "
+            "guidance — NOT to override the person's physical appearance from the reference.\n"
+            "Do NOT create a grid, collage, or multiple panels. Output exactly one image.\n\n"
+            f"{user_prompt}"
+        )
+    else:
+        wrapped_prompt = (
+            "Generate a SINGLE photorealistic portrait image of this character. "
+            "Do NOT create a grid, collage, contact sheet, or multiple panels. "
+            "Output exactly one image.\n\n"
+            f"{user_prompt}"
+        )
+
+    try:
+        if image_model == "qwen-image-edit" and ref_bytes:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui_edit
+            image_bytes = await _generate_image_comfyui_edit(
+                comfy_client, wrapped_prompt,
+                input_image_bytes=ref_bytes,
+                seed=random.randint(0, 2**32 - 1),
+            )
+        elif image_model in COMFYUI_IMAGE_MODELS:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui
+            image_bytes = await _generate_image_comfyui(
+                comfy_client, wrapped_prompt, seed=random.randint(0, 2**32 - 1),
+            )
+        else:
+            from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+            from vidpipe.pipeline.keyframes import _generate_image_from_text
+            from google.genai import types
+            client = get_vertex_client(location=location_for_model(image_model))
+
+            if ref_bytes:
+                image_bytes = await _generate_image_from_text(
+                    client, wrapped_prompt, "1:1", image_model,
+                    reference_images=[ref_bytes],
+                )
+            else:
+                response = await client.aio.models.generate_content(
+                    model=image_model,
+                    contents=[wrapped_prompt],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                    ),
+                )
+
+                image_bytes = None
+                if response.candidates:
+                    for part in (response.candidates[0].content.parts or []):
+                        if part.inline_data:
+                            image_bytes = part.inline_data.data
+                            break
+
+        if not image_bytes:
+            raise ValueError("No image generated — the model returned no image. Try a more descriptive prompt.")
+    except Exception as e:
+        logger.error("Generate actor image failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate image: {e}")
+
+    filename = f"generated_{uuid.uuid4().hex[:8]}.png"
+    stored_path = await _save_upload(
+        image_bytes,
+        "image/png",
+        filename,
+        f"actors/{actor_id}/refs",
+    )
+
+    async with async_session() as session:
+        ref = ActorRef(
+            actor_id=uuid.UUID(actor_id),
+            image_url=stored_path,
+            label="AI Generated",
+            is_primary=False,
+        )
+        session.add(ref)
+        await session.commit()
+        await session.refresh(ref)
+        return _actor_ref_to_dict(ref)
+
+
 # --- Actor Voice Profiles ---
 
 
@@ -1140,6 +1412,7 @@ Analyze this SET/ENVIRONMENT image and produce a JSON response with:
 class GenerateSetImageRequest(BaseModel):
     prompt: str
     image_model: Optional[str] = None
+    reference_image_id: Optional[str] = None
 
 
 @asset_library_router.post("/sets/{set_id}/generate-image")
@@ -1168,9 +1441,28 @@ async def generate_set_image(set_id: str, body: GenerateSetImageRequest):
     if image_model not in ALLOWED_IMAGE_MODELS:
         raise HTTPException(status_code=422, detail=f"Invalid image model: {image_model}")
 
+    # Load reference image if specified or auto-select for edit models
+    ref_bytes = None
+    if body.reference_image_id:
+        ref_bytes = await _load_ref_image_by_id(body.reference_image_id)
+        if not ref_bytes:
+            raise HTTPException(status_code=404, detail="Reference image not found or unreadable")
+    elif image_model == "qwen-image-edit":
+        ref_bytes = await _load_existing_ref_image(set_id, "set")
+
     # Generate the image — route to ComfyUI or Vertex AI
     try:
-        if image_model in COMFYUI_IMAGE_MODELS:
+        if image_model == "qwen-image-edit" and ref_bytes:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui_edit
+            image_bytes = await _generate_image_comfyui_edit(
+                comfy_client, body.prompt.strip(),
+                input_image_bytes=ref_bytes,
+                seed=random.randint(0, 2**32 - 1),
+            )
+        elif image_model in COMFYUI_IMAGE_MODELS:
             from vidpipe.services.comfyui_client import get_comfyui_client
             import random
             comfy_client = await get_comfyui_client()
@@ -1180,22 +1472,31 @@ async def generate_set_image(set_id: str, body: GenerateSetImageRequest):
             )
         else:
             from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+            from vidpipe.pipeline.keyframes import _generate_image_from_text
             from google.genai import types
             client = get_vertex_client(location=location_for_model(image_model))
-            response = await client.aio.models.generate_content(
-                model=image_model,
-                contents=[body.prompt.strip()],
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                ),
-            )
 
-            image_bytes = None
-            if response.candidates:
-                for part in (response.candidates[0].content.parts or []):
-                    if part.inline_data:
-                        image_bytes = part.inline_data.data
-                        break
+            if ref_bytes:
+                # Gemini models: pass reference image for identity grounding
+                image_bytes = await _generate_image_from_text(
+                    client, body.prompt.strip(), "1:1", image_model,
+                    reference_images=[ref_bytes],
+                )
+            else:
+                response = await client.aio.models.generate_content(
+                    model=image_model,
+                    contents=[body.prompt.strip()],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                    ),
+                )
+
+                image_bytes = None
+                if response.candidates:
+                    for part in (response.candidates[0].content.parts or []):
+                        if part.inline_data:
+                            image_bytes = part.inline_data.data
+                            break
 
         if not image_bytes:
             raise ValueError("No image generated — the model returned no image. Try a more descriptive prompt.")
@@ -1521,6 +1822,189 @@ async def serve_prop_ref_image(ref_id: str, thumb: bool = Query(False)):
         if ref is None:
             raise HTTPException(status_code=404, detail="Prop ref not found")
         return await _serve_ref_image(ref.image_url, thumbnail=thumb)
+
+
+# --- Prop Generate Metadata / Image ---
+
+
+@asset_library_router.post("/props/{prop_id}/generate-metadata")
+async def generate_prop_metadata(prop_id: str):
+    """Auto-generate description and appearance_prompt from the prop's primary reference image."""
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.services.llm import get_adapter
+    from vidpipe.schemas.llm_vision import PropMetadataOutput
+    from vidpipe.services.file_manager import FileManager
+
+    async with async_session() as session:
+        prop = await session.get(LibraryProp, uuid.UUID(prop_id))
+        if prop is None:
+            raise HTTPException(status_code=404, detail="Library prop not found")
+
+        refs_result = await session.execute(
+            select(LibraryPropRef)
+            .where(LibraryPropRef.library_prop_id == prop.id)
+            .order_by(LibraryPropRef.is_primary.desc(), LibraryPropRef.created_at)
+        )
+        refs = list(refs_result.scalars().all())
+        if not refs:
+            raise HTTPException(status_code=422, detail="No reference images uploaded. Upload an image first.")
+
+        ref = refs[0]
+
+        file_mgr = FileManager()
+        try:
+            image_bytes = await file_mgr.read_bytes(ref.image_url)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Reference image file not found")
+
+        suffix = ref.image_url.rsplit(".", 1)[-1].lower() if "." in ref.image_url else "png"
+        mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+        mime_type = mime_map.get(suffix, "image/jpeg")
+
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+        user_settings = settings
+
+    prompt = """You are a visual prompt engineer for AI video generation.
+Analyze this PROP/OBJECT image and produce a JSON response with:
+
+1. "description": Physical description of the prop/object for a production bible. Describe shape, size, materials, color, condition, and notable features. ~60-100 words.
+
+2. "appearance_prompt": Detailed text-to-image prompt to recreate this prop/object in an AI image/video generator. Include: object type, dimensions/proportions, material/texture, color palette, wear/condition, distinctive details, lighting interaction (reflective, matte, etc.), viewing angle. ~80-120 words."""
+
+    if prop.name:
+        prompt += f"\n\nProp name: {prop.name}"
+
+    try:
+        adapter = get_adapter(vision_model, user_settings=user_settings)
+        result = await adapter.analyze_image(
+            image_bytes=image_bytes,
+            prompt=prompt,
+            schema=PropMetadataOutput,
+            mime_type=mime_type,
+            temperature=0.4,
+            max_retries=3,
+        )
+        return result.model_dump()
+    except Exception as e:
+        logger.error("Generate prop metadata failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate metadata: {e}")
+
+
+class GeneratePropImageRequest(BaseModel):
+    prompt: str
+    image_model: Optional[str] = None
+    reference_image_id: Optional[str] = None
+
+
+@asset_library_router.post("/props/{prop_id}/generate-image")
+async def generate_prop_image(prop_id: str, body: GeneratePropImageRequest):
+    """Generate a reference image for a library prop from a text prompt."""
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.pipeline.keyframes import COMFYUI_IMAGE_MODELS
+
+    if not body.prompt.strip():
+        raise HTTPException(status_code=422, detail="Prompt cannot be empty")
+
+    async with async_session() as session:
+        prop = await session.get(LibraryProp, uuid.UUID(prop_id))
+        if prop is None:
+            raise HTTPException(status_code=404, detail="Library prop not found")
+
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        image_model = body.image_model or (settings.default_image_model if settings else None) or "gemini-2.5-flash-image"
+
+    from vidpipe.api.routes import ALLOWED_IMAGE_MODELS
+    if image_model not in ALLOWED_IMAGE_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid image model: {image_model}")
+
+    # Wrap prompt to ensure single-image output (prevent multi-panel grids)
+    wrapped_prompt = (
+        "Generate a SINGLE product-style photograph of this object. "
+        "Do NOT create a grid, collage, contact sheet, or multiple panels. "
+        "Output exactly one image.\n\n"
+        f"{body.prompt.strip()}"
+    )
+
+    ref_bytes = None
+    if body.reference_image_id:
+        ref_bytes = await _load_ref_image_by_id(body.reference_image_id)
+        if not ref_bytes:
+            raise HTTPException(status_code=404, detail="Reference image not found or unreadable")
+    elif image_model == "qwen-image-edit":
+        ref_bytes = await _load_existing_ref_image(prop_id, "prop")
+
+    try:
+        if image_model == "qwen-image-edit" and ref_bytes:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui_edit
+            image_bytes = await _generate_image_comfyui_edit(
+                comfy_client, wrapped_prompt,
+                input_image_bytes=ref_bytes,
+                seed=random.randint(0, 2**32 - 1),
+            )
+        elif image_model in COMFYUI_IMAGE_MODELS:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui
+            image_bytes = await _generate_image_comfyui(
+                comfy_client, wrapped_prompt, seed=random.randint(0, 2**32 - 1),
+            )
+        else:
+            from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+            from vidpipe.pipeline.keyframes import _generate_image_from_text
+            from google.genai import types
+            client = get_vertex_client(location=location_for_model(image_model))
+
+            if ref_bytes:
+                image_bytes = await _generate_image_from_text(
+                    client, wrapped_prompt, "1:1", image_model,
+                    reference_images=[ref_bytes],
+                )
+            else:
+                response = await client.aio.models.generate_content(
+                    model=image_model,
+                    contents=[wrapped_prompt],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                    ),
+                )
+
+                image_bytes = None
+                if response.candidates:
+                    for part in (response.candidates[0].content.parts or []):
+                        if part.inline_data:
+                            image_bytes = part.inline_data.data
+                            break
+
+        if not image_bytes:
+            raise ValueError("No image generated — the model returned no image. Try a more descriptive prompt.")
+    except Exception as e:
+        logger.error("Generate prop image failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate image: {e}")
+
+    filename = f"generated_{uuid.uuid4().hex[:8]}.png"
+    stored_path = await _save_upload(
+        image_bytes,
+        "image/png",
+        filename,
+        f"props/{prop_id}/refs",
+    )
+
+    async with async_session() as session:
+        ref = LibraryPropRef(
+            library_prop_id=uuid.UUID(prop_id),
+            image_url=stored_path,
+            label="AI Generated",
+            is_primary=False,
+        )
+        session.add(ref)
+        await session.commit()
+        await session.refresh(ref)
+        return _library_prop_ref_to_dict(ref)
 
 
 # ===========================================================================

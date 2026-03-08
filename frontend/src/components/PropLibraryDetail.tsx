@@ -1,20 +1,20 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useLocation } from "wouter";
-import type { LibrarySet, LibrarySetRef, EnabledModelsResponse } from "../api/types.ts";
+import type { LibraryProp, LibraryPropRef, EnabledModelsResponse } from "../api/types.ts";
 import {
-  getLibrarySet,
-  updateLibrarySet,
-  deleteLibrarySet,
-  uploadLibrarySetRef,
-  deleteLibrarySetRef,
-  generateLibrarySetMetadata,
-  generateLibrarySetImage,
+  getLibraryProp,
+  updateLibraryProp,
+  deleteLibraryProp,
+  uploadLibraryPropRef,
+  deleteLibraryPropRef,
+  generatePropMetadata,
+  generatePropImage,
   getEnabledModels,
 } from "../api/client.ts";
 import { IMAGE_MODELS, REFERENCE_IMAGE_MODELS } from "../lib/constants.ts";
 
-interface LibrarySetDetailProps {
-  setId: string;
+interface PropLibraryDetailProps {
+  propId: string;
 }
 
 type Tab = "overview" | "refs";
@@ -24,9 +24,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "refs", label: "Reference Images" },
 ];
 
-export function LibrarySetDetail({ setId }: LibrarySetDetailProps) {
+export function PropLibraryDetail({ propId }: PropLibraryDetailProps) {
   const [, navigate] = useLocation();
-  const [libSet, setLibSet] = useState<LibrarySet | null>(null);
+  const [prop, setProp] = useState<LibraryProp | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,21 +34,21 @@ export function LibrarySetDetail({ setId }: LibrarySetDetailProps) {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await getLibrarySet(setId);
-      setLibSet(data);
+      const data = await getLibraryProp(propId);
+      setProp(data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [setId]);
+  }, [propId]);
 
   useEffect(() => { load(); }, [load]);
 
   const handleDelete = async () => {
-    if (!confirm("Delete this set? This cannot be undone.")) return;
+    if (!confirm("Delete this prop? This cannot be undone.")) return;
     try {
-      await deleteLibrarySet(setId);
+      await deleteLibraryProp(propId);
       navigate("/asset-library");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -63,10 +63,10 @@ export function LibrarySetDetail({ setId }: LibrarySetDetailProps) {
     );
   }
 
-  if (!libSet) {
+  if (!prop) {
     return (
       <div className="text-center py-12">
-        <p className="text-sm text-red-400">{error ?? "Set not found"}</p>
+        <p className="text-sm text-red-400">{error ?? "Prop not found"}</p>
         <button onClick={() => navigate("/asset-library")} className="mt-4 text-sm text-blue-400 hover:text-blue-300">
           Back to Asset Library
         </button>
@@ -83,9 +83,9 @@ export function LibrarySetDetail({ setId }: LibrarySetDetailProps) {
             onClick={() => navigate("/asset-library")}
             className="text-gray-400 hover:text-gray-200 text-sm"
           >
-            Sets /
+            Props /
           </button>
-          <h1 className="text-xl font-bold text-white">{libSet.name}</h1>
+          <h1 className="text-xl font-bold text-white">{prop.name}</h1>
         </div>
         <button
           onClick={handleDelete}
@@ -122,15 +122,15 @@ export function LibrarySetDetail({ setId }: LibrarySetDetailProps) {
       <div className="flex gap-6">
         {/* Sidebar preview */}
         <div className="w-48 flex-shrink-0">
-          {libSet.refs.length > 0 ? (
+          {prop.refs.length > 0 ? (
             <img
-              src={libSet.refs.find((r) => r.is_primary)?.image_url ?? libSet.refs[0].image_url}
-              alt={libSet.name}
+              src={prop.refs.find((r) => r.is_primary)?.image_url ?? prop.refs[0].image_url}
+              alt={prop.name}
               className="w-full rounded-lg border border-gray-700 object-cover aspect-square"
             />
           ) : (
             <div className="w-full rounded-lg bg-gray-800 border border-gray-700 flex items-center justify-center aspect-square">
-              <span className="text-gray-600 text-2xl">SET</span>
+              <span className="text-gray-600 text-2xl">PROP</span>
             </div>
           )}
         </div>
@@ -139,14 +139,14 @@ export function LibrarySetDetail({ setId }: LibrarySetDetailProps) {
         <div className="flex-1 min-w-0">
           {activeTab === "overview" && (
             <OverviewTab
-              libSet={libSet}
+              prop={prop}
               onRefresh={load}
               onError={(msg) => setError(msg)}
             />
           )}
           {activeTab === "refs" && (
             <RefsTab
-              libSet={libSet}
+              prop={prop}
               onRefresh={load}
               onError={(msg) => setError(msg)}
             />
@@ -162,30 +162,27 @@ export function LibrarySetDetail({ setId }: LibrarySetDetailProps) {
 // ============================================================================
 
 function OverviewTab({
-  libSet,
+  prop,
   onRefresh,
   onError,
 }: {
-  libSet: LibrarySet;
+  prop: LibraryProp;
   onRefresh: () => void;
   onError: (msg: string) => void;
 }) {
-  const [name, setName] = useState(libSet.name);
-  const [description, setDescription] = useState(libSet.description ?? "");
-  const [reversePrompt, setReversePrompt] = useState(libSet.reverse_prompt ?? "");
-  const [lightingNotes, setLightingNotes] = useState(libSet.lighting_notes ?? "");
-  const [promptTags, setPromptTags] = useState((libSet.prompt_tags ?? []).join(", "));
-  const [styleTags, setStyleTags] = useState((libSet.style_tags ?? []).join(", "));
+  const [name, setName] = useState(prop.name);
+  const [description, setDescription] = useState(prop.description ?? "");
+  const [appearancePrompt, setAppearancePrompt] = useState(prop.appearance_prompt ?? "");
+  const [promptTags, setPromptTags] = useState((prop.prompt_tags ?? []).join(", "));
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
 
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const result = await generateLibrarySetMetadata(libSet.id);
+      const result = await generatePropMetadata(prop.id);
       setDescription(result.description);
-      setReversePrompt(result.reverse_prompt);
-      setLightingNotes(result.lighting_notes);
+      setAppearancePrompt(result.appearance_prompt);
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -194,28 +191,24 @@ function OverviewTab({
   };
 
   useEffect(() => {
-    setName(libSet.name);
-    setDescription(libSet.description ?? "");
-    setReversePrompt(libSet.reverse_prompt ?? "");
-    setLightingNotes(libSet.lighting_notes ?? "");
-    setPromptTags((libSet.prompt_tags ?? []).join(", "));
-    setStyleTags((libSet.style_tags ?? []).join(", "));
-  }, [libSet]);
+    setName(prop.name);
+    setDescription(prop.description ?? "");
+    setAppearancePrompt(prop.appearance_prompt ?? "");
+    setPromptTags((prop.prompt_tags ?? []).join(", "));
+  }, [prop]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
       const parseTags = (s: string) => {
         const tags = s.split(",").map((t) => t.trim()).filter(Boolean);
-        return tags.length > 0 ? tags : null;
+        return tags.length > 0 ? tags : undefined;
       };
-      await updateLibrarySet(libSet.id, {
-        name: name.trim() || libSet.name,
-        description: description.trim() || null,
-        reverse_prompt: reversePrompt.trim() || null,
-        lighting_notes: lightingNotes.trim() || null,
+      await updateLibraryProp(prop.id, {
+        name: name.trim() || prop.name,
+        description: description.trim() || undefined,
+        appearance_prompt: appearancePrompt.trim() || undefined,
         prompt_tags: parseTags(promptTags),
-        style_tags: parseTags(styleTags),
       });
       onRefresh();
     } catch (err: unknown) {
@@ -228,7 +221,7 @@ function OverviewTab({
   const inputClass =
     "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none";
 
-  const hasRefs = libSet.refs.length > 0;
+  const hasRefs = prop.refs.length > 0;
 
   return (
     <div className="space-y-4">
@@ -236,45 +229,36 @@ function OverviewTab({
         <label className="block text-xs text-gray-400 mb-1">Name</label>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
       </div>
-      {hasRefs && (
-        <div>
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-700 text-purple-100 hover:bg-purple-600 disabled:opacity-50 transition-colors"
-          >
-            {generating ? "Generating..." : "Auto-Generate Description, Prompt & Lighting"}
-          </button>
-          {generating && (
-            <p className="text-xs text-gray-500 mt-1">Analyzing reference image with vision model...</p>
-          )}
-        </div>
-      )}
+      <div>
+        <button
+          onClick={handleGenerate}
+          disabled={generating || !hasRefs}
+          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-700 text-purple-100 hover:bg-purple-600 disabled:opacity-50 transition-colors"
+        >
+          {generating ? "Generating..." : "Auto-Generate Description & Appearance Prompt"}
+        </button>
+        {!hasRefs && (
+          <p className="text-xs text-gray-500 mt-1">Upload or generate a reference image first</p>
+        )}
+        {generating && (
+          <p className="text-xs text-gray-500 mt-1">Analyzing reference image with vision model...</p>
+        )}
+      </div>
       <div>
         <label className="block text-xs text-gray-400 mb-1">Description</label>
-        <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} placeholder="Visual description of the set..." />
+        <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} placeholder="Physical description of the prop..." />
       </div>
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Reverse Prompt</label>
-        <textarea rows={2} value={reversePrompt} onChange={(e) => setReversePrompt(e.target.value)} className={inputClass} placeholder="Prompt used to recreate this set..." />
+        <label className="block text-xs text-gray-400 mb-1">Appearance Prompt</label>
+        <textarea rows={3} value={appearancePrompt} onChange={(e) => setAppearancePrompt(e.target.value)} className={inputClass} placeholder="Text-to-image prompt to recreate this prop..." />
       </div>
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Lighting Notes</label>
-        <input type="text" value={lightingNotes} onChange={(e) => setLightingNotes(e.target.value)} className={inputClass} placeholder="e.g. warm golden hour, neon-lit..." />
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs text-gray-400 mb-1">Prompt Tags</label>
-          <input type="text" value={promptTags} onChange={(e) => setPromptTags(e.target.value)} className={inputClass} placeholder="tag1, tag2, ..." />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-400 mb-1">Style Tags</label>
-          <input type="text" value={styleTags} onChange={(e) => setStyleTags(e.target.value)} className={inputClass} placeholder="cyberpunk, noir, ..." />
-        </div>
+        <label className="block text-xs text-gray-400 mb-1">Prompt Tags</label>
+        <input type="text" value={promptTags} onChange={(e) => setPromptTags(e.target.value)} className={inputClass} placeholder="tag1, tag2, ..." />
       </div>
       <div className="flex items-center gap-2 mt-2">
         <span className="text-xs text-gray-500">
-          Bindings: {libSet.binding_count ?? 0}
+          Bindings: {prop.binding_count ?? 0}
         </span>
       </div>
       <div className="flex justify-end">
@@ -294,14 +278,14 @@ function OverviewTab({
 // Refs Tab
 // ============================================================================
 
-type PromptSource = "description" | "reverse_prompt" | "custom";
+type PropPromptSource = "description" | "appearance_prompt" | "custom";
 
 function RefsTab({
-  libSet,
+  prop,
   onRefresh,
   onError,
 }: {
-  libSet: LibrarySet;
+  prop: LibraryProp;
   onRefresh: () => void;
   onError: (msg: string) => void;
 }) {
@@ -309,7 +293,7 @@ function RefsTab({
   const [uploading, setUploading] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [promptSource, setPromptSource] = useState<PromptSource>("reverse_prompt");
+  const [promptSource, setPromptSource] = useState<PropPromptSource>("appearance_prompt");
   const [customPrompt, setCustomPrompt] = useState("");
   const [modelSettings, setModelSettings] = useState<EnabledModelsResponse | null>(null);
   const [selectedImageModel, setSelectedImageModel] = useState("");
@@ -338,9 +322,9 @@ function RefsTab({
   const getPromptText = (): string => {
     switch (promptSource) {
       case "description":
-        return libSet.description ?? "";
-      case "reverse_prompt":
-        return libSet.reverse_prompt ?? "";
+        return prop.description ?? "";
+      case "appearance_prompt":
+        return prop.appearance_prompt ?? "";
       case "custom":
         return customPrompt;
     }
@@ -352,13 +336,13 @@ function RefsTab({
       onError(
         promptSource === "custom"
           ? "Enter a prompt first."
-          : `No ${promptSource === "description" ? "description" : "reverse prompt"} set. Generate metadata first or enter a custom prompt.`,
+          : `No ${promptSource === "description" ? "description" : "appearance prompt"} set. Generate metadata first or enter a custom prompt.`,
       );
       return;
     }
     setGenerating(true);
     try {
-      await generateLibrarySetImage(libSet.id, prompt, selectedImageModel || undefined, selectedRefId ?? undefined);
+      await generatePropImage(prop.id, prompt, selectedImageModel || undefined, selectedRefId ?? undefined);
       onRefresh();
       setShowGenerate(false);
     } catch (err: unknown) {
@@ -373,7 +357,7 @@ function RefsTab({
     if (!file) return;
     setUploading(true);
     try {
-      await uploadLibrarySetRef(libSet.id, file);
+      await uploadLibraryPropRef(prop.id, file);
       onRefresh();
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : String(err));
@@ -383,10 +367,10 @@ function RefsTab({
     }
   };
 
-  const handleDeleteRef = async (ref: LibrarySetRef) => {
+  const handleDeleteRef = async (ref: LibraryPropRef) => {
     if (!confirm("Delete this reference image?")) return;
     try {
-      await deleteLibrarySetRef(ref.id);
+      await deleteLibraryPropRef(ref.id);
       onRefresh();
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : String(err));
@@ -400,7 +384,7 @@ function RefsTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium text-gray-300">
-          Reference Images ({libSet.refs.length})
+          Reference Images ({prop.refs.length})
         </h4>
         <div className="flex gap-2">
           <button
@@ -428,7 +412,7 @@ function RefsTab({
           <h5 className="text-xs font-medium text-purple-300">Generate from:</h5>
           <div className="flex gap-2">
             {([
-              { id: "reverse_prompt" as const, label: "Reverse Prompt" },
+              { id: "appearance_prompt" as const, label: "Appearance Prompt" },
               { id: "description" as const, label: "Description" },
               { id: "custom" as const, label: "New Prompt" },
             ]).map((opt) => (
@@ -452,13 +436,13 @@ function RefsTab({
               value={customPrompt}
               onChange={(e) => setCustomPrompt(e.target.value)}
               className={inputClass}
-              placeholder="Enter a prompt to generate the set image..."
+              placeholder="Enter a prompt to generate the prop image..."
             />
           ) : (
             <div className="rounded bg-gray-900/60 border border-gray-700 px-3 py-2 text-xs text-gray-400 max-h-24 overflow-y-auto">
               {getPromptText() || (
                 <span className="italic text-gray-600">
-                  No {promptSource === "description" ? "description" : "reverse prompt"} set yet.
+                  No {promptSource === "description" ? "description" : "appearance prompt"} set yet.
                 </span>
               )}
             </div>
@@ -484,7 +468,7 @@ function RefsTab({
             </div>
           </div>
 
-          {supportsRefs && libSet.refs.length > 0 && (
+          {supportsRefs && prop.refs.length > 0 && (
             <p className="text-xs text-purple-300">
               {selectedRefId
                 ? "Reference image selected below — it will be used as input."
@@ -507,14 +491,14 @@ function RefsTab({
         </div>
       )}
 
-      {libSet.refs.length === 0 ? (
+      {prop.refs.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 rounded-lg border border-dashed border-gray-700">
           <p className="text-sm text-gray-500">No reference images yet</p>
-          <p className="text-xs text-gray-600 mt-1">Upload images to define this set's look</p>
+          <p className="text-xs text-gray-600 mt-1">Upload images to define this prop's look</p>
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {libSet.refs.map((ref) => {
+          {prop.refs.map((ref) => {
             const isSelectable = showGenerate && supportsRefs;
             const isSelected = isSelectable && selectedRefId === ref.id;
             return (
@@ -535,7 +519,7 @@ function RefsTab({
               >
                 <img
                   src={ref.image_url}
-                  alt={ref.label ?? "Set ref"}
+                  alt={ref.label ?? "Prop ref"}
                   className="w-full aspect-square object-cover"
                 />
                 {isSelected && (

@@ -368,8 +368,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ## Asset Tag Frontend Enhancements
 
-- [ ] **ATED-01**: CodeMirror @tag autocomplete extension shows dropdown of bound assets when user types @ in scene editor
-- [ ] **ATED-02**: Tag preview panel in scene editor shows asset reference image, name, and description on hover/click of @tag
+- [x] **ATED-01**: CodeMirror @tag autocomplete extension shows dropdown of bound assets when user types @ in scene editor
+- [x] **ATED-02**: Tag preview panel in scene editor shows asset reference image, name, and description on hover/click of @tag
 - [x] **ATED-03**: Actor detail view shows LoRA training status with Train/Regenerate buttons and training date
 - [x] **ATED-04**: Production Bible "Tag Reference Sheet" tab lists all bound assets with @tag syntax, type, and thumbnail
 

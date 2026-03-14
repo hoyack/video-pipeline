@@ -39,7 +39,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 23: Tag Syntax & Binding Pipeline Wiring** - @tag syntax support, extended tag resolution with structured asset refs, binding registry for LLM context injection, storyboard pipeline wiring, bound-assets summary API (completed 2026-03-14)
 - [x] **Phase 24: ComfyUI Flux.1 Workflows** - Flux.1 Dev workflow templates (base, LoRA, reference, hybrid), workflow builder function, keyframe pipeline routing for binding-based asset references (completed 2026-03-14)
 - [x] **Phase 25: LoRA Training Infrastructure** - Per-actor LoRA training pipeline with dataset prep, pluggable training backend (Replicate API), training job management, Actor model extensions (completed 2026-03-14)
-- [ ] **Phase 26: Asset Tag Frontend Enhancements** - @tag autocomplete in scene editor, tag preview panel, LoRA training status UI, Production Bible tag reference sheet
+- [x] **Phase 26: Asset Tag Frontend Enhancements** - @tag autocomplete in scene editor, tag preview panel, LoRA training status UI, Production Bible tag reference sheet (completed 2026-03-14)
 
 ## Phase Details
 
@@ -128,7 +128,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 23. Tag Syntax & Binding Wiring | 2/2 | Complete    | 2026-03-14 |
 | 24. ComfyUI Flux.1 Workflows | 2/2 | Complete    | 2026-03-14 |
 | 25. LoRA Training Infrastructure | 2/2 | Complete    | 2026-03-14 |
-| 26. Asset Tag Frontend | 1/2 | In Progress|  |
+| 26. Asset Tag Frontend | 2/2 | Complete   | 2026-03-14 |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)

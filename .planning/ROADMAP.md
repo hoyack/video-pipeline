@@ -560,3 +560,8 @@ Plans:
   2. Tag preview panel shows asset reference image, name, and description on hover/click
   3. Actor detail view shows LoRA training status with Train/Regenerate controls
   4. Production Bible has "Tag Reference Sheet" tab listing all bound assets with @tag syntax and thumbnails
+**Plans**: 2 plans in 1 wave
+
+Plans:
+- [ ] 26-01-PLAN.md — CodeMirror @tag autocomplete extension, hover tooltip, TagPreviewPanel, component tree wiring
+- [ ] 26-02-PLAN.md — Tag Reference Sheet tab on Production Bible, ATED-03 (LoRA status) verification

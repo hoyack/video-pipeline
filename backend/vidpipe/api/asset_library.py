@@ -441,6 +441,9 @@ def _actor_detail_to_dict(
         "voice_profiles": [_voice_profile_to_dict(vp) for vp in voice_profiles],
         "wardrobe_presets": [_wardrobe_preset_to_dict(wp) for wp in wardrobe_presets],
         "binding_count": binding_count,
+        "lora_url": getattr(actor, "lora_url", None),
+        "lora_trained_at": actor.lora_trained_at.isoformat() if getattr(actor, "lora_trained_at", None) else None,
+        "lora_training_status": getattr(actor, "lora_training_status", None),
         "created_at": actor.created_at.isoformat(),
         "updated_at": actor.updated_at.isoformat(),
     }
@@ -985,6 +988,193 @@ async def generate_actor_image(actor_id: str, body: GenerateActorImageRequest):
         await session.commit()
         await session.refresh(ref)
         return _actor_ref_to_dict(ref)
+
+
+# --- Actor LoRA Training ---
+
+
+@asset_library_router.post("/actors/{actor_id}/train-lora", status_code=202)
+async def train_actor_lora(actor_id: str):
+    """Dispatch a LoRA training job for an actor.
+
+    Validates minimum 5 reference images and Replicate API token,
+    then launches training in a background task. Returns 202 immediately.
+    """
+    from datetime import datetime, timezone
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.services.lora_trainer import ReplicateBackend, prepare_dataset, download_and_store_weights
+    from vidpipe.services.llm import get_adapter
+    from vidpipe.services.file_manager import FileManager
+
+    async with async_session() as session:
+        actor = await session.get(Actor, uuid.UUID(actor_id))
+        if actor is None:
+            raise HTTPException(status_code=404, detail="Actor not found")
+
+        # Count reference images
+        ref_count_result = await session.execute(
+            select(func.count()).select_from(ActorRef).where(ActorRef.actor_id == actor.id)
+        )
+        ref_count = ref_count_result.scalar() or 0
+        if ref_count < 5:
+            raise HTTPException(
+                status_code=422,
+                detail=f"At least 5 reference images are required to train a LoRA model. Currently: {ref_count}.",
+            )
+
+        # Check Replicate token
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        if not settings or not getattr(settings, "replicate_api_token", None):
+            raise HTTPException(
+                status_code=422,
+                detail="Replicate API token not configured. Go to Settings to add it.",
+            )
+
+        # Extract values for background task (never share request session)
+        replicate_token = settings.replicate_api_token
+        replicate_username = getattr(settings, "replicate_username", None) or "vidpipe"
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+        user_settings = settings
+        actor_id_str = str(actor.id)
+        actor_uuid = actor.id
+
+        # Set initial status
+        actor.lora_training_status = "QUEUED"
+        await session.commit()
+
+    # Launch background training task
+    async def _run_training() -> None:
+        """Background task: prepare dataset, dispatch training, update status."""
+        try:
+            async with async_session() as bg_session:
+                adapter = get_adapter(vision_model, user_settings=user_settings)
+                file_mgr = FileManager()
+                storage = get_storage_backend()
+
+                # Prepare dataset
+                zip_bytes, trigger_word = await prepare_dataset(
+                    actor_uuid, bg_session, adapter, file_mgr,
+                )
+
+                # Upload dataset to storage
+                dataset_key = f"asset-library/actors/{actor_id_str}/lora/dataset.zip"
+                await storage.put(dataset_key, zip_bytes, "application/zip")
+                dataset_url = await storage.get_url(dataset_key)
+
+                # Dispatch training
+                backend = ReplicateBackend(
+                    api_token=replicate_token,
+                    username=replicate_username,
+                )
+                job = await backend.dispatch(dataset_url, trigger_word)
+
+                # Update actor with job ID
+                bg_actor = await bg_session.get(Actor, actor_uuid)
+                if bg_actor:
+                    bg_actor.lora_training_status = "QUEUED"
+                    bg_actor.lora_training_job_id = job.job_id
+                    await bg_session.commit()
+
+                logger.info(
+                    "LoRA training dispatched for actor %s, job_id=%s",
+                    actor_id_str, job.job_id,
+                )
+        except Exception:
+            logger.exception("LoRA training background task failed for actor %s", actor_id_str)
+            try:
+                async with async_session() as err_session:
+                    err_actor = await err_session.get(Actor, actor_uuid)
+                    if err_actor:
+                        err_actor.lora_training_status = "FAILED"
+                        await err_session.commit()
+            except Exception:
+                logger.exception("Failed to update actor status to FAILED")
+
+    asyncio.create_task(_run_training())
+
+    return {"status": "QUEUED", "message": "LoRA training job queued"}
+
+
+@asset_library_router.get("/actors/{actor_id}/lora-status")
+async def get_actor_lora_status(actor_id: str):
+    """Poll LoRA training status for an actor.
+
+    For non-terminal states (QUEUED, TRAINING), polls Replicate for updates
+    and downloads/stores weights upon completion. Terminal states (COMPLETED,
+    FAILED) return directly from DB without external calls.
+    """
+    from datetime import datetime, timezone
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.services.lora_trainer import ReplicateBackend, download_and_store_weights
+
+    async with async_session() as session:
+        actor = await session.get(Actor, uuid.UUID(actor_id))
+        if actor is None:
+            raise HTTPException(status_code=404, detail="Actor not found")
+
+        status = getattr(actor, "lora_training_status", None)
+
+        # No training ever started
+        if status is None:
+            return {"status": None, "lora_url": None, "trained_at": None, "error": None}
+
+        # Terminal states — return DB values directly (no Replicate poll)
+        if status in ("COMPLETED", "FAILED"):
+            return {
+                "status": status,
+                "lora_url": getattr(actor, "lora_url", None),
+                "trained_at": actor.lora_trained_at.isoformat() if getattr(actor, "lora_trained_at", None) else None,
+                "error": None,
+            }
+
+        # Non-terminal (QUEUED or TRAINING) — poll Replicate
+        job_id = getattr(actor, "lora_training_job_id", None)
+        if not job_id:
+            return {"status": status, "lora_url": None, "trained_at": None, "error": None}
+
+        # Load Replicate token
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        if not settings or not getattr(settings, "replicate_api_token", None):
+            # Cannot poll without token — return current DB state
+            return {"status": status, "lora_url": None, "trained_at": None, "error": None}
+
+        replicate_username = getattr(settings, "replicate_username", None) or "vidpipe"
+        error_msg = None
+
+        try:
+            backend = ReplicateBackend(
+                api_token=settings.replicate_api_token,
+                username=replicate_username,
+            )
+            job = await backend.poll_status(job_id)
+
+            if job.status == "COMPLETED" and job.weights_url:
+                # Download and store weights
+                storage = get_storage_backend()
+                storage_key = await download_and_store_weights(
+                    job.weights_url, str(actor.id), storage,
+                )
+                actor.lora_url = storage_key
+                actor.lora_trained_at = datetime.now(timezone.utc)
+                actor.lora_training_status = "COMPLETED"
+            elif job.status == "FAILED":
+                actor.lora_training_status = "FAILED"
+                error_msg = job.error
+            else:
+                actor.lora_training_status = job.status
+                error_msg = job.error
+
+            await session.commit()
+        except Exception as e:
+            logger.error("Failed to poll LoRA status for actor %s: %s", actor_id, e)
+            error_msg = str(e)
+
+        return {
+            "status": actor.lora_training_status,
+            "lora_url": getattr(actor, "lora_url", None),
+            "trained_at": actor.lora_trained_at.isoformat() if getattr(actor, "lora_trained_at", None) else None,
+            "error": error_msg,
+        }
 
 
 # --- Actor Voice Profiles ---

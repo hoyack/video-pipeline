@@ -17,7 +17,6 @@ interface MarkdownEditorModalProps {
   extraContext?: string;
   onExtraContextChange?: (v: string) => void;
   extraExtensions?: Extension[];
-  onTagSelect?: (tag: string | null) => void;
 }
 
 function Spinner({ className }: { className?: string }) {
@@ -29,7 +28,7 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
-export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, regenerating, extraContext, onExtraContextChange, extraExtensions, onTagSelect: _onTagSelect }: MarkdownEditorModalProps) {
+export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, regenerating, extraContext, onExtraContextChange, extraExtensions }: MarkdownEditorModalProps) {
   const [showPreview, setShowPreview] = useState(true);
   const [showContext, setShowContext] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);

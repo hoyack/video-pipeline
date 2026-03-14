@@ -16,6 +16,7 @@ import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
 import {
   createAssetTagCompletion,
   createTagHoverPreview,
+  createTagClickHandler,
 } from "./codemirror/assetTagCompletion.ts";
 
 interface ShotEditorCardProps {
@@ -258,6 +259,7 @@ export function ShotEditorCard({
     return [
       createAssetTagCompletion(boundAssets),
       createTagHoverPreview(boundAssets, onTagSelect),
+      createTagClickHandler(boundAssets, onTagSelect),
     ];
   }, [boundAssets, onTagSelect]);
   const [promptDetailsOpen, setPromptDetailsOpen] = useState(false);

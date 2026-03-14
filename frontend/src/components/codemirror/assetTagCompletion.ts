@@ -1,8 +1,8 @@
 import { autocompletion } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import type { Extension } from "@codemirror/state";
-import { hoverTooltip } from "@codemirror/view";
-import type { EditorView, Tooltip } from "@codemirror/view";
+import { EditorView, hoverTooltip } from "@codemirror/view";
+import type { Tooltip } from "@codemirror/view";
 import type { BoundAssetSummary } from "../../api/types.ts";
 
 /**
@@ -103,4 +103,42 @@ export function createTagHoverPreview(
     },
     { hoverTime: 200 },
   );
+}
+
+/**
+ * CodeMirror click handler extension for @tag selection.
+ * Clicking an @tag in the editor triggers onTagSelect to open the preview panel.
+ */
+export function createTagClickHandler(
+  boundAssets: BoundAssetSummary[],
+  onTagSelect?: (tag: string | null) => void,
+): Extension {
+  const tagMap = new Map<string, BoundAssetSummary>();
+  for (const asset of boundAssets) {
+    tagMap.set(asset.tag.toLowerCase(), asset);
+  }
+  const tagRegex = /@([a-zA-Z0-9_]+)/g;
+
+  return EditorView.domEventHandlers({
+    click(event: MouseEvent, view: EditorView) {
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos === null) return false;
+      const line = view.state.doc.lineAt(pos);
+      const col = pos - line.from;
+      tagRegex.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = tagRegex.exec(line.text)) !== null) {
+        const start = m.index;
+        const end = start + m[0].length;
+        if (col >= start && col <= end) {
+          const tagName = m[1].toLowerCase();
+          if (tagMap.has(tagName)) {
+            onTagSelect?.(tagName);
+            return false; // don't prevent default (cursor should still move)
+          }
+        }
+      }
+      return false;
+    },
+  });
 }

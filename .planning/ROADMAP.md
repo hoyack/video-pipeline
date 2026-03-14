@@ -430,7 +430,7 @@ Plans:
   3. User-facing "manifest" strings removed from ShotCard.tsx and EditForkPanel.tsx
   4. Orphan files deleted: ManifestLibrary.tsx, ManifestCreator.tsx, ManifestCard.tsx, ManifestSelector.tsx
   5. Dead `sound_router` try/except guard removed from app.py
-**Plans**: 2 plans in 1 wave
+**Plans**: 3 plans in 1 wave
 
 Plans:
 - [ ] 19-01-PLAN.md — Backend: Production.production_bible_id FK, migration, load_bible_context fix, API response update, sound_router cleanup
@@ -560,8 +560,9 @@ Plans:
   2. Tag preview panel shows asset reference image, name, and description on hover/click
   3. Actor detail view shows LoRA training status with Train/Regenerate controls
   4. Production Bible has "Tag Reference Sheet" tab listing all bound assets with @tag syntax and thumbnails
-**Plans**: 2 plans in 1 wave
+**Plans**: 3 plans in 1 wave
 
 Plans:
 - [ ] 26-01-PLAN.md — CodeMirror @tag autocomplete extension, hover tooltip, TagPreviewPanel, component tree wiring
 - [ ] 26-02-PLAN.md — Tag Reference Sheet tab on Production Bible, ATED-03 (LoRA status) verification
+- [ ] 26-03-PLAN.md — Gap closure: click-to-open @tag preview panel, fix unused _onTagSelect lint error

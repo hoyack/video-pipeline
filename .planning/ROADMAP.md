@@ -36,6 +36,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 20: Entity Media Uploads** - Missing upload endpoints and UI for actor refs, wardrobe, audio, props across Production Bible entities (Issues #8, #9, #10, #11) (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 22: Asset Library & Actor-Character Model** - Global Asset Library (Actors, Sets, Props, Sound Assets), Actor vs Character distinction, binding system for Production Bibles, scene tag resolution (completed 2026-03-05)
+- [ ] **Phase 23: Tag Syntax & Binding Pipeline Wiring** - @tag syntax support, extended tag resolution with structured asset refs, binding registry for LLM context injection, storyboard pipeline wiring, bound-assets summary API
+- [ ] **Phase 24: ComfyUI Flux.1 Workflows** - Flux.1 Dev workflow templates (base, LoRA, reference, hybrid), workflow builder function, keyframe pipeline routing for binding-based asset references
+- [ ] **Phase 25: LoRA Training Infrastructure** - Per-actor LoRA training pipeline with dataset prep, pluggable training backend (Replicate API), training job management, Actor model extensions
+- [ ] **Phase 26: Asset Tag Frontend Enhancements** - @tag autocomplete in scene editor, tag preview panel, LoRA training status UI, Production Bible tag reference sheet
 
 ## Phase Details
 
@@ -121,6 +125,10 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
 | 22. Asset Library & Actor-Character | 6/6 | Complete    | 2026-03-05 |
+| 23. Tag Syntax & Binding Wiring | 0/0 | ○ Planned | — |
+| 24. ComfyUI Flux.1 Workflows | 0/0 | ○ Planned | — |
+| 25. LoRA Training Infrastructure | 0/0 | ○ Planned | — |
+| 26. Asset Tag Frontend | 0/0 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -489,3 +497,51 @@ Plans:
 - [ ] 22-04-PLAN.md — Frontend: AssetLibrary view with tabs, ActorLibraryDetail, routing + navigation
 - [ ] 22-05-PLAN.md — Frontend: AssetPicker modal, CastingSection, ProductionBibleCreator binding integration
 - [ ] 22-06-PLAN.md — Promote-to-library endpoints + tag resolver pipeline wiring
+
+### Phase 23: Tag Syntax & Binding Pipeline Wiring
+**Goal**: Extend the tag resolver to support @tag syntax, carry structured asset metadata (ResolvedAssetRef) through the pipeline, wire binding-based asset context into the storyboard LLM, and expose a bound-assets summary API for frontend consumption
+**Depends on**: Phase 22
+**Requirements**: ATAG-01, ATAG-02, ATAG-03, ATAG-04, ATAG-05, ATAG-06, ATAG-07
+**PRD**: `docs/assets_mapping.md` (Section A)
+**Success Criteria** (what must be TRUE):
+  1. Tag resolver supports `@tag` pattern with cross-type lookup across CastBinding → PropBinding → SetBinding
+  2. `ResolvedAssetRef` dataclass carries tag, asset_type, text_description, reference_image_urls, lora_url, wardrobe_override, and lighting_notes
+  3. `resolve_tags_with_assets()` loads structured asset data from binding tables via production_bible_id
+  4. `format_binding_registry()` formats all bound assets for LLM context injection
+  5. Storyboard pipeline uses binding registry when scene has production_bible_id with active bindings
+  6. `GET /api/production-bibles/{id}/bound-assets/summary` returns flat list of all bindings with metadata
+  7. Frontend `BoundAssetSummary` type and `getBoundAssetsSummary()` API client function exist
+
+### Phase 24: ComfyUI Flux.1 Workflows
+**Goal**: Introduce Flux.1 Dev as an image generation backend with workflow templates for base, LoRA, reference injection, and hybrid modes — with a builder function that dynamically selects the right template and routes binding-based asset references through the keyframe pipeline
+**Depends on**: Phase 23
+**Requirements**: FLUX-01, FLUX-02, FLUX-03, FLUX-04, FLUX-05, FLUX-06, FLUX-07, FLUX-08
+**PRD**: `docs/assets_mapping.md` (Section B)
+**Success Criteria** (what must be TRUE):
+  1. Four Flux.1 Dev ComfyUI workflow templates exist: base, with_lora, with_references, full hybrid
+  2. `build_flux_txt2img_workflow()` dynamically selects template based on available LoRA and reference images
+  3. Flux model IDs added to COMFYUI_IMAGE_MODELS with proper routing in keyframe pipeline
+  4. Binding-based reference resolution categorizes CHARACTER refs for LoRA and PROP/SET refs for UNO reference injection
+  5. Frontend Flux model options appear in IMAGE_MODELS catalog
+
+### Phase 25: LoRA Training Infrastructure
+**Goal**: Enable per-actor LoRA training from reference images with dataset preparation, a pluggable training backend (initially Replicate API), job management, and Actor model extensions for tracking training state
+**Depends on**: Phase 24
+**Requirements**: LORA-01, LORA-02, LORA-03, LORA-04, LORA-05
+**PRD**: `docs/assets_mapping.md` (Section C)
+**Success Criteria** (what must be TRUE):
+  1. Actor model has lora_url, lora_trained_at, lora_training_status columns with migration
+  2. lora_trainer.py service handles dataset prep (download, resize, caption) and job dispatch via pluggable backend
+  3. Training API endpoints exist: POST train-lora (dispatch), GET lora-status (poll)
+  4. Frontend shows "Train Identity Model" button and training status badge on Actor detail
+
+### Phase 26: Asset Tag Frontend Enhancements
+**Goal**: Deliver user-facing improvements to the scene editor (@tag autocomplete, tag preview panel) and Production Bible view (tag reference sheet), plus LoRA training status UI — completing the asset-to-generation loop
+**Depends on**: Phase 23, Phase 25
+**Requirements**: ATED-01, ATED-02, ATED-03, ATED-04
+**PRD**: `docs/assets_mapping.md` (Section D)
+**Success Criteria** (what must be TRUE):
+  1. CodeMirror @tag autocomplete extension shows bound assets dropdown when user types @ in scene editor
+  2. Tag preview panel shows asset reference image, name, and description on hover/click
+  3. Actor detail view shows LoRA training status with Train/Regenerate controls
+  4. Production Bible has "Tag Reference Sheet" tab listing all bound assets with @tag syntax and thumbnails

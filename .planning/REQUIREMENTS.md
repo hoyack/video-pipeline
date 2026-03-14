@@ -337,6 +337,42 @@ Which phases cover which requirements. Updated during roadmap creation.
 - [x] **ALIB-08**: Existing bible-scoped Characters, Sets, Props can be promoted to standalone Asset Library entities with auto-created bindings back
 - [x] **ALIB-09**: Migration preserves existing data; promoted_to columns track promotion state; existing scenes without tags continue to work
 
+## Tag Syntax & Binding Pipeline Wiring
+
+- [ ] **ATAG-01**: Tag resolver supports @tag pattern alongside existing [TYPE:TAG] syntax with cross-type lookup (CastBinding → PropBinding → SetBinding)
+- [ ] **ATAG-02**: ResolvedAssetRef dataclass carries structured asset metadata (tag, type, description, reference_image_urls, lora_url, wardrobe_override, lighting_notes) for image generation
+- [ ] **ATAG-03**: resolve_tags_with_assets() function loads asset data from binding tables (CastBinding, SetBinding, PropBinding) via production_bible_id
+- [ ] **ATAG-04**: format_binding_registry() formats all bound assets from a Production Bible for LLM context injection in storyboard pipeline
+- [ ] **ATAG-05**: Storyboard pipeline uses format_binding_registry() when scene has production_bible_id with bindings
+- [ ] **ATAG-06**: GET /api/production-bibles/{id}/bound-assets/summary returns flat list of all bindings with tags, names, types, and primary thumbnails
+- [ ] **ATAG-07**: Frontend BoundAssetSummary TypeScript type and getBoundAssetsSummary() API client function
+
+## ComfyUI Flux.1 Workflows
+
+- [ ] **FLUX-01**: Flux.1 Dev base text-to-image ComfyUI workflow template (flux_txt2img_base.json)
+- [ ] **FLUX-02**: Flux.1 Dev + dynamic LoRA loader workflow template (flux_txt2img_with_lora.json)
+- [ ] **FLUX-03**: Flux.1 Dev + UNO/Redux reference injection workflow template for up to 3 reference images (flux_txt2img_with_references.json)
+- [ ] **FLUX-04**: Full hybrid Flux.1 Dev + LoRA + UNO workflow template (flux_txt2img_full.json)
+- [ ] **FLUX-05**: build_flux_txt2img_workflow() builder function in comfyui_client.py that dynamically selects template based on available LoRA and reference images
+- [ ] **FLUX-06**: Flux model IDs (flux-dev, flux-dev-lora, flux-dev-redux, flux-dev-full) added to COMFYUI_IMAGE_MODELS with routing in keyframe pipeline
+- [ ] **FLUX-07**: Binding-based reference resolution path in keyframes.py categorizes ResolvedAssetRefs by type (CHARACTER → LoRA, PROP/SET → reference images)
+- [ ] **FLUX-08**: Frontend Flux model options added to IMAGE_MODELS catalog in constants.ts
+
+## LoRA Training Infrastructure
+
+- [ ] **LORA-01**: Actor model extended with lora_url (S3 path to .safetensors), lora_trained_at (datetime), lora_training_status (QUEUED/TRAINING/COMPLETED/FAILED)
+- [ ] **LORA-02**: lora_trainer.py service with dataset preparation (download refs, resize, caption via VLM), pluggable training backend interface, and job dispatch
+- [ ] **LORA-03**: POST /api/asset-library/actors/{id}/train-lora endpoint validates minimum reference images and dispatches training job
+- [ ] **LORA-04**: GET /api/asset-library/actors/{id}/lora-status endpoint returns training status, progress, and LoRA URL when complete
+- [ ] **LORA-05**: Frontend "Train Identity Model" button (enabled when refs >= 5) and status badge (No Model / Training / Model Ready) on Actor detail view
+
+## Asset Tag Frontend Enhancements
+
+- [ ] **ATED-01**: CodeMirror @tag autocomplete extension shows dropdown of bound assets when user types @ in scene editor
+- [ ] **ATED-02**: Tag preview panel in scene editor shows asset reference image, name, and description on hover/click of @tag
+- [ ] **ATED-03**: Actor detail view shows LoRA training status with Train/Regenerate buttons and training date
+- [ ] **ATED-04**: Production Bible "Tag Reference Sheet" tab lists all bound assets with @tag syntax, type, and thumbnail
+
 **Coverage:
 - v1 requirements: 41 total (all complete)
 - LLM Provider Abstraction: 7 total (all complete)
@@ -346,10 +382,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 - Sequences: 4 total (all complete)
 - Production Bible Entity Expansion: 20 total (all complete)
 - Screenplay System: 15 total (all complete)
-- **Total mapped: 118 requirements across 19 phases**
-- Asset Library & Actor-Character Model: 9 total (in progress)
+- Asset Library & Actor-Character Model: 9 total (complete)
+- Tag Syntax & Binding Pipeline Wiring: 7 total (planned)
+- ComfyUI Flux.1 Workflows: 8 total (planned)
+- LoRA Training Infrastructure: 5 total (planned)
+- Asset Tag Frontend Enhancements: 4 total (planned)
+- **Total mapped: 142 requirements across 23 phases**
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-14*
-*Last updated: 2026-03-05 after Phase 22 planning*
+*Last updated: 2026-03-14 after Phase 23-26 planning*

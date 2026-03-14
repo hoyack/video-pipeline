@@ -511,6 +511,11 @@ Plans:
   5. Storyboard pipeline uses binding registry when scene has production_bible_id with active bindings
   6. `GET /api/production-bibles/{id}/bound-assets/summary` returns flat list of all bindings with metadata
   7. Frontend `BoundAssetSummary` type and `getBoundAssetsSummary()` API client function exist
+**Plans**: 2 plans in 2 waves
+
+Plans:
+- [ ] 23-01-PLAN.md — Tag resolver extension with @tag syntax, ResolvedAssetRef dataclass, and resolve_tags_with_assets()
+- [ ] 23-02-PLAN.md — Binding registry for LLM context, storyboard pipeline wiring, bound-assets summary API, frontend types
 
 ### Phase 24: ComfyUI Flux.1 Workflows
 **Goal**: Introduce Flux.1 Dev as an image generation backend with workflow templates for base, LoRA, reference injection, and hybrid modes — with a builder function that dynamically selects the right template and routes binding-based asset references through the keyframe pipeline

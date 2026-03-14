@@ -86,6 +86,10 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { id: "gemini-3-pro-image-preview", label: "Nano Banana Pro", costPerImage: 0.13 },
   { id: "qwen-fast", label: "Qwen Fast", costPerImage: 0.00 },
   { id: "qwen-image-edit", label: "Qwen Image Edit", costPerImage: 0.00 },
+  { id: "flux-dev", label: "Flux.1 Dev", costPerImage: 0.00 },
+  { id: "flux-dev-lora", label: "Flux.1 Dev + LoRA", costPerImage: 0.00 },
+  { id: "flux-dev-redux", label: "Flux.1 Dev + Refs", costPerImage: 0.00 },
+  { id: "flux-dev-full", label: "Flux.1 Dev Full", costPerImage: 0.00 },
 ];
 
 export const VIDEO_MODELS: VideoModelOption[] = [
@@ -131,6 +135,8 @@ export const REFERENCE_IMAGE_MODELS = new Set([
   "gemini-2.5-flash-image",
   "gemini-3-pro-image-preview",
   "qwen-image-edit",
+  "flux-dev-redux",
+  "flux-dev-full",
 ]);
 
 // ---------------------------------------------------------------------------

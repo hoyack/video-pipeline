@@ -342,10 +342,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 - [x] **ATAG-01**: Tag resolver supports @tag pattern alongside existing [TYPE:TAG] syntax with cross-type lookup (CastBinding → PropBinding → SetBinding)
 - [x] **ATAG-02**: ResolvedAssetRef dataclass carries structured asset metadata (tag, type, description, reference_image_urls, lora_url, wardrobe_override, lighting_notes) for image generation
 - [x] **ATAG-03**: resolve_tags_with_assets() function loads asset data from binding tables (CastBinding, SetBinding, PropBinding) via production_bible_id
-- [ ] **ATAG-04**: format_binding_registry() formats all bound assets from a Production Bible for LLM context injection in storyboard pipeline
-- [ ] **ATAG-05**: Storyboard pipeline uses format_binding_registry() when scene has production_bible_id with bindings
-- [ ] **ATAG-06**: GET /api/production-bibles/{id}/bound-assets/summary returns flat list of all bindings with tags, names, types, and primary thumbnails
-- [ ] **ATAG-07**: Frontend BoundAssetSummary TypeScript type and getBoundAssetsSummary() API client function
+- [x] **ATAG-04**: format_binding_registry() formats all bound assets from a Production Bible for LLM context injection in storyboard pipeline
+- [x] **ATAG-05**: Storyboard pipeline uses format_binding_registry() when scene has production_bible_id with bindings
+- [x] **ATAG-06**: GET /api/production-bibles/{id}/bound-assets/summary returns flat list of all bindings with tags, names, types, and primary thumbnails
+- [x] **ATAG-07**: Frontend BoundAssetSummary TypeScript type and getBoundAssetsSummary() API client function
 
 ## ComfyUI Flux.1 Workflows
 

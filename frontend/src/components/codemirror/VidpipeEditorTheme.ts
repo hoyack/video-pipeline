@@ -89,6 +89,15 @@ const vidpipeThemeBase = EditorView.theme(
       border: "1px solid #374151",
       color: "#d1d5db",
     },
+    ".cm-tag-tooltip": {
+      padding: "4px 8px",
+      fontSize: "12px",
+      lineHeight: "1.4",
+      maxWidth: "300px",
+    },
+    ".cm-tag-tooltip strong": {
+      color: "#93c5fd",
+    },
   },
   { dark: true },
 );

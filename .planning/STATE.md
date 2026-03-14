@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Completed 22-05-PLAN.md
-last_updated: "2026-03-05T14:20:50.624Z"
-last_activity: 2026-03-05 — Completed 22-06 (Promote-to-Library & Tag Pipeline Integration)
+status: executing
+stopped_at: Completed 23-01-PLAN.md
+last_updated: "2026-03-14T21:29:11.515Z"
+last_activity: 2026-03-14 — Completed 23-01 (Tag Resolver Extension)
 progress:
-  total_phases: 22
+  total_phases: 26
   completed_phases: 22
-  total_plans: 64
-  completed_plans: 64
-  percent: 100
+  total_plans: 66
+  completed_plans: 65
+  percent: 98
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 22: Asset Library & Actor-Character Model
+**Current focus:** Phase 23: Tag Syntax & Binding Pipeline Wiring
 
 ## Current Position
 
-Phase: 22 of 22 (Asset Library & Actor-Character Model)
-Plan: 6 of 6 complete
-Status: Phase 22 COMPLETE — Asset Library & Actor-Character Model
-Last activity: 2026-03-05 — Completed 22-06 (Promote-to-Library & Tag Pipeline Integration)
+Phase: 23 of 26 (Tag Syntax & Binding Pipeline Wiring)
+Plan: 1 of 2 complete
+Status: Executing Phase 23 — Tag Syntax & Binding Pipeline Wiring
+Last activity: 2026-03-14 — Completed 23-01 (Tag Resolver Extension)
 
-Progress: [██████████] 100% (Phase 22, Plan 6 of 6)
+Progress: [██████████] 98% (Phase 23, Plan 1 of 2)
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ Progress: [██████████] 100% (Phase 22, Plan 6 of 6)
 | Phase 22 P04 | 3min | 2 tasks | 4 files |
 | Phase 22 P06 | 5min | 2 tasks | 3 files |
 | Phase 22 P05 | 4min | 2 tasks | 3 files |
+| Phase 23 P01 | 3min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -320,6 +321,8 @@ Recent decisions affecting current work:
 - **22-04:** ActorLibraryDetail is separate from CharacterDetail to avoid coupling library and bible concerns
 - **22-04:** Usage tab shows placeholder -- full binding data requires backend expansion of getActor response
 - [Phase 22]: AssetPicker uses card grid for visual assets, table for sound; legacy entities in collapsible sections below binding sections
+- [Phase 23]: resolve_tags_with_assets() batch-loads ALL bindings for bible in 3 queries + bulk entity loads to avoid N+1
+- [Phase 23]: @tag cross-type lookup order: CastBinding -> PropBinding -> SetBinding, first match wins; collision logged
 
 ### Roadmap Evolution
 
@@ -345,6 +348,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-05T14:17:44.670Z
-Stopped at: Completed 22-05-PLAN.md
+Last session: 2026-03-14T21:29:11.512Z
+Stopped at: Completed 23-01-PLAN.md
 Resume file: None

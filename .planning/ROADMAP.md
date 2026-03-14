@@ -544,6 +544,11 @@ Plans:
   2. lora_trainer.py service handles dataset prep (download, resize, caption) and job dispatch via pluggable backend
   3. Training API endpoints exist: POST train-lora (dispatch), GET lora-status (poll)
   4. Frontend shows "Train Identity Model" button and training status badge on Actor detail
+**Plans**: 2 plans in 2 waves
+
+Plans:
+- [ ] 25-01-PLAN.md — Actor model LoRA columns + migration, tag resolver wiring, lora_trainer.py service (ABC, ReplicateBackend, dataset prep)
+- [ ] 25-02-PLAN.md — POST train-lora + GET lora-status API endpoints, frontend Train Identity Model button + status badge
 
 ### Phase 26: Asset Tag Frontend Enhancements
 **Goal**: Deliver user-facing improvements to the scene editor (@tag autocomplete, tag preview panel) and Production Bible view (tag reference sheet), plus LoRA training status UI — completing the asset-to-generation loop

@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import clsx from "clsx";
-import { editScene, getEnabledModels, regenerateScene, revertToCheckpoint, createCheckpoint, generateNewShot, getDownloadUrl, deleteScene, stopScene } from "../api/client.ts";
+import { editScene, getEnabledModels, regenerateScene, revertToCheckpoint, createCheckpoint, generateNewShot, getDownloadUrl, deleteScene, stopScene, getBoundAssetsSummary } from "../api/client.ts";
 import { useShowCost } from "../hooks/useShowCost.tsx";
-import type { SceneDetail, ShotDetail, ShotEditPayload, EditSceneRequest, EnabledModelsResponse, ShotReference } from "../api/types.ts";
+import type { SceneDetail, ShotDetail, ShotEditPayload, EditSceneRequest, EnabledModelsResponse, ShotReference, BoundAssetSummary } from "../api/types.ts";
 import { usePolling } from "../hooks/usePolling.ts";
 import {
   STYLE_OPTIONS,
@@ -22,6 +22,7 @@ import { ProductionBibleSelector } from "./ProductionBibleSelector.tsx";
 import { RegenProgressBar } from "./RegenProgressBar.tsx";
 import { useSceneWebSocket } from "../hooks/useSceneWebSocket.ts";
 import type { WsEvent } from "../api/wsTypes.ts";
+import { TagPreviewPanel } from "./TagPreviewPanel.tsx";
 
 /** Schema for scene export/import */
 interface SceneSchema {
@@ -84,6 +85,28 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const runThrough: string | null = null;
   const [totalDuration, setTotalDuration] = useState(detail.shot_count * (detail.clip_duration ?? 6));
   const [manifestId, setManifestId] = useState<string | null>(detail.production_bible_id ?? null);
+
+  // Bound assets for @tag autocomplete
+  const [boundAssets, setBoundAssets] = useState<BoundAssetSummary[]>([]);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!manifestId) {
+      setBoundAssets([]);
+      return;
+    }
+    getBoundAssetsSummary(manifestId)
+      .then(setBoundAssets)
+      .catch(() => setBoundAssets([]));
+  }, [manifestId]);
+
+  const selectedAsset = useMemo(
+    () =>
+      selectedTag
+        ? boundAssets.find((a) => a.tag.toLowerCase() === selectedTag) ?? null
+        : null,
+    [selectedTag, boundAssets],
+  );
 
   // Shot edits
   const [shotEdits, setShotEdits] = useState<Record<number, Record<string, string>>>({});
@@ -1198,6 +1221,8 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                             wsConnected={wsConnected}
                             expanded={expandedShots.has(shot.shot_index)}
                             onToggleExpand={() => toggleShot(shot.shot_index)}
+                            boundAssets={boundAssets}
+                            onTagSelect={setSelectedTag}
                           />
                         );
                       })}
@@ -1602,6 +1627,10 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
           Delete
         </button>
       </div>
+      <TagPreviewPanel
+        asset={selectedAsset}
+        onClose={() => setSelectedTag(null)}
+      />
     </div>
   );
 }

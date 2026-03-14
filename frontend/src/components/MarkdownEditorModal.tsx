@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import Markdown from "react-markdown";
 import CodeMirror from "@uiw/react-codemirror";
 import type { ViewUpdate } from "@codemirror/view";
+import type { Extension } from "@codemirror/state";
 import { CopyButton } from "./CopyButton.tsx";
 import { vidpipeEditorTheme } from "./codemirror/VidpipeEditorTheme.ts";
 import { createEditorExtensions } from "./codemirror/editorExtensions.ts";
@@ -15,6 +16,8 @@ interface MarkdownEditorModalProps {
   regenerating?: boolean;
   extraContext?: string;
   onExtraContextChange?: (v: string) => void;
+  extraExtensions?: Extension[];
+  onTagSelect?: (tag: string | null) => void;
 }
 
 function Spinner({ className }: { className?: string }) {
@@ -26,13 +29,16 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
-export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, regenerating, extraContext, onExtraContextChange }: MarkdownEditorModalProps) {
+export function MarkdownEditorModal({ label, value, onChange, onClose, onRegen, regenerating, extraContext, onExtraContextChange, extraExtensions, onTagSelect: _onTagSelect }: MarkdownEditorModalProps) {
   const [showPreview, setShowPreview] = useState(true);
   const [showContext, setShowContext] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorCol, setCursorCol] = useState(1);
 
-  const extensions = useMemo(() => createEditorExtensions(), []);
+  const extensions = useMemo(
+    () => [...createEditorExtensions(), ...(extraExtensions ?? [])],
+    [extraExtensions],
+  );
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

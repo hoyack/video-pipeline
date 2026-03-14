@@ -1,6 +1,7 @@
 import clsx from "clsx";
-import { useState, useRef, useEffect, useCallback } from "react";
-import type { ShotDetail } from "../api/types.ts";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import type { ShotDetail, BoundAssetSummary } from "../api/types.ts";
+import type { Extension } from "@codemirror/state";
 import {
   regenerateShot,
   regenerateShotText,
@@ -12,6 +13,10 @@ import {
 import { usePolling } from "../hooks/usePolling.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
+import {
+  createAssetTagCompletion,
+  createTagHoverPreview,
+} from "./codemirror/assetTagCompletion.ts";
 
 interface ShotEditorCardProps {
   shot: ShotDetail;
@@ -51,6 +56,10 @@ interface ShotEditorCardProps {
   dragHandleListeners?: Record<string, Function>;
   /** Drag handle attributes from useSortable */
   dragHandleAttributes?: Record<string, unknown>;
+  /** Bound assets from Production Bible for @tag autocomplete */
+  boundAssets?: BoundAssetSummary[];
+  /** Called when user hovers an @tag — updates the side preview panel */
+  onTagSelect?: (tag: string | null) => void;
 }
 
 function StalenessBadge({ staleness }: { staleness: string | null | undefined }) {
@@ -239,8 +248,18 @@ export function ShotEditorCard({
   displayIndex,
   dragHandleListeners,
   dragHandleAttributes,
+  boundAssets,
+  onTagSelect,
 }: ShotEditorCardProps) {
   const idx = shot.shot_index;
+
+  const tagExtensions: Extension[] = useMemo(() => {
+    if (!boundAssets?.length) return [];
+    return [
+      createAssetTagCompletion(boundAssets),
+      createTagHoverPreview(boundAssets, onTagSelect),
+    ];
+  }, [boundAssets, onTagSelect]);
   const [promptDetailsOpen, setPromptDetailsOpen] = useState(false);
   const [regenerating, setRegenerating] = useState<string | null>(null);
   const [regenQueued, setRegenQueued] = useState<string | null>(null);
@@ -1083,6 +1102,7 @@ export function ShotEditorCard({
             regenerating={regenTextFields.has(editorField)}
             extraContext={textExtraContext[editorField] ?? ""}
             onExtraContextChange={(v) => setTextExtraContext(prev => ({ ...prev, [editorField]: v }))}
+            extraExtensions={tagExtensions}
           />
         );
       })()}

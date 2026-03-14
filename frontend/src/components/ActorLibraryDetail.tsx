@@ -23,6 +23,8 @@ import {
   getEnabledModels,
   generateActorMetadata,
   generateActorImage,
+  trainActorLora,
+  getActorLoraStatus,
 } from "../api/client.ts";
 import { IMAGE_MODELS, REFERENCE_IMAGE_MODELS } from "../lib/constants.ts";
 
@@ -151,7 +153,7 @@ export function ActorLibraryDetail({ actorId }: ActorLibraryDetailProps) {
             updateActor(actorId, data)
               .then(() => load())
               .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
-          }} onError={(msg) => setError(msg)} />
+          }} onError={(msg) => setError(msg)} onRefresh={load} />
         )}
         {activeTab === "refs" && (
           <RefsTab actor={actor} onRefresh={load} onError={(msg) => setError(msg)} />
@@ -178,10 +180,12 @@ function OverviewTab({
   actor,
   onUpdate,
   onError,
+  onRefresh,
 }: {
   actor: Actor;
   onUpdate: (data: Partial<{ name: string; description: string; base_appearance_prompt: string; prompt_tags: string[] }>) => void;
   onError: (msg: string) => void;
+  onRefresh: () => void;
 }) {
   const [name, setName] = useState(actor.name);
   const [description, setDescription] = useState(actor.description ?? "");
@@ -190,6 +194,41 @@ function OverviewTab({
   const [newTag, setNewTag] = useState("");
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [loraTraining, setLoraTraining] = useState(false);
+  const [loraError, setLoraError] = useState<string | null>(null);
+
+  // Poll for LoRA training status when in progress
+  useEffect(() => {
+    const status = actor.lora_training_status;
+    if (status !== "QUEUED" && status !== "TRAINING") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const result = await getActorLoraStatus(actor.id);
+        if (result.status === "COMPLETED" || result.status === "FAILED") {
+          clearInterval(interval);
+          onRefresh();
+        }
+      } catch {
+        // Silently continue polling on error
+      }
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [actor.id, actor.lora_training_status, onRefresh]);
+
+  const handleTrainLora = async () => {
+    setLoraTraining(true);
+    setLoraError(null);
+    try {
+      await trainActorLora(actor.id);
+      onRefresh();
+    } catch (e: unknown) {
+      setLoraError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoraTraining(false);
+    }
+  };
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -319,6 +358,55 @@ function OverviewTab({
         </div>
       </div>
 
+      {/* LoRA Identity Model Section */}
+      <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-gray-200">LoRA Identity Model</h4>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Train a LoRA model from reference images to improve identity consistency in generated images.
+            </p>
+          </div>
+          <LoraStatusBadge status={actor.lora_training_status} trainedAt={actor.lora_trained_at} />
+        </div>
+
+        {actor.lora_training_status === "COMPLETED" && actor.lora_trained_at && (
+          <p className="text-xs text-gray-400">
+            Last trained: {new Date(actor.lora_trained_at).toLocaleDateString()}
+          </p>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleTrainLora}
+            disabled={
+              actor.refs.length < 5 ||
+              loraTraining ||
+              actor.lora_training_status === "QUEUED" ||
+              actor.lora_training_status === "TRAINING"
+            }
+            className="px-4 py-2 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {loraTraining
+              ? "Starting..."
+              : actor.lora_training_status === "QUEUED" || actor.lora_training_status === "TRAINING"
+              ? "Training in Progress..."
+              : actor.lora_training_status === "COMPLETED"
+              ? "Retrain Model"
+              : "Train Identity Model"}
+          </button>
+          {actor.refs.length < 5 && (
+            <span className="text-xs text-gray-500">
+              Need at least 5 reference images ({actor.refs.length}/5)
+            </span>
+          )}
+        </div>
+
+        {loraError && (
+          <p className="text-xs text-red-400">{loraError}</p>
+        )}
+      </div>
+
       <div className="flex justify-end">
         <button
           onClick={handleSave}
@@ -330,6 +418,56 @@ function OverviewTab({
       </div>
     </div>
   );
+}
+
+// ============================================================================
+// LoRA Status Badge
+// ============================================================================
+
+function LoraStatusBadge({
+  status,
+  trainedAt,
+}: {
+  status: string | null;
+  trainedAt: string | null;
+}) {
+  if (!status) {
+    return (
+      <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
+        No Model
+      </span>
+    );
+  }
+  if (status === "QUEUED") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-yellow-900/50 text-yellow-300">
+        Queued...
+      </span>
+    );
+  }
+  if (status === "TRAINING") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-yellow-900/50 text-yellow-300">
+        <span className="w-3 h-3 border border-yellow-400 border-t-transparent rounded-full animate-spin" />
+        Training...
+      </span>
+    );
+  }
+  if (status === "COMPLETED") {
+    return (
+      <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-green-900/50 text-green-300">
+        Model Ready
+      </span>
+    );
+  }
+  if (status === "FAILED") {
+    return (
+      <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-red-900/50 text-red-300">
+        Training Failed
+      </span>
+    );
+  }
+  return null;
 }
 
 // ============================================================================

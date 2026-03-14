@@ -889,6 +889,9 @@ export interface Actor {
   voice_profiles: ActorVoiceProfile[];
   wardrobe_presets: ActorWardrobePreset[];
   binding_count?: number;
+  lora_url: string | null;
+  lora_trained_at: string | null;
+  lora_training_status: 'QUEUED' | 'TRAINING' | 'COMPLETED' | 'FAILED' | null;
   created_at: string;
   updated_at: string;
 }
@@ -902,6 +905,7 @@ export interface ActorListItem {
   ref_count: number;
   binding_count: number;
   primary_ref_url: string | null;
+  lora_training_status: 'QUEUED' | 'TRAINING' | 'COMPLETED' | 'FAILED' | null;
   created_at: string;
 }
 
@@ -1123,6 +1127,24 @@ export interface BoundAssetSummary {
   type: "CHARACTER" | "SET" | "PROP";
   primary_thumbnail_url: string | null;
   description: string | null;
+}
+
+// ============================================================================
+// Phase 25: LoRA Training Types
+// ============================================================================
+
+/** Response from GET /api/asset-library/actors/{id}/lora-status */
+export interface LoraStatusResponse {
+  status: 'QUEUED' | 'TRAINING' | 'COMPLETED' | 'FAILED' | null;
+  lora_url: string | null;
+  trained_at: string | null;
+  error: string | null;
+}
+
+/** Response from POST /api/asset-library/actors/{id}/train-lora */
+export interface TrainLoraResponse {
+  status: string;
+  message: string;
 }
 
 /** Processing progress response */

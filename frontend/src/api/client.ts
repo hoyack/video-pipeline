@@ -74,6 +74,8 @@ import type {
   PropBindingResponse,
   SoundBindingResponse,
   BoundAssetSummary,
+  LoraStatusResponse,
+  TrainLoraResponse,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -1595,6 +1597,23 @@ export function generateActorImage(
       reference_image_id: referenceImageId || undefined,
     }),
   });
+}
+
+/** POST /api/asset-library/actors/{id}/train-lora — dispatch LoRA training job */
+export async function trainActorLora(actorId: string): Promise<TrainLoraResponse> {
+  const res = await fetch(`/api/asset-library/actors/${actorId}/train-lora`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to start training");
+  }
+  return res.json();
+}
+
+/** GET /api/asset-library/actors/{id}/lora-status — poll LoRA training status */
+export async function getActorLoraStatus(actorId: string): Promise<LoraStatusResponse> {
+  const res = await fetch(`/api/asset-library/actors/${actorId}/lora-status`);
+  if (!res.ok) throw new Error("Failed to fetch LoRA status");
+  return res.json();
 }
 
 /** POST /api/asset-library/props/{id}/generate-metadata — auto-generate description, appearance_prompt */

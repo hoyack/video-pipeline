@@ -1112,6 +1112,19 @@ export type PropBindingResponse = PropBinding;
 /** @deprecated Use SoundBinding */
 export type SoundBindingResponse = SoundBinding;
 
+// ============================================================================
+// Phase 23: Bound Asset Summary
+// ============================================================================
+
+/** Single entry from GET /api/production-bibles/{id}/bound-assets/summary */
+export interface BoundAssetSummary {
+  tag: string;
+  name: string;
+  type: "CHARACTER" | "SET" | "PROP";
+  primary_thumbnail_url: string | null;
+  description: string | null;
+}
+
 /** Processing progress response */
 export interface ProcessingProgress {
   status: "processing" | "complete" | "error" | "not_started";

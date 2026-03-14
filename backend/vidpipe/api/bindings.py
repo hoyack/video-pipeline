@@ -625,6 +625,137 @@ async def delete_prop_binding(binding_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Bound Assets Summary (Phase 23)
+# ---------------------------------------------------------------------------
+
+
+@bindings_router.get("/production-bibles/{bible_id}/bound-assets/summary")
+async def get_bound_assets_summary(bible_id: str):
+    """Return flat list of all bindings with tags, names, types, and primary thumbnails.
+
+    Combines CastBindings, SetBindings, and PropBindings into a single list
+    for frontend consumption (autocomplete, tag reference sheets).
+    No pagination -- typical bibles have 5-20 bindings.
+    """
+    async with async_session() as session:
+        uid = await _validate_bible(session, bible_id)
+
+        # Query all binding types
+        cast_result = await session.execute(
+            select(CastBinding)
+            .where(CastBinding.production_bible_id == uid)
+            .order_by(CastBinding.tag)
+        )
+        cast_bindings = list(cast_result.scalars().all())
+
+        set_result = await session.execute(
+            select(SetBinding)
+            .where(SetBinding.production_bible_id == uid)
+            .order_by(SetBinding.tag)
+        )
+        set_bindings = list(set_result.scalars().all())
+
+        prop_result = await session.execute(
+            select(PropBinding)
+            .where(PropBinding.production_bible_id == uid)
+            .order_by(PropBinding.tag)
+        )
+        prop_bindings = list(prop_result.scalars().all())
+
+        # Batch-load referenced entities for names and descriptions
+        actors_by_id: dict = {}
+        actor_primary_refs: dict = {}
+        if cast_bindings:
+            actor_ids = [b.actor_id for b in cast_bindings]
+            actor_result = await session.execute(
+                select(Actor).where(Actor.id.in_(actor_ids))
+            )
+            actors_by_id = {a.id: a for a in actor_result.scalars().all()}
+
+            ref_result = await session.execute(
+                select(ActorRef).where(
+                    ActorRef.actor_id.in_(actor_ids),
+                    ActorRef.is_primary == True,  # noqa: E712
+                )
+            )
+            actor_primary_refs = {r.actor_id: r.image_url for r in ref_result.scalars().all()}
+
+        sets_by_id: dict = {}
+        set_primary_refs: dict = {}
+        if set_bindings:
+            set_ids = [b.library_set_id for b in set_bindings]
+            lib_set_result = await session.execute(
+                select(LibrarySet).where(LibrarySet.id.in_(set_ids))
+            )
+            sets_by_id = {s.id: s for s in lib_set_result.scalars().all()}
+
+            ref_result = await session.execute(
+                select(LibrarySetRef).where(
+                    LibrarySetRef.library_set_id.in_(set_ids),
+                    LibrarySetRef.is_primary == True,  # noqa: E712
+                )
+            )
+            set_primary_refs = {r.library_set_id: r.image_url for r in ref_result.scalars().all()}
+
+        props_by_id: dict = {}
+        prop_primary_refs: dict = {}
+        if prop_bindings:
+            prop_ids = [b.library_prop_id for b in prop_bindings]
+            lib_prop_result = await session.execute(
+                select(LibraryProp).where(LibraryProp.id.in_(prop_ids))
+            )
+            props_by_id = {p.id: p for p in lib_prop_result.scalars().all()}
+
+            ref_result = await session.execute(
+                select(LibraryPropRef).where(
+                    LibraryPropRef.library_prop_id.in_(prop_ids),
+                    LibraryPropRef.is_primary == True,  # noqa: E712
+                )
+            )
+            prop_primary_refs = {r.library_prop_id: r.image_url for r in ref_result.scalars().all()}
+
+        def _truncate(text: Optional[str], max_len: int = 200) -> Optional[str]:
+            if not text:
+                return None
+            return text[:max_len] + "..." if len(text) > max_len else text
+
+        # Build flat result list: CHARACTER first, then SET, then PROP
+        items: list[dict] = []
+
+        for cb in cast_bindings:
+            actor = actors_by_id.get(cb.actor_id)
+            items.append({
+                "tag": cb.tag,
+                "name": cb.character_name,
+                "type": "CHARACTER",
+                "primary_thumbnail_url": actor_primary_refs.get(cb.actor_id),
+                "description": _truncate(actor.base_appearance_prompt) if actor else None,
+            })
+
+        for sb in set_bindings:
+            lib_set = sets_by_id.get(sb.library_set_id)
+            items.append({
+                "tag": sb.tag,
+                "name": sb.production_name or (lib_set.name if lib_set else "Unknown"),
+                "type": "SET",
+                "primary_thumbnail_url": set_primary_refs.get(sb.library_set_id),
+                "description": _truncate(lib_set.reverse_prompt) if lib_set else None,
+            })
+
+        for pb in prop_bindings:
+            lib_prop = props_by_id.get(pb.library_prop_id)
+            items.append({
+                "tag": pb.tag,
+                "name": pb.production_name or (lib_prop.name if lib_prop else "Unknown"),
+                "type": "PROP",
+                "primary_thumbnail_url": prop_primary_refs.get(pb.library_prop_id),
+                "description": _truncate(lib_prop.appearance_prompt) if lib_prop else None,
+            })
+
+        return items
+
+
+# ---------------------------------------------------------------------------
 # SoundBinding endpoints
 # ---------------------------------------------------------------------------
 

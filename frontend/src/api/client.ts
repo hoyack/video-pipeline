@@ -73,6 +73,7 @@ import type {
   SetBindingResponse,
   PropBindingResponse,
   SoundBindingResponse,
+  BoundAssetSummary,
 } from "./types.ts";
 
 class ApiError extends Error {
@@ -1885,6 +1886,13 @@ export function updateSoundBinding(
 /** DELETE /api/sound-bindings/{id} — delete sound binding */
 export function deleteSoundBinding(id: string): Promise<void> {
   return request<void>(`/api/sound-bindings/${id}`, { method: "DELETE" });
+}
+
+// --- Bound Assets Summary (Phase 23) ---
+
+/** GET /api/production-bibles/{id}/bound-assets/summary — flat list of all bindings */
+export function getBoundAssetsSummary(bibleId: string): Promise<BoundAssetSummary[]> {
+  return request<BoundAssetSummary[]>(`/api/production-bibles/${bibleId}/bound-assets/summary`);
 }
 
 export { ApiError };

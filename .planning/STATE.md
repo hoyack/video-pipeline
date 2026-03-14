@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Completed 24-02-PLAN.md
-last_updated: "2026-03-14T22:11:45.630Z"
-last_activity: 2026-03-14 — Completed 24-02 (Flux Pipeline Routing & Frontend)
+status: in-progress
+stopped_at: Completed 25-01-PLAN.md
+last_updated: "2026-03-14T22:32:05.000Z"
+last_activity: 2026-03-14 — Completed 25-01 (LoRA Training Data Model & Service Layer)
 progress:
   total_phases: 26
   completed_phases: 24
-  total_plans: 68
-  completed_plans: 68
-  percent: 100
+  total_plans: 70
+  completed_plans: 69
+  percent: 98
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 24: ComfyUI Flux.1 Workflows
+**Current focus:** Phase 25: LoRA Training Infrastructure
 
 ## Current Position
 
-Phase: 24 of 26 (ComfyUI Flux.1 Workflows)
-Plan: 2 of 2 complete
-Status: Complete — ComfyUI Flux.1 Workflows
-Last activity: 2026-03-14 — Completed 24-02 (Flux Pipeline Routing & Frontend)
+Phase: 25 of 26 (LoRA Training Infrastructure)
+Plan: 1 of 2 complete
+Status: In Progress — LoRA Training Infrastructure
+Last activity: 2026-03-14 — Completed 25-01 (LoRA Training Data Model & Service Layer)
 
-Progress: [██████████] 100% (Phase 24, Plan 2 of 2)
+Progress: [█████████░] 98% (Phase 25, Plan 1 of 2)
 
 ## Performance Metrics
 
@@ -90,6 +90,7 @@ Progress: [██████████] 100% (Phase 24, Plan 2 of 2)
 | Phase 23 P02 | 3min | 2 tasks | 5 files |
 | Phase 24 P01 | 2min | 2 tasks | 5 files |
 | Phase 24 P02 | 5min | 2 tasks | 5 files |
+| Phase 25 P01 | 3min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -334,6 +335,10 @@ Recent decisions affecting current work:
 - [Phase 24-02]: Flux end-frame generation uses text-only (no image conditioning) since Flux txt2img doesn't support conditioning frames
 - [Phase 24-02]: Binding resolution wrapped in try/except for graceful fallback to basic Flux generation without LoRA/refs
 - [Phase 24-02]: Asset library generate-image endpoints use 1:1 (1024x1024) for standalone Flux generation
+- **25-01:** Used getattr(actor, 'lora_url', None) for backward compat with pre-migration Actor objects
+- **25-01:** ReplicateBackend wraps all SDK calls in asyncio.to_thread() since replicate SDK is synchronous
+- **25-01:** TYPE_CHECKING guard on LLMAdapter import to avoid circular imports between services
+- **25-01:** Dataset trigger_word derived from actor name: ACTOR_{NAME_UPPER} for unique LoRA association
 
 ### Roadmap Evolution
 
@@ -359,6 +364,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T22:05:33Z
-Stopped at: Completed 24-02-PLAN.md
+Last session: 2026-03-14T22:32:05Z
+Stopped at: Completed 25-01-PLAN.md
 Resume file: None

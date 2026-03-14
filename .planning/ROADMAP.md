@@ -127,7 +127,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 22. Asset Library & Actor-Character | 6/6 | Complete    | 2026-03-05 |
 | 23. Tag Syntax & Binding Wiring | 2/2 | Complete    | 2026-03-14 |
 | 24. ComfyUI Flux.1 Workflows | 2/2 | Complete    | 2026-03-14 |
-| 25. LoRA Training Infrastructure | 0/0 | ○ Planned | — |
+| 25. LoRA Training Infrastructure | 1/2 | In Progress|  |
 | 26. Asset Tag Frontend | 0/0 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation

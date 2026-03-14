@@ -528,6 +528,11 @@ Plans:
   3. Flux model IDs added to COMFYUI_IMAGE_MODELS with proper routing in keyframe pipeline
   4. Binding-based reference resolution categorizes CHARACTER refs for LoRA and PROP/SET refs for UNO reference injection
   5. Frontend Flux model options appear in IMAGE_MODELS catalog
+**Plans:** 2 plans
+
+Plans:
+- [ ] 24-01-PLAN.md — Flux.1 Dev workflow JSON templates (base, LoRA, references, full hybrid) and build_flux_txt2img_workflow() builder function
+- [ ] 24-02-PLAN.md — Model routing (COMFYUI_IMAGE_MODELS, ALLOWED_IMAGE_MODELS), binding-based reference resolution in keyframes.py, regeneration path updates, frontend constants
 
 ### Phase 25: LoRA Training Infrastructure
 **Goal**: Enable per-actor LoRA training from reference images with dataset preparation, a pluggable training backend (initially Replicate API), job management, and Actor model extensions for tracking training state

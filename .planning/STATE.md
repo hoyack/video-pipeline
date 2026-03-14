@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 24-01-PLAN.md
+stopped_at: Completed 24-02-PLAN.md
 last_updated: "2026-03-14T21:59:30.807Z"
-last_activity: 2026-03-14 — Completed 24-01 (Flux Workflow Templates & Builder)
+last_activity: 2026-03-14 — Completed 24-02 (Flux Pipeline Routing & Frontend)
 progress:
   total_phases: 26
   completed_phases: 23
   total_plans: 68
-  completed_plans: 67
-  percent: 99
+  completed_plans: 68
+  percent: 100
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 24 of 26 (ComfyUI Flux.1 Workflows)
-Plan: 1 of 2 complete
-Status: In Progress — ComfyUI Flux.1 Workflows
-Last activity: 2026-03-14 — Completed 24-01 (Flux Workflow Templates & Builder)
+Plan: 2 of 2 complete
+Status: Complete — ComfyUI Flux.1 Workflows
+Last activity: 2026-03-14 — Completed 24-02 (Flux Pipeline Routing & Frontend)
 
-Progress: [██████████] 99% (Phase 24, Plan 1 of 2)
+Progress: [██████████] 100% (Phase 24, Plan 2 of 2)
 
 ## Performance Metrics
 
@@ -89,6 +89,7 @@ Progress: [██████████] 99% (Phase 24, Plan 1 of 2)
 | Phase 23 P01 | 3min | 2 tasks | 1 files |
 | Phase 23 P02 | 3min | 2 tasks | 5 files |
 | Phase 24 P01 | 2min | 2 tasks | 5 files |
+| Phase 24 P02 | 5min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -330,6 +331,9 @@ Recent decisions affecting current work:
 - **23-02:** Bound assets summary endpoint returns flat list sorted by type then tag alphabetically
 - [Phase 24]: Used unCLIPConditioning (built-in ComfyUI) for reference injection instead of UNO custom nodes for broader server compatibility
 - [Phase 24]: ImageBatch inputs dynamically rewired based on actual reference count (1-3) to prevent dangling node connections
+- [Phase 24-02]: Flux end-frame generation uses text-only (no image conditioning) since Flux txt2img doesn't support conditioning frames
+- [Phase 24-02]: Binding resolution wrapped in try/except for graceful fallback to basic Flux generation without LoRA/refs
+- [Phase 24-02]: Asset library generate-image endpoints use 1:1 (1024x1024) for standalone Flux generation
 
 ### Roadmap Evolution
 
@@ -355,6 +359,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T21:59:30.804Z
-Stopped at: Completed 24-01-PLAN.md
+Last session: 2026-03-14T22:05:33Z
+Stopped at: Completed 24-02-PLAN.md
 Resume file: None

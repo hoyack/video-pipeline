@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 21: Sequence UI Polish** - Wire sequence drag-reorder, act field, duration display, within-sequence scene reorder (Issue #24) (Gap Closure) (completed 2026-03-01)
 - [x] **Phase 22: Asset Library & Actor-Character Model** - Global Asset Library (Actors, Sets, Props, Sound Assets), Actor vs Character distinction, binding system for Production Bibles, scene tag resolution (completed 2026-03-05)
 - [x] **Phase 23: Tag Syntax & Binding Pipeline Wiring** - @tag syntax support, extended tag resolution with structured asset refs, binding registry for LLM context injection, storyboard pipeline wiring, bound-assets summary API (completed 2026-03-14)
-- [ ] **Phase 24: ComfyUI Flux.1 Workflows** - Flux.1 Dev workflow templates (base, LoRA, reference, hybrid), workflow builder function, keyframe pipeline routing for binding-based asset references
+- [x] **Phase 24: ComfyUI Flux.1 Workflows** - Flux.1 Dev workflow templates (base, LoRA, reference, hybrid), workflow builder function, keyframe pipeline routing for binding-based asset references (completed 2026-03-14)
 - [ ] **Phase 25: LoRA Training Infrastructure** - Per-actor LoRA training pipeline with dataset prep, pluggable training backend (Replicate API), training job management, Actor model extensions
 - [ ] **Phase 26: Asset Tag Frontend Enhancements** - @tag autocomplete in scene editor, tag preview panel, LoRA training status UI, Production Bible tag reference sheet
 
@@ -126,7 +126,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
 | 22. Asset Library & Actor-Character | 6/6 | Complete    | 2026-03-05 |
 | 23. Tag Syntax & Binding Wiring | 2/2 | Complete    | 2026-03-14 |
-| 24. ComfyUI Flux.1 Workflows | 1/2 | In Progress|  |
+| 24. ComfyUI Flux.1 Workflows | 2/2 | Complete   | 2026-03-14 |
 | 25. LoRA Training Infrastructure | 0/0 | ○ Planned | — |
 | 26. Asset Tag Frontend | 0/0 | ○ Planned | — |
 
@@ -528,7 +528,7 @@ Plans:
   3. Flux model IDs added to COMFYUI_IMAGE_MODELS with proper routing in keyframe pipeline
   4. Binding-based reference resolution categorizes CHARACTER refs for LoRA and PROP/SET refs for UNO reference injection
   5. Frontend Flux model options appear in IMAGE_MODELS catalog
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 24-01-PLAN.md — Flux.1 Dev workflow JSON templates (base, LoRA, references, full hybrid) and build_flux_txt2img_workflow() builder function

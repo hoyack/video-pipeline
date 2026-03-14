@@ -125,7 +125,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 20. Entity Media Uploads | 2/2 | Complete    | 2026-03-01 |
 | 21. Sequence UI Polish | 2/2 | Complete    | 2026-03-01 |
 | 22. Asset Library & Actor-Character | 6/6 | Complete    | 2026-03-05 |
-| 23. Tag Syntax & Binding Wiring | 2/2 | Complete   | 2026-03-14 |
+| 23. Tag Syntax & Binding Wiring | 2/2 | Complete    | 2026-03-14 |
 | 24. ComfyUI Flux.1 Workflows | 0/0 | ○ Planned | — |
 | 25. LoRA Training Infrastructure | 0/0 | ○ Planned | — |
 | 26. Asset Tag Frontend | 0/0 | ○ Planned | — |

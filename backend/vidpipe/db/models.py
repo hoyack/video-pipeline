@@ -451,6 +451,12 @@ class Actor(Base):
         onupdate=func.now()
     )
 
+    # Phase 25: LoRA training state
+    lora_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    lora_trained_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    lora_training_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # QUEUED/TRAINING/COMPLETED/FAILED
+    lora_training_job_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
 
 class ActorRef(Base):
     """Reference image for an Actor (1:N sub-entity).
@@ -1076,6 +1082,10 @@ class UserSettings(Base):
     # ElevenLabs configuration
     elevenlabs_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     default_voice_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    # Phase 25: Replicate configuration
+    replicate_api_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    replicate_username: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

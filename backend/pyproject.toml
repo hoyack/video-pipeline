@@ -32,6 +32,7 @@ dependencies = [
     "tenacity>=8.0",
     "python-multipart>=0.0.6",
     "elevenlabs>=1.0",
+    "replicate>=1.0.0",
 ]
 
 [project.optional-dependencies]

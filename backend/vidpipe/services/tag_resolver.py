@@ -51,7 +51,7 @@ class ResolvedAssetRef:
     display_name: str
     text_description: str  # Actor.base_appearance_prompt / LibraryProp.appearance_prompt / LibrarySet.reverse_prompt
     reference_image_urls: list[str] = field(default_factory=list)  # From ActorRef / LibraryPropRef / LibrarySetRef
-    lora_url: str | None = None  # Future Phase 25 LoRA
+    lora_url: str | None = None  # Phase 25: S3 path to trained .safetensors
     wardrobe_override: dict | None = None  # From CastBinding.wardrobe_override
     lighting_notes: str | None = None  # From SetBinding.lighting_override or LibrarySet.lighting_notes
 
@@ -508,7 +508,7 @@ def _build_char_resolution(
         display_name=binding.character_name,
         text_description=actor.base_appearance_prompt or "",
         reference_image_urls=ref_urls,
-        lora_url=None,
+        lora_url=getattr(actor, 'lora_url', None),
         wardrobe_override=binding.wardrobe_override,
         lighting_notes=None,
     )

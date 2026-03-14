@@ -216,6 +216,13 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE props ADD COLUMN promoted_to_library_prop_id {uuid_type} REFERENCES library_props(id)",
         "ALTER TABLE score_themes ADD COLUMN promoted_to_sound_asset_id {uuid_type} REFERENCES sound_assets(id)",
         "ALTER TABLE sfx_items ADD COLUMN promoted_to_sound_asset_id {uuid_type} REFERENCES sound_assets(id)",
+        # Phase 25: LoRA training infrastructure
+        "ALTER TABLE actors ADD COLUMN lora_url TEXT",
+        "ALTER TABLE actors ADD COLUMN lora_trained_at TIMESTAMP",
+        "ALTER TABLE actors ADD COLUMN lora_training_status VARCHAR(20)",
+        "ALTER TABLE actors ADD COLUMN lora_training_job_id VARCHAR(200)",
+        "ALTER TABLE user_settings ADD COLUMN replicate_api_token TEXT",
+        "ALTER TABLE user_settings ADD COLUMN replicate_username VARCHAR(200)",
     ]
     for i, raw_sql in enumerate(migrations):
         sql = raw_sql.format(uuid_type=uuid_type) if "{uuid_type}" in raw_sql else raw_sql

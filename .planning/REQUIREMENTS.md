@@ -362,9 +362,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 - [x] **LORA-01**: Actor model extended with lora_url (S3 path to .safetensors), lora_trained_at (datetime), lora_training_status (QUEUED/TRAINING/COMPLETED/FAILED)
 - [x] **LORA-02**: lora_trainer.py service with dataset preparation (download refs, resize, caption via VLM), pluggable training backend interface, and job dispatch
-- [ ] **LORA-03**: POST /api/asset-library/actors/{id}/train-lora endpoint validates minimum reference images and dispatches training job
-- [ ] **LORA-04**: GET /api/asset-library/actors/{id}/lora-status endpoint returns training status, progress, and LoRA URL when complete
-- [ ] **LORA-05**: Frontend "Train Identity Model" button (enabled when refs >= 5) and status badge (No Model / Training / Model Ready) on Actor detail view
+- [x] **LORA-03**: POST /api/asset-library/actors/{id}/train-lora endpoint validates minimum reference images and dispatches training job
+- [x] **LORA-04**: GET /api/asset-library/actors/{id}/lora-status endpoint returns training status, progress, and LoRA URL when complete
+- [x] **LORA-05**: Frontend "Train Identity Model" button (enabled when refs >= 5) and status badge (No Model / Training / Model Ready) on Actor detail view
 
 ## Asset Tag Frontend Enhancements
 

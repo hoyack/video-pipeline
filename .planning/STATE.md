@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 25-01-PLAN.md
-last_updated: "2026-03-14T22:32:05.000Z"
-last_activity: 2026-03-14 — Completed 25-01 (LoRA Training Data Model & Service Layer)
+stopped_at: Completed 25-02-PLAN.md
+last_updated: "2026-03-14T22:39:28.000Z"
+last_activity: 2026-03-14 — Completed 25-02 (LoRA Training API & Frontend)
 progress:
   total_phases: 26
   completed_phases: 24
   total_plans: 70
-  completed_plans: 69
-  percent: 98
+  completed_plans: 70
+  percent: 99
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 ## Current Position
 
 Phase: 25 of 26 (LoRA Training Infrastructure)
-Plan: 1 of 2 complete
-Status: In Progress — LoRA Training Infrastructure
-Last activity: 2026-03-14 — Completed 25-01 (LoRA Training Data Model & Service Layer)
+Plan: 2 of 2 complete
+Status: Phase 25 Complete — LoRA Training Infrastructure
+Last activity: 2026-03-14 — Completed 25-02 (LoRA Training API & Frontend)
 
-Progress: [█████████░] 98% (Phase 25, Plan 1 of 2)
+Progress: [██████████] 99% (Phase 25 complete, Plan 2 of 2)
 
 ## Performance Metrics
 
@@ -91,6 +91,7 @@ Progress: [█████████░] 98% (Phase 25, Plan 1 of 2)
 | Phase 24 P01 | 2min | 2 tasks | 5 files |
 | Phase 24 P02 | 5min | 2 tasks | 5 files |
 | Phase 25 P01 | 3min | 2 tasks | 5 files |
+| Phase 25 P02 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -339,6 +340,9 @@ Recent decisions affecting current work:
 - **25-01:** ReplicateBackend wraps all SDK calls in asyncio.to_thread() since replicate SDK is synchronous
 - **25-01:** TYPE_CHECKING guard on LLMAdapter import to avoid circular imports between services
 - **25-01:** Dataset trigger_word derived from actor name: ACTOR_{NAME_UPPER} for unique LoRA association
+- **25-02:** Background training uses asyncio.create_task with its own async_session per Phase 18 convention
+- **25-02:** Frontend polling interval of 10 seconds for QUEUED/TRAINING states avoids excessive API calls
+- **25-02:** LoraStatusBadge is a standalone function component for clarity and potential reuse
 
 ### Roadmap Evolution
 
@@ -364,6 +368,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T22:32:05Z
-Stopped at: Completed 25-01-PLAN.md
+Last session: 2026-03-14T22:39:28Z
+Stopped at: Completed 25-02-PLAN.md
 Resume file: None

@@ -38,7 +38,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 22: Asset Library & Actor-Character Model** - Global Asset Library (Actors, Sets, Props, Sound Assets), Actor vs Character distinction, binding system for Production Bibles, scene tag resolution (completed 2026-03-05)
 - [x] **Phase 23: Tag Syntax & Binding Pipeline Wiring** - @tag syntax support, extended tag resolution with structured asset refs, binding registry for LLM context injection, storyboard pipeline wiring, bound-assets summary API (completed 2026-03-14)
 - [x] **Phase 24: ComfyUI Flux.1 Workflows** - Flux.1 Dev workflow templates (base, LoRA, reference, hybrid), workflow builder function, keyframe pipeline routing for binding-based asset references (completed 2026-03-14)
-- [ ] **Phase 25: LoRA Training Infrastructure** - Per-actor LoRA training pipeline with dataset prep, pluggable training backend (Replicate API), training job management, Actor model extensions
+- [x] **Phase 25: LoRA Training Infrastructure** - Per-actor LoRA training pipeline with dataset prep, pluggable training backend (Replicate API), training job management, Actor model extensions (completed 2026-03-14)
 - [ ] **Phase 26: Asset Tag Frontend Enhancements** - @tag autocomplete in scene editor, tag preview panel, LoRA training status UI, Production Bible tag reference sheet
 
 ## Phase Details
@@ -127,7 +127,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 22. Asset Library & Actor-Character | 6/6 | Complete    | 2026-03-05 |
 | 23. Tag Syntax & Binding Wiring | 2/2 | Complete    | 2026-03-14 |
 | 24. ComfyUI Flux.1 Workflows | 2/2 | Complete    | 2026-03-14 |
-| 25. LoRA Training Infrastructure | 1/2 | In Progress|  |
+| 25. LoRA Training Infrastructure | 2/2 | Complete   | 2026-03-14 |
 | 26. Asset Tag Frontend | 0/0 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation

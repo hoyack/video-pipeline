@@ -586,6 +586,190 @@ def build_qwen_image_edit_workflow(
 
 
 # ---------------------------------------------------------------------------
+# Flux.1 Dev workflow builders + resolution mapping
+# ---------------------------------------------------------------------------
+
+_FLUX_RESOLUTIONS: dict[str, tuple[int, int]] = {
+    "16:9": (1024, 576),
+    "9:16": (576, 1024),
+    "1:1": (1024, 1024),
+}
+
+
+def flux_resolution(aspect_ratio: str) -> tuple[int, int]:
+    """Map aspect ratio string to Flux.1 Dev native resolution (width, height)."""
+    if aspect_ratio not in _FLUX_RESOLUTIONS:
+        raise ValueError(
+            f"Unsupported aspect ratio for Flux.1 Dev: {aspect_ratio}. "
+            f"Supported: {list(_FLUX_RESOLUTIONS.keys())}"
+        )
+    return _FLUX_RESOLUTIONS[aspect_ratio]
+
+
+# -- Template paths + cached loaders --
+
+_FLUX_BASE_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "flux-txt2img-base.json"
+)
+_FLUX_LORA_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "flux-txt2img-with-lora.json"
+)
+_FLUX_REFS_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "flux-txt2img-with-refs.json"
+)
+_FLUX_FULL_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "flux-txt2img-full.json"
+)
+
+_cached_flux_base_template: Optional[dict] = None
+_cached_flux_lora_template: Optional[dict] = None
+_cached_flux_refs_template: Optional[dict] = None
+_cached_flux_full_template: Optional[dict] = None
+
+
+def _load_flux_base_template() -> dict:
+    """Load the Flux.1 Dev base txt2img template, caching the result."""
+    global _cached_flux_base_template
+    if _cached_flux_base_template is None:
+        with open(_FLUX_BASE_TEMPLATE_PATH) as f:
+            _cached_flux_base_template = json.load(f)
+        logger.info("Loaded Flux base template from %s", _FLUX_BASE_TEMPLATE_PATH)
+    return _cached_flux_base_template
+
+
+def _load_flux_lora_template() -> dict:
+    """Load the Flux.1 Dev + LoRA txt2img template, caching the result."""
+    global _cached_flux_lora_template
+    if _cached_flux_lora_template is None:
+        with open(_FLUX_LORA_TEMPLATE_PATH) as f:
+            _cached_flux_lora_template = json.load(f)
+        logger.info("Loaded Flux LoRA template from %s", _FLUX_LORA_TEMPLATE_PATH)
+    return _cached_flux_lora_template
+
+
+def _load_flux_refs_template() -> dict:
+    """Load the Flux.1 Dev + reference injection txt2img template, caching the result."""
+    global _cached_flux_refs_template
+    if _cached_flux_refs_template is None:
+        with open(_FLUX_REFS_TEMPLATE_PATH) as f:
+            _cached_flux_refs_template = json.load(f)
+        logger.info("Loaded Flux refs template from %s", _FLUX_REFS_TEMPLATE_PATH)
+    return _cached_flux_refs_template
+
+
+def _load_flux_full_template() -> dict:
+    """Load the Flux.1 Dev full hybrid (LoRA + refs) txt2img template, caching the result."""
+    global _cached_flux_full_template
+    if _cached_flux_full_template is None:
+        with open(_FLUX_FULL_TEMPLATE_PATH) as f:
+            _cached_flux_full_template = json.load(f)
+        logger.info("Loaded Flux full template from %s", _FLUX_FULL_TEMPLATE_PATH)
+    return _cached_flux_full_template
+
+
+def build_flux_txt2img_workflow(
+    *,
+    prompt: str,
+    negative_prompt: str = "",
+    width: int = 1024,
+    height: int = 1024,
+    seed: int = 0,
+    lora_filename: Optional[str] = None,
+    lora_strength: float = 0.8,
+    reference_image_filenames: Optional[list[str]] = None,
+    reference_strengths: Optional[list[float]] = None,
+) -> dict:
+    """Build ComfyUI API-format workflow for Flux.1 Dev text-to-image.
+
+    Dynamically selects the correct template based on whether LoRA and/or
+    reference images are provided, then injects runtime parameters.
+
+    Template selection:
+    - LoRA + refs -> full template
+    - LoRA only  -> lora template
+    - refs only  -> refs template
+    - neither    -> base template
+
+    Args:
+        prompt: Positive prompt text for image generation.
+        negative_prompt: Negative prompt text (default empty).
+        width: Image width in pixels (default 1024).
+        height: Image height in pixels (default 1024).
+        seed: Random seed for reproducibility.
+        lora_filename: LoRA .safetensors filename on the ComfyUI server.
+            None means no LoRA.
+        lora_strength: LoRA application strength (default 0.8).
+        reference_image_filenames: List of uploaded reference image filenames
+            on the ComfyUI server (max 3). None means no references.
+        reference_strengths: Per-reference conditioning strengths.
+            Defaults to 0.65 for each if not provided.
+
+    Returns:
+        ComfyUI API-format prompt dict (node_id -> node_config).
+    """
+    has_lora = lora_filename is not None
+    has_refs = bool(reference_image_filenames)
+
+    # Select template
+    if has_lora and has_refs:
+        template = _load_flux_full_template()
+    elif has_lora:
+        template = _load_flux_lora_template()
+    elif has_refs:
+        template = _load_flux_refs_template()
+    else:
+        template = _load_flux_base_template()
+
+    workflow = copy.deepcopy(template)
+
+    # Inject prompt text
+    workflow["6"]["inputs"]["text"] = prompt
+    workflow["7"]["inputs"]["text"] = negative_prompt
+
+    # Inject seed and dimensions
+    workflow["3"]["inputs"]["seed"] = seed
+    workflow["5"]["inputs"]["width"] = width
+    workflow["5"]["inputs"]["height"] = height
+
+    # Inject LoRA parameters
+    if has_lora:
+        workflow["14"]["inputs"]["lora_name"] = lora_filename
+        workflow["14"]["inputs"]["strength_model"] = lora_strength
+
+    # Inject reference image filenames and handle unused LoadImage nodes
+    if has_refs:
+        refs = reference_image_filenames  # type: ignore[assignment]
+        strengths = reference_strengths or []
+        ref_strength = strengths[0] if strengths else 0.65
+
+        # Inject node 33 unCLIPConditioning strength
+        workflow["33"]["inputs"]["strength"] = ref_strength
+
+        # Map reference filenames to LoadImage nodes 20, 21, 22
+        ref_nodes = ["20", "21", "22"]
+        for i, node_id in enumerate(ref_nodes):
+            if i < len(refs):
+                workflow[node_id]["inputs"]["image"] = refs[i]
+            else:
+                # Remove unused LoadImage node
+                workflow.pop(node_id, None)
+
+        # Rebuild ImageBatch connections based on actual ref count
+        if len(refs) == 1:
+            # Single ref: ImageBatch gets only images1
+            workflow["30"]["inputs"] = {"images1": ["20", 0]}
+        elif len(refs) == 2:
+            # Two refs: ImageBatch gets images1 + images2
+            workflow["30"]["inputs"] = {
+                "images1": ["20", 0],
+                "images2": ["21", 0],
+            }
+        # else: 3 refs, keep all three connections as-is in template
+
+    return workflow
+
+
+# ---------------------------------------------------------------------------
 # Wan 2.2 I2V workflow builder
 # ---------------------------------------------------------------------------
 

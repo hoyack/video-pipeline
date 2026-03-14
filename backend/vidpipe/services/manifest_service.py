@@ -17,7 +17,20 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vidpipe.db.models import Asset, Keyframe, ProductionBible, ManifestSnapshot, Scene, Shot
+from vidpipe.db.models import (
+    Actor,
+    Asset,
+    CastBinding,
+    Keyframe,
+    LibraryProp,
+    LibrarySet,
+    ManifestSnapshot,
+    ProductionBible,
+    PropBinding,
+    Scene,
+    SetBinding,
+    Shot,
+)
 
 # Backwards-compat alias used internally in this module
 Manifest = ProductionBible
@@ -840,6 +853,136 @@ def format_asset_registry(assets: list[Asset]) -> str:
         "Reference assets by [TAG]. You MUST use existing CHARACTER tags — do NOT "
         "create new CHARACTER tags for people already represented in the registry. "
         "You may declare new ENVIRONMENT or PROP assets not in the registry."
+    )
+
+    return "\n".join(lines)
+
+
+async def format_binding_registry(
+    session: AsyncSession,
+    production_bible_id: uuid.UUID,
+) -> str | None:
+    """Format all bound assets for a production bible as structured text for LLM context injection.
+
+    Uses the @tag syntax instead of [TAG] manifest tags. Queries CastBindings,
+    SetBindings, and PropBindings, batch-loads referenced entities, and formats
+    a text block suitable for system prompt injection.
+
+    Returns None if no bindings exist (signals caller to fall back to legacy
+    asset registry path).
+
+    Args:
+        session: Active database session
+        production_bible_id: Production bible UUID
+
+    Returns:
+        Formatted text block with @TAG references, or None if no bindings
+    """
+    # Query all binding types
+    cast_result = await session.execute(
+        select(CastBinding)
+        .where(CastBinding.production_bible_id == production_bible_id)
+        .order_by(CastBinding.created_at)
+    )
+    cast_bindings = list(cast_result.scalars().all())
+
+    set_result = await session.execute(
+        select(SetBinding)
+        .where(SetBinding.production_bible_id == production_bible_id)
+        .order_by(SetBinding.created_at)
+    )
+    set_bindings = list(set_result.scalars().all())
+
+    prop_result = await session.execute(
+        select(PropBinding)
+        .where(PropBinding.production_bible_id == production_bible_id)
+        .order_by(PropBinding.created_at)
+    )
+    prop_bindings = list(prop_result.scalars().all())
+
+    # If no bindings at all, return None to signal fallback
+    if not cast_bindings and not set_bindings and not prop_bindings:
+        return None
+
+    # Batch-load referenced entities
+    actors_by_id: dict[uuid.UUID, Actor] = {}
+    if cast_bindings:
+        actor_ids = [b.actor_id for b in cast_bindings]
+        actor_result = await session.execute(
+            select(Actor).where(Actor.id.in_(actor_ids))
+        )
+        actors_by_id = {a.id: a for a in actor_result.scalars().all()}
+
+    lib_sets_by_id: dict[uuid.UUID, LibrarySet] = {}
+    if set_bindings:
+        set_ids = [b.library_set_id for b in set_bindings]
+        lib_set_result = await session.execute(
+            select(LibrarySet).where(LibrarySet.id.in_(set_ids))
+        )
+        lib_sets_by_id = {s.id: s for s in lib_set_result.scalars().all()}
+
+    lib_props_by_id: dict[uuid.UUID, LibraryProp] = {}
+    if prop_bindings:
+        prop_ids = [b.library_prop_id for b in prop_bindings]
+        lib_prop_result = await session.execute(
+            select(LibraryProp).where(LibraryProp.id.in_(prop_ids))
+        )
+        lib_props_by_id = {p.id: p for p in lib_prop_result.scalars().all()}
+
+    # Format output
+    lines = ["AVAILABLE ASSETS FOR THIS PRODUCTION:", "━" * 40]
+
+    def _truncate(text: str | None, max_len: int = 200) -> str:
+        if not text:
+            return ""
+        return text[:max_len] + "..." if len(text) > max_len else text
+
+    # CHARACTER bindings
+    for cb in cast_bindings:
+        actor = actors_by_id.get(cb.actor_id)
+        role_str = f" ({cb.role})" if cb.role else ""
+        if actor:
+            description = _truncate(actor.base_appearance_prompt)
+            lines.append(f'[CHARACTER] @{cb.tag} — "{cb.character_name}"{role_str}')
+            if description:
+                lines.append(f"  {description}")
+        else:
+            lines.append(f'[CHARACTER] @{cb.tag} — "{cb.character_name}"{role_str} (asset deleted)')
+        lines.append("")
+
+    # SET bindings
+    for sb in set_bindings:
+        lib_set = lib_sets_by_id.get(sb.library_set_id)
+        display_name = sb.production_name or (lib_set.name if lib_set else "Unknown Set")
+        if lib_set:
+            description = _truncate(lib_set.reverse_prompt)
+            lines.append(f'[SET] @{sb.tag} — "{display_name}"')
+            if description:
+                lines.append(f"  {description}")
+            if lib_set.lighting_notes:
+                lines.append(f"  Lighting: {_truncate(lib_set.lighting_notes, 150)}")
+        else:
+            lines.append(f'[SET] @{sb.tag} — "{display_name}" (asset deleted)')
+        lines.append("")
+
+    # PROP bindings
+    for pb in prop_bindings:
+        lib_prop = lib_props_by_id.get(pb.library_prop_id)
+        display_name = pb.production_name or (lib_prop.name if lib_prop else "Unknown Prop")
+        if lib_prop:
+            description = _truncate(lib_prop.appearance_prompt)
+            lines.append(f'[PROP] @{pb.tag} — "{display_name}"')
+            if description:
+                lines.append(f"  {description}")
+        else:
+            lines.append(f'[PROP] @{pb.tag} — "{display_name}" (asset deleted)')
+        lines.append("")
+
+    lines.append("━" * 40)
+    lines.append(
+        "Reference assets by @TAG in your scene descriptions and shot prompts.\n"
+        "You MUST use existing @TAG references for characters, sets, and props\n"
+        "already listed above. Do NOT invent new names for listed assets."
     )
 
     return "\n".join(lines)

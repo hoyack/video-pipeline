@@ -22,7 +22,7 @@ from vidpipe.db.models import ShotAudioManifest as ShotAudioManifestModel
 from vidpipe.schemas.storyboard import StoryboardOutput
 from vidpipe.schemas.storyboard_enhanced import EnhancedStoryboardOutput
 from vidpipe.services.llm import get_adapter, LLMAdapter
-from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry
+from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry, format_binding_registry
 
 logger = logging.getLogger(__name__)
 
@@ -340,14 +340,29 @@ async def generate_storyboard(
     use_manifests = scene.production_bible_id is not None
 
     if use_manifests:
-        # Load asset registry for LLM context
-        assets = await load_manifest_assets(session, scene.production_bible_id)
-        asset_registry_block = format_asset_registry(assets)
-        asset_tags_set = {a.manifest_tag for a in assets}
-        logger.info(
-            "Scene %s: manifest-aware storyboard with %d assets",
-            scene.id, len(assets)
-        )
+        # Try binding registry path first (Phase 23 -- @tag syntax)
+        binding_block = await format_binding_registry(session, scene.production_bible_id)
+        if binding_block:
+            asset_registry_block = binding_block
+            # For asset_tags_set, extract tags from bindings for post-LLM remapping
+            from vidpipe.db.models import CastBinding as _CB
+            _cast_res = await session.execute(
+                sa_select(_CB.tag).where(_CB.production_bible_id == scene.production_bible_id)
+            )
+            asset_tags_set = {t.upper() for (t,) in _cast_res.all()}
+            logger.info(
+                "Scene %s: binding-aware storyboard with binding registry",
+                scene.id,
+            )
+        else:
+            # Fallback to legacy manifest asset path
+            assets = await load_manifest_assets(session, scene.production_bible_id)
+            asset_registry_block = format_asset_registry(assets)
+            asset_tags_set = {a.manifest_tag for a in assets}
+            logger.info(
+                "Scene %s: manifest-aware storyboard with %d assets (legacy path)",
+                scene.id, len(assets),
+            )
     else:
         asset_registry_block = ""
         asset_tags_set = set()
@@ -422,13 +437,13 @@ async def generate_storyboard(
             parts.append(f"  Props: {props}")
         screenplay_enrichment = "\n".join(parts) + "\n\n"
 
-    # Phase 22: Resolve [CHAR:TAG], [SET:TAG], [PROP:TAG] in scene prompt
+    # Phase 22/23: Resolve [CHAR:TAG], [SET:TAG], [PROP:TAG] and @tag in scene prompt
     # before sending to LLM. Original prompt preserved in DB, resolved text
     # used only for generation. Skips resolution if no bible_id or no tags.
     resolved_prompt_text = scene.prompt
     if scene.production_bible_id:
-        from vidpipe.services.tag_resolver import has_tags, resolve_tags
-        if has_tags(scene.prompt):
+        from vidpipe.services.tag_resolver import has_any_tags, resolve_tags
+        if has_any_tags(scene.prompt):
             resolved = await resolve_tags(scene.prompt, scene.production_bible_id, session)
             resolved_prompt_text = resolved.text
             if resolved.unresolved_tags:

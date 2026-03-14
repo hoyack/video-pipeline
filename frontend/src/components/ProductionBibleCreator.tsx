@@ -32,6 +32,7 @@ import { SetDetail } from "./SetDetail.tsx";
 import { SoundDepartment } from "./SoundDepartment.tsx";
 import { CastingSection } from "./CastingSection.tsx";
 import { AssetPicker } from "./AssetPicker.tsx";
+import { TagReferenceSheet } from "./TagReferenceSheet.tsx";
 import {
   listCharacters,
   listSets,
@@ -1172,6 +1173,17 @@ export function ProductionBibleCreator({
               </button>
             );
           })}
+          <button
+            key="tag-reference"
+            onClick={() => setActiveTab("tag-reference")}
+            className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === "tag-reference"
+                ? "bg-blue-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            Tag Reference
+          </button>
         </div>
 
         {/* Entity components per department tab */}
@@ -1459,6 +1471,10 @@ export function ProductionBibleCreator({
               )}
             </div>
           </div>
+        )}
+
+        {activeTab === "tag-reference" && manifest?.production_bible_id && (
+          <TagReferenceSheet bibleId={manifest.production_bible_id} />
         )}
 
         {/* Collapsible Raw Assets section */}

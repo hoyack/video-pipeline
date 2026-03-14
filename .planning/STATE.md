@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Completed 23-02-PLAN.md
-last_updated: "2026-03-14T21:38:57.754Z"
-last_activity: 2026-03-14 — Completed 23-02 (Binding Pipeline Wiring)
+status: executing
+stopped_at: Completed 24-01-PLAN.md
+last_updated: "2026-03-14T21:59:30.807Z"
+last_activity: 2026-03-14 — Completed 24-01 (Flux Workflow Templates & Builder)
 progress:
   total_phases: 26
   completed_phases: 23
-  total_plans: 66
-  completed_plans: 66
-  percent: 100
+  total_plans: 68
+  completed_plans: 67
+  percent: 99
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-14)
 
 **Core value:** Accept a text prompt and produce a cohesive, multi-scene short video with visual continuity — fully automated, crash-safe, and resumable.
-**Current focus:** Phase 23: Tag Syntax & Binding Pipeline Wiring
+**Current focus:** Phase 24: ComfyUI Flux.1 Workflows
 
 ## Current Position
 
-Phase: 23 of 26 (Tag Syntax & Binding Pipeline Wiring)
-Plan: 2 of 2 complete
-Status: Phase 23 Complete — Tag Syntax & Binding Pipeline Wiring
-Last activity: 2026-03-14 — Completed 23-02 (Binding Pipeline Wiring)
+Phase: 24 of 26 (ComfyUI Flux.1 Workflows)
+Plan: 1 of 2 complete
+Status: In Progress — ComfyUI Flux.1 Workflows
+Last activity: 2026-03-14 — Completed 24-01 (Flux Workflow Templates & Builder)
 
-Progress: [██████████] 100% (Phase 23, Plan 2 of 2)
+Progress: [██████████] 99% (Phase 24, Plan 1 of 2)
 
 ## Performance Metrics
 
@@ -88,6 +88,7 @@ Progress: [██████████] 100% (Phase 23, Plan 2 of 2)
 | Phase 22 P05 | 4min | 2 tasks | 3 files |
 | Phase 23 P01 | 3min | 2 tasks | 1 files |
 | Phase 23 P02 | 3min | 2 tasks | 5 files |
+| Phase 24 P01 | 2min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -327,6 +328,8 @@ Recent decisions affecting current work:
 - **23-02:** format_binding_registry returns None when no bindings exist, signaling fallback to legacy asset registry
 - **23-02:** Storyboard pipeline tries binding registry first, falls back to legacy asset registry for zero disruption
 - **23-02:** Bound assets summary endpoint returns flat list sorted by type then tag alphabetically
+- [Phase 24]: Used unCLIPConditioning (built-in ComfyUI) for reference injection instead of UNO custom nodes for broader server compatibility
+- [Phase 24]: ImageBatch inputs dynamically rewired based on actual reference count (1-3) to prevent dangling node connections
 
 ### Roadmap Evolution
 
@@ -352,6 +355,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T21:33:30Z
-Stopped at: Completed 23-02-PLAN.md
+Last session: 2026-03-14T21:59:30.804Z
+Stopped at: Completed 24-01-PLAN.md
 Resume file: None

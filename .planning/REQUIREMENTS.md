@@ -349,11 +349,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ## ComfyUI Flux.1 Workflows
 
-- [ ] **FLUX-01**: Flux.1 Dev base text-to-image ComfyUI workflow template (flux_txt2img_base.json)
-- [ ] **FLUX-02**: Flux.1 Dev + dynamic LoRA loader workflow template (flux_txt2img_with_lora.json)
-- [ ] **FLUX-03**: Flux.1 Dev + UNO/Redux reference injection workflow template for up to 3 reference images (flux_txt2img_with_references.json)
-- [ ] **FLUX-04**: Full hybrid Flux.1 Dev + LoRA + UNO workflow template (flux_txt2img_full.json)
-- [ ] **FLUX-05**: build_flux_txt2img_workflow() builder function in comfyui_client.py that dynamically selects template based on available LoRA and reference images
+- [x] **FLUX-01**: Flux.1 Dev base text-to-image ComfyUI workflow template (flux_txt2img_base.json)
+- [x] **FLUX-02**: Flux.1 Dev + dynamic LoRA loader workflow template (flux_txt2img_with_lora.json)
+- [x] **FLUX-03**: Flux.1 Dev + UNO/Redux reference injection workflow template for up to 3 reference images (flux_txt2img_with_references.json)
+- [x] **FLUX-04**: Full hybrid Flux.1 Dev + LoRA + UNO workflow template (flux_txt2img_full.json)
+- [x] **FLUX-05**: build_flux_txt2img_workflow() builder function in comfyui_client.py that dynamically selects template based on available LoRA and reference images
 - [ ] **FLUX-06**: Flux model IDs (flux-dev, flux-dev-lora, flux-dev-redux, flux-dev-full) added to COMFYUI_IMAGE_MODELS with routing in keyframe pipeline
 - [ ] **FLUX-07**: Binding-based reference resolution path in keyframes.py categorizes ResolvedAssetRefs by type (CHARACTER → LoRA, PROP/SET → reference images)
 - [ ] **FLUX-08**: Frontend Flux model options added to IMAGE_MODELS catalog in constants.ts

@@ -128,7 +128,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 23. Tag Syntax & Binding Wiring | 2/2 | Complete    | 2026-03-14 |
 | 24. ComfyUI Flux.1 Workflows | 2/2 | Complete    | 2026-03-14 |
 | 25. LoRA Training Infrastructure | 2/2 | Complete    | 2026-03-14 |
-| 26. Asset Tag Frontend | 0/0 | ○ Planned | — |
+| 26. Asset Tag Frontend | 1/2 | In Progress|  |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)

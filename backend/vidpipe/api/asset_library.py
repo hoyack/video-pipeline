@@ -915,6 +915,16 @@ async def generate_actor_image(actor_id: str, body: GenerateActorImageRequest):
                 input_image_bytes=ref_bytes,
                 seed=random.randint(0, 2**32 - 1),
             )
+        elif image_model in COMFYUI_IMAGE_MODELS and image_model.startswith("flux-"):
+            from vidpipe.services.comfyui_client import get_comfyui_client, _FLUX_RESOLUTIONS
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui_flux
+            fw, fh = _FLUX_RESOLUTIONS.get("1:1", (1024, 1024))
+            image_bytes = await _generate_image_comfyui_flux(
+                comfy_client, wrapped_prompt, seed=random.randint(0, 2**32 - 1),
+                width=fw, height=fh,
+            )
         elif image_model in COMFYUI_IMAGE_MODELS:
             from vidpipe.services.comfyui_client import get_comfyui_client
             import random
@@ -1462,6 +1472,16 @@ async def generate_set_image(set_id: str, body: GenerateSetImageRequest):
                 input_image_bytes=ref_bytes,
                 seed=random.randint(0, 2**32 - 1),
             )
+        elif image_model in COMFYUI_IMAGE_MODELS and image_model.startswith("flux-"):
+            from vidpipe.services.comfyui_client import get_comfyui_client, _FLUX_RESOLUTIONS
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui_flux
+            fw, fh = _FLUX_RESOLUTIONS.get("1:1", (1024, 1024))
+            image_bytes = await _generate_image_comfyui_flux(
+                comfy_client, body.prompt.strip(), seed=random.randint(0, 2**32 - 1),
+                width=fw, height=fh,
+            )
         elif image_model in COMFYUI_IMAGE_MODELS:
             from vidpipe.services.comfyui_client import get_comfyui_client
             import random
@@ -1944,6 +1964,16 @@ async def generate_prop_image(prop_id: str, body: GeneratePropImageRequest):
                 comfy_client, wrapped_prompt,
                 input_image_bytes=ref_bytes,
                 seed=random.randint(0, 2**32 - 1),
+            )
+        elif image_model in COMFYUI_IMAGE_MODELS and image_model.startswith("flux-"):
+            from vidpipe.services.comfyui_client import get_comfyui_client, _FLUX_RESOLUTIONS
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui_flux
+            fw, fh = _FLUX_RESOLUTIONS.get("1:1", (1024, 1024))
+            image_bytes = await _generate_image_comfyui_flux(
+                comfy_client, wrapped_prompt, seed=random.randint(0, 2**32 - 1),
+                width=fw, height=fh,
             )
         elif image_model in COMFYUI_IMAGE_MODELS:
             from vidpipe.services.comfyui_client import get_comfyui_client

@@ -51,6 +51,10 @@ ALLOWED_IMAGE_MODELS = {
     "gemini-3-pro-image-preview",
     "qwen-fast",
     "qwen-image-edit",
+    "flux-dev",
+    "flux-dev-lora",
+    "flux-dev-redux",
+    "flux-dev-full",
 }
 ALLOWED_VIDEO_MODELS = {
     "veo-2.0-generate-001",
@@ -94,6 +98,10 @@ IMAGE_MODEL_COST: dict[str, float] = {
     "gemini-3-pro-image-preview": 0.13,
     "qwen-fast": 0.0,
     "qwen-image-edit": 0.0,
+    "flux-dev": 0.0,
+    "flux-dev-lora": 0.0,
+    "flux-dev-redux": 0.0,
+    "flux-dev-full": 0.0,
 }
 
 VIDEO_MODEL_COST_SILENT: dict[str, float] = {
@@ -4974,7 +4982,7 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
     # Route to ComfyUI or Vertex AI
     from vidpipe.pipeline.keyframes import (
         _generate_image_from_text, _generate_image_conditioned,
-        COMFYUI_IMAGE_MODELS, _generate_image_comfyui,
+        COMFYUI_IMAGE_MODELS, _generate_image_comfyui, _generate_image_comfyui_flux,
     )
     is_comfyui = image_model in COMFYUI_IMAGE_MODELS
     comfy_client = None
@@ -5005,7 +5013,14 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
         if shot.shot_index == 0:
             # Shot 0: text-to-image with style/character enrichment
             enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
-            if is_comfyui:
+            if is_comfyui and image_model.startswith("flux-"):
+                from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
+                fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
+                image_bytes = await _generate_image_comfyui_flux(
+                    comfy_client, enriched_prompt, seed=scene.seed,
+                    width=fw, height=fh,
+                )
+            elif is_comfyui:
                 image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=scene.seed)
             else:
                 image_bytes = await _generate_image_from_text(
@@ -5055,7 +5070,14 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
                         f"- Same {style_label} rendering style\n"
                         f"{character_prefix}"
                     )
-                    if is_comfyui:
+                    if is_comfyui and image_model.startswith("flux-"):
+                        from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR2
+                        fw2, fh2 = _FR2.get(scene.aspect_ratio, (1024, 1024))
+                        image_bytes = await _generate_image_comfyui_flux(
+                            comfy_client, conditioning_prompt, seed=scene.seed,
+                            width=fw2, height=fh2,
+                        )
+                    elif is_comfyui:
                         image_bytes = await _generate_image_comfyui(comfy_client, conditioning_prompt, seed=scene.seed)
                     else:
                         image_bytes = await _generate_image_conditioned(
@@ -5069,7 +5091,14 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
             else:
                 # Fallback: no previous end keyframe available, use text-to-image
                 enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
-                if is_comfyui:
+                if is_comfyui and image_model.startswith("flux-"):
+                    from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR3
+                    fw3, fh3 = _FR3.get(scene.aspect_ratio, (1024, 1024))
+                    image_bytes = await _generate_image_comfyui_flux(
+                        comfy_client, enriched_prompt, seed=scene.seed,
+                        width=fw3, height=fh3,
+                    )
+                elif is_comfyui:
                     image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=scene.seed)
                 else:
                     image_bytes = await _generate_image_from_text(
@@ -5118,7 +5147,15 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
                 f"{character_prefix}"
             )
 
-        if is_comfyui:
+        if is_comfyui and image_model.startswith("flux-"):
+            from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR4
+            fw4, fh4 = _FR4.get(scene.aspect_ratio, (1024, 1024))
+            image_bytes = await _generate_image_comfyui_flux(
+                comfy_client, conditioning_prompt,
+                seed=scene.seed + shot.shot_index + 1000,
+                width=fw4, height=fh4,
+            )
+        elif is_comfyui:
             image_bytes = await _generate_image_comfyui(
                 comfy_client, conditioning_prompt,
                 seed=scene.seed + shot.shot_index + 1000,

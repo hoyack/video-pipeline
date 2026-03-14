@@ -269,7 +269,7 @@ async def _regenerate_end_keyframe_safe(
     Returns the new image bytes on success, None on failure.
     Updates the Keyframe record and file on disk in-place.
     """
-    from vidpipe.pipeline.keyframes import _generate_image_conditioned, COMFYUI_IMAGE_MODELS, _generate_image_comfyui
+    from vidpipe.pipeline.keyframes import _generate_image_conditioned, COMFYUI_IMAGE_MODELS, _generate_image_comfyui, _generate_image_comfyui_flux
 
     image_model = scene.image_model or settings.models.image_gen
     # Guard: Imagen models no longer supported — fall back to config default
@@ -288,7 +288,16 @@ async def _regenerate_end_keyframe_safe(
     )
 
     try:
-        if image_model in COMFYUI_IMAGE_MODELS:
+        if image_model in COMFYUI_IMAGE_MODELS and image_model.startswith("flux-"):
+            from vidpipe.services.comfyui_client import get_comfyui_client, _FLUX_RESOLUTIONS
+            comfy_client = await get_comfyui_client()
+            fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
+            end_frame_bytes = await _generate_image_comfyui_flux(
+                comfy_client, conditioning_prompt,
+                seed=scene.seed + shot.shot_index + 2000,
+                width=fw, height=fh,
+            )
+        elif image_model in COMFYUI_IMAGE_MODELS:
             from vidpipe.services.comfyui_client import get_comfyui_client
             comfy_client = await get_comfyui_client()
             end_frame_bytes = await _generate_image_comfyui(

@@ -50,7 +50,7 @@ def _detect_image_mime(data: bytes) -> str:
 # ---------------------------------------------------------------------------
 # ComfyUI image models (routed to ComfyUI instead of Vertex AI)
 # ---------------------------------------------------------------------------
-COMFYUI_IMAGE_MODELS = {"qwen-fast", "qwen-image-edit"}
+COMFYUI_IMAGE_MODELS = {"qwen-fast", "qwen-image-edit", "flux-dev", "flux-dev-lora", "flux-dev-redux", "flux-dev-full"}
 
 # ---------------------------------------------------------------------------
 # Identity emphasis escalation prefixes for face verification retry
@@ -441,6 +441,87 @@ async def _generate_image_comfyui_edit(
     return image_bytes
 
 
+async def _generate_image_comfyui_flux(
+    comfy_client,
+    prompt: str,
+    seed: int,
+    width: int = 1024,
+    height: int = 1024,
+    lora_filename: Optional[str] = None,
+    lora_strength: float = 0.8,
+    reference_image_filenames: Optional[list[str]] = None,
+    reference_strengths: Optional[list[float]] = None,
+) -> bytes:
+    """Generate an image via ComfyUI Cloud using the Flux.1 Dev txt2img workflow.
+
+    Builds the workflow with optional LoRA and reference images, queues it,
+    polls until success, then downloads the output image.
+
+    Args:
+        comfy_client: ComfyUIClient instance
+        prompt: Text description for image generation
+        seed: Random seed for reproducibility
+        width: Image width (default 1024)
+        height: Image height (default 1024)
+        lora_filename: Optional LoRA .safetensors filename on ComfyUI server
+        lora_strength: LoRA strength (default 0.8)
+        reference_image_filenames: Optional list of uploaded reference image
+            filenames on the ComfyUI server (max 3)
+        reference_strengths: Optional per-reference conditioning strengths
+
+    Returns:
+        PNG image data as bytes
+
+    Raises:
+        RuntimeError: On ComfyUI job failure or timeout
+        ValueError: If no image output found in history
+    """
+    from vidpipe.services.comfyui_client import (
+        build_flux_txt2img_workflow,
+        find_comfyui_image_output,
+    )
+
+    workflow = build_flux_txt2img_workflow(
+        prompt=prompt,
+        width=width,
+        height=height,
+        seed=seed,
+        lora_filename=lora_filename,
+        lora_strength=lora_strength,
+        reference_image_filenames=reference_image_filenames,
+        reference_strengths=reference_strengths,
+    )
+    prompt_id = await comfy_client.queue_prompt(workflow)
+    logger.info(f"ComfyUI Flux txt2img queued: prompt_id={prompt_id}")
+
+    # Poll until completion
+    max_polls = 120
+    poll_interval = 3
+    for attempt in range(max_polls):
+        await asyncio.sleep(poll_interval)
+        status, error_msg = await comfy_client.poll_status(prompt_id)
+        if status == "success":
+            break
+        if status in ("error", "failed", "cancelled"):
+            raise RuntimeError(
+                f"ComfyUI Flux job {prompt_id} failed: status={status}, error={error_msg}"
+            )
+        # Still pending/in_progress — keep polling
+    else:
+        raise RuntimeError(
+            f"ComfyUI Flux job {prompt_id} timed out after {max_polls * poll_interval}s"
+        )
+
+    # Fetch history and extract output image
+    history = await comfy_client.get_history(prompt_id)
+    filename, subfolder = find_comfyui_image_output(history, prompt_id)
+    image_bytes = await comfy_client.download_output(filename, subfolder)
+    logger.info(
+        f"ComfyUI Flux txt2img complete: {filename} ({len(image_bytes)} bytes)"
+    )
+    return image_bytes
+
+
 async def generate_keyframes(
     session: AsyncSession,
     scene: Scene,
@@ -748,7 +829,53 @@ async def generate_keyframes(
                         _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                         + enriched_prompt
                     )
-                    if is_comfyui:
+                    if is_comfyui and image_model.startswith("flux-"):
+                        # Flux model: use binding-based reference resolution
+                        flux_lora = None
+                        flux_ref_filenames: list[str] = []
+                        flux_ref_strengths: list[float] = []
+                        if scene.production_bible_id:
+                            try:
+                                from vidpipe.services.tag_resolver import resolve_tags_with_assets
+                                resolved = await resolve_tags_with_assets(
+                                    prompt_with_emphasis, scene.production_bible_id, session,
+                                )
+                                # Categorize by asset_type
+                                for aref in resolved.asset_refs:
+                                    if aref.asset_type == "CHARACTER" and aref.lora_url and not flux_lora:
+                                        flux_lora = aref.lora_url
+                                    elif aref.reference_image_urls:
+                                        # CHARACTER without LoRA, PROP, SET -> reference image
+                                        ref_url = aref.reference_image_urls[0]
+                                        ref_data = await file_mgr.read_bytes(ref_url)
+                                        uploaded_name = await comfy_client.upload_image(
+                                            ref_data, f"flux_ref_{aref.tag}.png"
+                                        )
+                                        flux_ref_filenames.append(uploaded_name)
+                                        flux_ref_strengths.append(0.65)
+                                if flux_lora or flux_ref_filenames:
+                                    logger.info(
+                                        f"Shot {shot.shot_index} start: Flux bindings resolved "
+                                        f"lora={flux_lora is not None}, refs={len(flux_ref_filenames)}"
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Shot {shot.shot_index}: Flux binding resolution failed "
+                                    f"(non-fatal): {e}"
+                                )
+                                flux_lora = None
+                                flux_ref_filenames = []
+                                flux_ref_strengths = []
+                        from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
+                        fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
+                        start_frame_bytes = await _generate_image_comfyui_flux(
+                            comfy_client, prompt_with_emphasis, seed=scene.seed,
+                            width=fw, height=fh,
+                            lora_filename=flux_lora,
+                            reference_image_filenames=flux_ref_filenames or None,
+                            reference_strengths=flux_ref_strengths or None,
+                        )
+                    elif is_comfyui:
                         # qwen-image-edit needs an input image; for shot 0 start
                         # there's none, so fall back to qwen-fast txt2img
                         start_frame_bytes = await _generate_image_comfyui(
@@ -853,7 +980,17 @@ async def generate_keyframes(
                         _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                         + conditioning_prompt
                     )
-                    if is_comfyui:
+                    if is_comfyui and image_model.startswith("flux-"):
+                        # Flux model: text-only (no image conditioning), offset seed
+                        # Reuse binding-resolved LoRA/refs if available from start frame
+                        from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR
+                        efw, efh = _FR.get(scene.aspect_ratio, (1024, 1024))
+                        end_frame_bytes = await _generate_image_comfyui_flux(
+                            comfy_client, prompt_with_emphasis,
+                            seed=scene.seed + shot.shot_index + 1000,
+                            width=efw, height=efh,
+                        )
+                    elif is_comfyui:
                         if image_model == "qwen-image-edit":
                             # Use image-edit workflow with start frame as input
                             end_frame_bytes = await _generate_image_comfyui_edit(

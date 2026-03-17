@@ -20,6 +20,8 @@ import {
   createActorWardrobePreset,
   updateActorWardrobePreset,
   deleteActorWardrobePreset,
+  generateWardrobeImage,
+  deleteWardrobeImage,
   getEnabledModels,
   generateActorMetadata,
   generateActorImage,
@@ -1069,7 +1071,15 @@ function WardrobeTab({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Image generation state
+  const [genPresetId, setGenPresetId] = useState<string | null>(null);
+  const [genRefId, setGenRefId] = useState("");
+  const [genModel, setGenModel] = useState("");
+  const [genExtraPrompt, setGenExtraPrompt] = useState("");
+  const [generating, setGenerating] = useState(false);
 
   const handleAdd = async () => {
     if (!label.trim()) return;
@@ -1120,6 +1130,32 @@ function WardrobeTab({
     setEditingId(wp.id);
     setLabel(wp.label);
     setDescription(wp.description ?? "");
+  };
+
+  const handleGenerateImage = async (presetId: string) => {
+    if (!genRefId) return;
+    setGenerating(true);
+    try {
+      await generateWardrobeImage(presetId, genRefId, genModel || undefined, genExtraPrompt || undefined);
+      setGenPresetId(null);
+      setGenRefId("");
+      setGenModel("");
+      setGenExtraPrompt("");
+      onRefresh();
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleDeleteImage = async (presetId: string, index: number) => {
+    try {
+      await deleteWardrobeImage(presetId, index);
+      onRefresh();
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (
@@ -1201,7 +1237,7 @@ function WardrobeTab({
         ) : (
           <div key={wp.id} className="rounded border border-gray-700 bg-gray-800/50 p-3">
             <div className="flex items-start justify-between">
-              <div>
+              <div className="flex-1 min-w-0">
                 <span className="text-sm font-medium text-gray-200">{wp.label}</span>
                 {wp.description && (
                   <p className="text-xs text-gray-400 mt-1">{wp.description}</p>
@@ -1209,17 +1245,100 @@ function WardrobeTab({
                 {wp.reference_images && wp.reference_images.length > 0 && (
                   <div className="flex gap-1.5 mt-2 flex-wrap">
                     {wp.reference_images.map((url, idx) => (
-                      <img
-                        key={idx}
-                        src={url}
-                        alt={`Ref ${idx + 1}`}
-                        className="w-12 h-12 object-cover rounded border border-gray-700"
-                      />
+                      <div key={idx} className="relative group">
+                        <img
+                          src={url}
+                          alt={`Ref ${idx + 1}`}
+                          className="w-12 h-12 object-cover rounded border border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+                          onClick={() => setLightboxUrl(url)}
+                        />
+                        <button
+                          onClick={() => handleDeleteImage(wp.id, idx)}
+                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-xs leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove image"
+                        >
+                          x
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
+
+                {/* Generate image inline form */}
+                {genPresetId === wp.id && (
+                  <div className="mt-3 rounded border border-purple-700/50 bg-gray-900/50 p-2 space-y-2">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Source Face Ref</label>
+                      <select
+                        value={genRefId}
+                        onChange={(e) => setGenRefId(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none"
+                      >
+                        <option value="">Select reference...</option>
+                        {actor.refs.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.label || "Ref"} {r.is_primary ? "(primary)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Image Model (optional)</label>
+                      <select
+                        value={genModel}
+                        onChange={(e) => setGenModel(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none"
+                      >
+                        <option value="">Default</option>
+                        {IMAGE_MODELS.filter((m) => REFERENCE_IMAGE_MODELS.has(m.id)).map((m) => (
+                          <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Extra Prompt (optional)</label>
+                      <input
+                        type="text"
+                        value={genExtraPrompt}
+                        onChange={(e) => setGenExtraPrompt(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none"
+                        placeholder="Additional pose/setting details..."
+                      />
+                    </div>
+                    <div className="flex gap-1 justify-end">
+                      <button
+                        onClick={() => setGenPresetId(null)}
+                        className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => handleGenerateImage(wp.id)}
+                        disabled={generating || !genRefId}
+                        className="text-xs px-3 py-1 rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                      >
+                        {generating ? "Generating..." : "Generate"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex gap-1">
+              <div className="flex gap-1 shrink-0 ml-2">
+                {genPresetId !== wp.id && (
+                  <button
+                    onClick={() => {
+                      setGenPresetId(wp.id);
+                      setGenRefId(actor.refs.find((r) => r.is_primary)?.id || actor.refs[0]?.id || "");
+                      setGenModel("");
+                      setGenExtraPrompt("");
+                    }}
+                    disabled={actor.refs.length === 0}
+                    className="text-xs px-2 py-1 rounded bg-purple-900/50 text-purple-300 hover:bg-purple-800/50 disabled:opacity-30"
+                    title={actor.refs.length === 0 ? "Upload a face ref first" : "Generate wardrobe image"}
+                  >
+                    Gen
+                  </button>
+                )}
                 <button
                   onClick={() => startEdit(wp)}
                   className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
@@ -1236,6 +1355,21 @@ function WardrobeTab({
             </div>
           </div>
         )
+      )}
+
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <img
+            src={lightboxUrl}
+            alt="Wardrobe reference"
+            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

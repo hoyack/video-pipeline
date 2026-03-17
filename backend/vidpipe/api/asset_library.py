@@ -414,12 +414,16 @@ def _voice_profile_to_dict(vp: ActorVoiceProfile) -> dict:
 
 
 def _wardrobe_preset_to_dict(wp: ActorWardrobePreset) -> dict:
+    ref_images = wp.reference_images or []
     return {
         "id": str(wp.id),
         "actor_id": str(wp.actor_id),
         "label": wp.label,
         "description": wp.description,
-        "reference_images": wp.reference_images,
+        "reference_images": [
+            f"/api/asset-library/actor-wardrobe-presets/{wp.id}/images/{i}"
+            for i in range(len(ref_images))
+        ] if ref_images else [],
         "created_at": wp.created_at.isoformat(),
     }
 
@@ -1377,6 +1381,180 @@ async def delete_wardrobe_preset(preset_id: str):
         if wp is None:
             raise HTTPException(status_code=404, detail="Wardrobe preset not found")
         await session.delete(wp)
+        await session.commit()
+        return None
+
+
+# --- Wardrobe Preset Image Generation ---
+
+
+class GenerateWardrobeImageRequest(BaseModel):
+    reference_image_id: str
+    image_model: Optional[str] = None
+    additional_prompt: Optional[str] = None
+
+
+@asset_library_router.post("/actor-wardrobe-presets/{preset_id}/generate-image")
+async def generate_wardrobe_image(preset_id: str, body: GenerateWardrobeImageRequest):
+    """Generate a wardrobe reference image using actor face ref + wardrobe description."""
+    from vidpipe.db.models import UserSettings, DEFAULT_USER_ID
+    from vidpipe.pipeline.keyframes import COMFYUI_IMAGE_MODELS
+
+    async with async_session() as session:
+        wp = await session.get(ActorWardrobePreset, uuid.UUID(preset_id))
+        if wp is None:
+            raise HTTPException(status_code=404, detail="Wardrobe preset not found")
+
+        actor = await session.get(Actor, wp.actor_id)
+        if actor is None:
+            raise HTTPException(status_code=404, detail="Actor not found")
+
+        settings = await session.get(UserSettings, DEFAULT_USER_ID)
+        image_model = body.image_model or (settings.default_image_model if settings else None) or "gemini-2.5-flash-image"
+
+    from vidpipe.api.routes import ALLOWED_IMAGE_MODELS
+    if image_model not in ALLOWED_IMAGE_MODELS:
+        raise HTTPException(status_code=422, detail=f"Invalid image model: {image_model}")
+
+    ref_bytes = await _load_ref_image_by_id(body.reference_image_id)
+    if not ref_bytes:
+        raise HTTPException(status_code=404, detail="Reference image not found or unreadable")
+
+    # Build prompt: identity preservation + wardrobe description
+    wardrobe_desc = wp.description or wp.label
+    appearance = actor.base_appearance_prompt or ""
+    extra = body.additional_prompt or ""
+    user_prompt = f"Wearing: {wardrobe_desc}"
+    if appearance:
+        user_prompt = f"{appearance}. {user_prompt}"
+    if extra:
+        user_prompt = f"{user_prompt}. {extra}"
+
+    wrapped_prompt = (
+        "Generate a SINGLE photorealistic image of the SAME person shown in the "
+        "reference photo above. This is the most important requirement — the generated "
+        "person MUST have the same face, head shape, skin tone, hair (or lack thereof), "
+        "and distinguishing features as the reference photo. Do NOT change the person's "
+        "identity. Use the text description below only for pose, setting, and clothing "
+        "guidance — NOT to override the person's physical appearance from the reference.\n"
+        "Do NOT create a grid, collage, or multiple panels. Output exactly one image.\n\n"
+        f"{user_prompt}"
+    )
+
+    try:
+        if image_model in COMFYUI_IMAGE_MODELS:
+            from vidpipe.services.comfyui_client import get_comfyui_client
+            import random
+            comfy_client = await get_comfyui_client()
+            if image_model.startswith("flux-"):
+                from vidpipe.pipeline.keyframes import _generate_image_comfyui_flux
+                from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
+                fw, fh = _FLUX_RESOLUTIONS.get("1:1", (1024, 1024))
+                image_bytes = await _generate_image_comfyui_flux(
+                    comfy_client, wrapped_prompt, seed=random.randint(0, 2**32 - 1),
+                    width=fw, height=fh,
+                )
+            else:
+                from vidpipe.pipeline.keyframes import _generate_image_comfyui
+                image_bytes = await _generate_image_comfyui(
+                    comfy_client, wrapped_prompt, seed=random.randint(0, 2**32 - 1),
+                )
+        else:
+            from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+            from vidpipe.pipeline.keyframes import _generate_image_from_text
+            client = get_vertex_client(location=location_for_model(image_model))
+            image_bytes = await _generate_image_from_text(
+                client, wrapped_prompt, "1:1", image_model,
+                reference_images=[ref_bytes],
+            )
+
+        if not image_bytes:
+            raise ValueError("No image generated — the model returned no image.")
+    except Exception as e:
+        logger.error("Generate wardrobe image failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to generate image: {e}")
+
+    filename = f"wardrobe_{uuid.uuid4().hex[:8]}.png"
+    stored_path = await _save_upload(
+        image_bytes,
+        "image/png",
+        filename,
+        f"actors/{wp.actor_id}/wardrobe/{preset_id}",
+    )
+
+    async with async_session() as session:
+        wp = await session.get(ActorWardrobePreset, uuid.UUID(preset_id))
+        if wp is None:
+            raise HTTPException(status_code=404, detail="Wardrobe preset not found")
+
+        ref_list = list(wp.reference_images or [])
+        ref_list.append(stored_path)
+        wp.reference_images = ref_list
+        await session.commit()
+        await session.refresh(wp)
+
+        result = _wardrobe_preset_to_dict(wp)
+        # Replace raw paths with serving URLs
+        result["reference_images"] = [
+            f"/api/asset-library/actor-wardrobe-presets/{preset_id}/images/{i}"
+            for i in range(len(wp.reference_images or []))
+        ]
+        return result
+
+
+@asset_library_router.get("/actor-wardrobe-presets/{preset_id}/images/{index}")
+async def get_wardrobe_image(preset_id: str, index: int):
+    """Serve a wardrobe preset reference image by index."""
+    from vidpipe.services.file_manager import FileManager
+    from fastapi.responses import Response
+
+    async with async_session() as session:
+        wp = await session.get(ActorWardrobePreset, uuid.UUID(preset_id))
+        if wp is None:
+            raise HTTPException(status_code=404, detail="Wardrobe preset not found")
+
+        ref_list = wp.reference_images or []
+        if index < 0 or index >= len(ref_list):
+            raise HTTPException(status_code=404, detail="Image index out of range")
+
+        image_path = ref_list[index]
+
+    file_mgr = FileManager()
+    try:
+        data = await file_mgr.read_bytes(image_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Image file not found")
+
+    return Response(content=data, media_type="image/png")
+
+
+@asset_library_router.delete("/actor-wardrobe-presets/{preset_id}/images/{index}", status_code=204)
+async def delete_wardrobe_image(preset_id: str, index: int):
+    """Delete a wardrobe preset reference image by index."""
+    async with async_session() as session:
+        wp = await session.get(ActorWardrobePreset, uuid.UUID(preset_id))
+        if wp is None:
+            raise HTTPException(status_code=404, detail="Wardrobe preset not found")
+
+        ref_list = list(wp.reference_images or [])
+        if index < 0 or index >= len(ref_list):
+            raise HTTPException(status_code=404, detail="Image index out of range")
+
+        # Remove from storage (best-effort)
+        removed_path = ref_list.pop(index)
+        try:
+            storage = get_storage_backend()
+            if isinstance(storage, LocalStorageBackend):
+                from pathlib import Path
+                p = Path(removed_path)
+                if p.exists():
+                    p.unlink()
+            else:
+                await storage.delete(removed_path)
+        except Exception as e:
+            logger.warning("Failed to delete wardrobe image from storage: %s", e)
+
+        wp.reference_images = ref_list
         await session.commit()
         return None
 

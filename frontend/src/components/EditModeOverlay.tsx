@@ -77,6 +77,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [aspectRatio, setAspectRatio] = useState(detail.aspect_ratio ?? "");
   const [clipDuration, setClipDuration] = useState(detail.clip_duration ?? 0);
   const [shotCount, setShotCount] = useState(detail.shot_count);
+  const [dynamicShotCount, setDynamicShotCount] = useState(detail.dynamic_shot_count ?? false);
   const [textModel, setTextModel] = useState(detail.text_model ?? "");
   const [imageModel, setImageModel] = useState(detail.image_model ?? "");
   const [videoModel, setVideoModel] = useState(detail.video_model ?? "");
@@ -650,6 +651,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     if (aspectRatio !== (detail.aspect_ratio ?? "")) req.aspect_ratio = aspectRatio;
     if (clipDuration !== (detail.clip_duration ?? 0)) req.clip_duration = clipDuration || undefined;
     if (shotCount !== detail.shot_count) req.target_shot_count = shotCount;
+    if (dynamicShotCount !== (detail.dynamic_shot_count ?? false)) req.dynamic_shot_count = dynamicShotCount;
     if (textModel !== (detail.text_model ?? "")) req.text_model = textModel || undefined;
     if (imageModel !== (detail.image_model ?? "")) req.image_model = imageModel || undefined;
     if (videoModel !== (detail.video_model ?? "")) req.video_model = videoModel || undefined;
@@ -1161,8 +1163,22 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
 
         {shotsExpanded && (
           <div className="px-4 pb-4 space-y-4">
-            {/* Shot Count Slider */}
+            {/* Shot Count Slider + Dynamic toggle */}
             <div>
+              <div className="flex items-center justify-between mb-1">
+                <label htmlFor="edit-shotCount" className="text-xs text-gray-400">
+                  {dynamicShotCount ? "Shots: Auto" : `Shots: ${shotCount}`}
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={dynamicShotCount}
+                    onChange={(e) => setDynamicShotCount(e.target.checked)}
+                    className="rounded border-gray-600 accent-cyan-500"
+                  />
+                  Dynamic
+                </label>
+              </div>
               <input
                 id="edit-shotCount"
                 type="range"
@@ -1175,13 +1191,17 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                   setShotCount(count);
                   setTotalDuration(count * clipDuration);
                 }}
-                className="dark-slider w-full"
+                disabled={dynamicShotCount}
+                className={`dark-slider w-full${dynamicShotCount ? " opacity-30 cursor-not-allowed" : ""}`}
                 style={sliderFill(shotCount, 1, 50)}
               />
               <div className="mt-1 flex justify-between text-xs text-gray-600">
                 <span>1</span>
                 <span>50</span>
               </div>
+              {dynamicShotCount && (
+                <p className="mt-1 text-xs text-cyan-400/70">Screenwriter will decide the number of shots</p>
+              )}
             </div>
 
             {/* Shot List */}

@@ -22,6 +22,7 @@ from vidpipe.db.models import (
     ActorVoiceProfile,
     ActorWardrobePreset,
     CastBinding,
+    CastLook,
     LibraryProp,
     LibraryPropRef,
     LibrarySet,
@@ -100,6 +101,18 @@ class PropBindingUpdate(BaseModel):
     prompt_tags: Optional[list[str]] = None
 
 
+class CastLookCreate(BaseModel):
+    wardrobe_preset_id: str
+    tag: str
+    is_default: bool = False
+
+
+class CastLookUpdate(BaseModel):
+    tag: Optional[str] = None
+    wardrobe_preset_id: Optional[str] = None
+    is_default: Optional[bool] = None
+
+
 class SoundBindingCreate(BaseModel):
     sound_asset_id: str
     tag: Optional[str] = None
@@ -118,10 +131,23 @@ class SoundBindingUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _cast_look_to_dict(look: CastLook, wardrobe_label: Optional[str] = None) -> dict:
+    return {
+        "id": str(look.id),
+        "cast_binding_id": str(look.cast_binding_id),
+        "wardrobe_preset_id": str(look.wardrobe_preset_id),
+        "tag": look.tag,
+        "is_default": look.is_default,
+        "wardrobe_label": wardrobe_label,
+        "created_at": look.created_at.isoformat(),
+    }
+
+
 def _cast_binding_to_dict(
     binding: CastBinding,
     actor_name: Optional[str] = None,
     primary_ref_url: Optional[str] = None,
+    looks: Optional[list[dict]] = None,
 ) -> dict:
     return {
         "id": str(binding.id),
@@ -138,6 +164,7 @@ def _cast_binding_to_dict(
         "prompt_tags": binding.prompt_tags,
         "actor_name": actor_name,
         "primary_ref_url": primary_ref_url,
+        "looks": looks or [],
         "created_at": binding.created_at.isoformat(),
         "updated_at": binding.updated_at.isoformat(),
     }
@@ -230,7 +257,7 @@ async def _check_tag_unique(session, model, bible_id: uuid.UUID, tag: str, exclu
 
 @bindings_router.get("/production-bibles/{bible_id}/cast")
 async def list_cast_bindings(bible_id: str):
-    """List all cast bindings for a production bible with actor name and primary ref."""
+    """List all cast bindings for a production bible with actor name, primary ref, and looks."""
     async with async_session() as session:
         uid = await _validate_bible(session, bible_id)
 
@@ -259,11 +286,34 @@ async def list_cast_bindings(bible_id: str):
         )
         primary_refs = {r.actor_id: r.image_url for r in ref_result.scalars().all()}
 
+        # Bulk fetch CastLooks + wardrobe preset labels
+        binding_ids = [b.id for b in bindings]
+        looks_result = await session.execute(
+            select(CastLook).where(CastLook.cast_binding_id.in_(binding_ids))
+        )
+        all_looks = looks_result.scalars().all()
+        looks_by_binding: dict[uuid.UUID, list[CastLook]] = {}
+        wp_ids_needed = set()
+        for lk in all_looks:
+            looks_by_binding.setdefault(lk.cast_binding_id, []).append(lk)
+            wp_ids_needed.add(lk.wardrobe_preset_id)
+
+        wp_labels: dict[uuid.UUID, str] = {}
+        if wp_ids_needed:
+            wp_result = await session.execute(
+                select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids_needed)))
+            )
+            wp_labels = {wp.id: wp.label for wp in wp_result.scalars().all()}
+
         return [
             _cast_binding_to_dict(
                 b,
                 actor_name=actors_by_id.get(b.actor_id, Actor(name="")).name if b.actor_id in actors_by_id else None,
                 primary_ref_url=primary_refs.get(b.actor_id),
+                looks=[
+                    _cast_look_to_dict(lk, wardrobe_label=wp_labels.get(lk.wardrobe_preset_id))
+                    for lk in looks_by_binding.get(b.id, [])
+                ],
             )
             for b in bindings
         ]
@@ -338,9 +388,23 @@ async def get_cast_binding(binding_id: str):
             for wp in wp_result.scalars().all()
         ]
 
+        # Fetch CastLooks
+        looks_result = await session.execute(
+            select(CastLook).where(CastLook.cast_binding_id == binding.id)
+        )
+        looks = looks_result.scalars().all()
+        wp_ids_for_looks = {lk.wardrobe_preset_id for lk in looks}
+        wp_labels_for_looks: dict[uuid.UUID, str] = {}
+        if wp_ids_for_looks:
+            wpl_result = await session.execute(
+                select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids_for_looks)))
+            )
+            wp_labels_for_looks = {wp.id: wp.label for wp in wpl_result.scalars().all()}
+
         result = _cast_binding_to_dict(
             binding,
             actor_name=actor.name if actor else None,
+            looks=[_cast_look_to_dict(lk, wardrobe_label=wp_labels_for_looks.get(lk.wardrobe_preset_id)) for lk in looks],
         )
         result["actor_detail"] = {
             "refs": refs,
@@ -390,13 +454,204 @@ async def update_cast_binding(binding_id: str, body: CastBindingUpdate):
 
 @bindings_router.delete("/cast-bindings/{binding_id}", status_code=204)
 async def delete_cast_binding(binding_id: str):
-    """Delete a cast binding."""
+    """Delete a cast binding and its CastLooks."""
     async with async_session() as session:
         binding = await session.get(CastBinding, uuid.UUID(binding_id))
         if binding is None:
             raise HTTPException(status_code=404, detail="Cast binding not found")
 
+        # Delete associated looks first
+        looks_result = await session.execute(
+            select(CastLook).where(CastLook.cast_binding_id == binding.id)
+        )
+        for lk in looks_result.scalars().all():
+            await session.delete(lk)
+
         await session.delete(binding)
+        await session.commit()
+        return None
+
+
+# ---------------------------------------------------------------------------
+# CastLook endpoints
+# ---------------------------------------------------------------------------
+
+
+@bindings_router.get("/cast-bindings/{binding_id}/looks")
+async def list_cast_looks(binding_id: str):
+    """List all CastLooks for a cast binding."""
+    async with async_session() as session:
+        binding = await session.get(CastBinding, uuid.UUID(binding_id))
+        if binding is None:
+            raise HTTPException(status_code=404, detail="Cast binding not found")
+
+        result = await session.execute(
+            select(CastLook)
+            .where(CastLook.cast_binding_id == binding.id)
+            .order_by(CastLook.created_at)
+        )
+        looks = result.scalars().all()
+
+        wp_ids = {lk.wardrobe_preset_id for lk in looks}
+        wp_labels: dict[uuid.UUID, str] = {}
+        if wp_ids:
+            wp_result = await session.execute(
+                select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids)))
+            )
+            wp_labels = {wp.id: wp.label for wp in wp_result.scalars().all()}
+
+        return [
+            _cast_look_to_dict(lk, wardrobe_label=wp_labels.get(lk.wardrobe_preset_id))
+            for lk in looks
+        ]
+
+
+@bindings_router.post("/cast-bindings/{binding_id}/looks", status_code=201)
+async def create_cast_look(binding_id: str, body: CastLookCreate):
+    """Create a CastLook (wardrobe-specific tag) for a cast binding."""
+    async with async_session() as session:
+        binding = await session.get(CastBinding, uuid.UUID(binding_id))
+        if binding is None:
+            raise HTTPException(status_code=404, detail="Cast binding not found")
+
+        # Validate wardrobe preset exists and belongs to the same actor
+        wp = await session.get(ActorWardrobePreset, uuid.UUID(body.wardrobe_preset_id))
+        if wp is None:
+            raise HTTPException(status_code=404, detail="Wardrobe preset not found")
+        if wp.actor_id != binding.actor_id:
+            raise HTTPException(status_code=422, detail="Wardrobe preset does not belong to the bound actor")
+
+        # Check tag uniqueness: must not collide with any binding tag or other look tag in this bible
+        tag_upper = body.tag.upper()
+
+        # Check against CastBinding tags
+        cast_tag_result = await session.execute(
+            select(CastBinding).where(
+                CastBinding.production_bible_id == binding.production_bible_id,
+                CastBinding.tag == tag_upper,
+            )
+        )
+        if cast_tag_result.scalars().first():
+            raise HTTPException(status_code=409, detail=f"Tag '{tag_upper}' already used by a cast binding")
+
+        # Check against other CastLook tags in same bible
+        existing_look_result = await session.execute(
+            select(CastLook).join(CastBinding).where(
+                CastBinding.production_bible_id == binding.production_bible_id,
+                CastLook.tag == tag_upper,
+            )
+        )
+        if existing_look_result.scalars().first():
+            raise HTTPException(status_code=409, detail=f"Tag '{tag_upper}' already used by another look")
+
+        # Check against SetBinding and PropBinding tags
+        from vidpipe.db.models import SetBinding as SB, PropBinding as PB
+        for model in [SB, PB]:
+            r = await session.execute(
+                select(model).where(
+                    model.production_bible_id == binding.production_bible_id,
+                    model.tag == tag_upper,
+                )
+            )
+            if r.scalars().first():
+                raise HTTPException(status_code=409, detail=f"Tag '{tag_upper}' already used by another binding")
+
+        # If is_default, clear any existing default for this binding
+        if body.is_default:
+            existing_defaults = await session.execute(
+                select(CastLook).where(
+                    CastLook.cast_binding_id == binding.id,
+                    CastLook.is_default == True,  # noqa: E712
+                )
+            )
+            for old in existing_defaults.scalars().all():
+                old.is_default = False
+
+        look = CastLook(
+            cast_binding_id=binding.id,
+            wardrobe_preset_id=uuid.UUID(body.wardrobe_preset_id),
+            tag=tag_upper,
+            is_default=body.is_default,
+        )
+        session.add(look)
+        await session.commit()
+        await session.refresh(look)
+
+        return _cast_look_to_dict(look, wardrobe_label=wp.label)
+
+
+@bindings_router.put("/cast-looks/{look_id}")
+async def update_cast_look(look_id: str, body: CastLookUpdate):
+    """Update a CastLook."""
+    async with async_session() as session:
+        look = await session.get(CastLook, uuid.UUID(look_id))
+        if look is None:
+            raise HTTPException(status_code=404, detail="Cast look not found")
+
+        binding = await session.get(CastBinding, look.cast_binding_id)
+
+        if body.tag is not None and body.tag.upper() != look.tag:
+            tag_upper = body.tag.upper()
+            # Check uniqueness
+            cast_tag = await session.execute(
+                select(CastBinding).where(
+                    CastBinding.production_bible_id == binding.production_bible_id,
+                    CastBinding.tag == tag_upper,
+                )
+            )
+            if cast_tag.scalars().first():
+                raise HTTPException(status_code=409, detail=f"Tag '{tag_upper}' already used")
+
+            look_tag = await session.execute(
+                select(CastLook).join(CastBinding).where(
+                    CastBinding.production_bible_id == binding.production_bible_id,
+                    CastLook.tag == tag_upper,
+                    CastLook.id != look.id,
+                )
+            )
+            if look_tag.scalars().first():
+                raise HTTPException(status_code=409, detail=f"Tag '{tag_upper}' already used")
+
+            look.tag = tag_upper
+
+        if body.wardrobe_preset_id is not None:
+            wp = await session.get(ActorWardrobePreset, uuid.UUID(body.wardrobe_preset_id))
+            if wp is None:
+                raise HTTPException(status_code=404, detail="Wardrobe preset not found")
+            if wp.actor_id != binding.actor_id:
+                raise HTTPException(status_code=422, detail="Wardrobe preset does not belong to the bound actor")
+            look.wardrobe_preset_id = wp.id
+
+        if body.is_default is not None:
+            if body.is_default and not look.is_default:
+                # Clear other defaults
+                existing_defaults = await session.execute(
+                    select(CastLook).where(
+                        CastLook.cast_binding_id == look.cast_binding_id,
+                        CastLook.is_default == True,  # noqa: E712
+                        CastLook.id != look.id,
+                    )
+                )
+                for old in existing_defaults.scalars().all():
+                    old.is_default = False
+            look.is_default = body.is_default
+
+        await session.commit()
+        await session.refresh(look)
+
+        wp = await session.get(ActorWardrobePreset, look.wardrobe_preset_id)
+        return _cast_look_to_dict(look, wardrobe_label=wp.label if wp else None)
+
+
+@bindings_router.delete("/cast-looks/{look_id}", status_code=204)
+async def delete_cast_look(look_id: str):
+    """Delete a CastLook."""
+    async with async_session() as session:
+        look = await session.get(CastLook, uuid.UUID(look_id))
+        if look is None:
+            raise HTTPException(status_code=404, detail="Cast look not found")
+
+        await session.delete(look)
         await session.commit()
         return None
 
@@ -722,6 +977,32 @@ async def get_bound_assets_summary(bible_id: str):
         # Build flat result list: CHARACTER first, then SET, then PROP
         items: list[dict] = []
 
+        # Load CastLooks for look tags
+        cast_look_items: list[dict] = []
+        if cast_bindings:
+            binding_ids = [b.id for b in cast_bindings]
+            looks_result = await session.execute(
+                select(CastLook).where(CastLook.cast_binding_id.in_(binding_ids))
+            )
+            all_looks = looks_result.scalars().all()
+            if all_looks:
+                wp_ids = list({lk.wardrobe_preset_id for lk in all_looks})
+                wp_result = await session.execute(
+                    select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(wp_ids))
+                )
+                wps_by_id = {wp.id: wp for wp in wp_result.scalars().all()}
+                binding_map = {b.id: b for b in cast_bindings}
+                for lk in all_looks:
+                    cb = binding_map.get(lk.cast_binding_id)
+                    wp = wps_by_id.get(lk.wardrobe_preset_id)
+                    cast_look_items.append({
+                        "tag": lk.tag,
+                        "name": f"{cb.character_name} — {wp.label}" if cb and wp else lk.tag,
+                        "type": "CHARACTER",
+                        "primary_thumbnail_url": actor_primary_refs.get(cb.actor_id) if cb else None,
+                        "description": _truncate(wp.description) if wp else None,
+                    })
+
         for cb in cast_bindings:
             actor = actors_by_id.get(cb.actor_id)
             items.append({
@@ -731,6 +1012,9 @@ async def get_bound_assets_summary(bible_id: str):
                 "primary_thumbnail_url": actor_primary_refs.get(cb.actor_id),
                 "description": _truncate(actor.base_appearance_prompt) if actor else None,
             })
+
+        # Add CastLook tags after base CHARACTER tags
+        items.extend(cast_look_items)
 
         for sb in set_bindings:
             lib_set = sets_by_id.get(sb.library_set_id)

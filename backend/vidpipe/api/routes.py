@@ -225,6 +225,8 @@ class GenerateRequest(BaseModel):
     vision_model: Optional[str] = None
     # Selective stage execution
     run_through: Optional[str] = None
+    # Dynamic shot count: let screenwriter decide shot count
+    dynamic_shot_count: bool = False
 
 
 class GenerateResponse(BaseModel):
@@ -313,6 +315,8 @@ class SceneDetail(BaseModel):
     vision_model: Optional[str] = None
     # Selective stage execution
     run_through: Optional[str] = None
+    # Dynamic shot count
+    dynamic_shot_count: bool = False
     # PipeSVN
     head_sha: Optional[str] = None
 
@@ -340,6 +344,7 @@ class EditSceneRequest(BaseModel):
     vision_model: Optional[str] = None
     audio_enabled: Optional[bool] = None
     production_bible_id: Optional[str] = None
+    dynamic_shot_count: Optional[bool] = None
     shot_edits: Optional[dict[int, ShotEditPayload]] = None
     removed_shots: Optional[list[int]] = None
     shot_order: Optional[list[int]] = None
@@ -775,6 +780,7 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
             aspect_ratio=request.aspect_ratio,
             target_clip_duration=request.clip_duration,
             target_shot_count=shot_count,
+            dynamic_shot_count=request.dynamic_shot_count,
             total_duration=request.total_duration,
             text_model=request.text_model,
             image_model=request.image_model,
@@ -1324,6 +1330,7 @@ async def get_scene_detail(scene_id: uuid.UUID):
             candidate_count=scene.candidate_count,
             vision_model=scene.vision_model,
             run_through=scene.run_through,
+            dynamic_shot_count=getattr(scene, "dynamic_shot_count", False) or False,
             head_sha=scene.head_sha,
         )
 
@@ -2461,6 +2468,7 @@ async def edit_scene_in_place(scene_id: uuid.UUID, body: EditSceneRequest):
             "video_model": body.video_model,
             "vision_model": body.vision_model,
             "audio_enabled": body.audio_enabled,
+            "dynamic_shot_count": body.dynamic_shot_count,
         }
         for attr, value in field_map.items():
             if value is not None:

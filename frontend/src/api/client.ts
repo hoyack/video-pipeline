@@ -70,6 +70,7 @@ import type {
   SoundAssetListItem,
   SoundAssetDetail,
   CastBindingResponse,
+  CastLook,
   SetBindingResponse,
   PropBindingResponse,
   SoundBindingResponse,
@@ -1422,6 +1423,29 @@ export function deleteActorWardrobePreset(id: string): Promise<void> {
   return request<void>(`/api/asset-library/actor-wardrobe-presets/${id}`, { method: "DELETE" });
 }
 
+/** POST /api/asset-library/actor-wardrobe-presets/{id}/generate-image — generate wardrobe ref image */
+export function generateWardrobeImage(
+  presetId: string,
+  referenceImageId: string,
+  imageModel?: string,
+  additionalPrompt?: string,
+): Promise<ActorWardrobePresetResponse> {
+  return request<ActorWardrobePresetResponse>(`/api/asset-library/actor-wardrobe-presets/${presetId}/generate-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      reference_image_id: referenceImageId,
+      image_model: imageModel || undefined,
+      additional_prompt: additionalPrompt || undefined,
+    }),
+  });
+}
+
+/** DELETE /api/asset-library/actor-wardrobe-presets/{presetId}/images/{index} — delete wardrobe ref image */
+export function deleteWardrobeImage(presetId: string, index: number): Promise<void> {
+  return request<void>(`/api/asset-library/actor-wardrobe-presets/${presetId}/images/${index}`, { method: "DELETE" });
+}
+
 // ============================================================================
 // Phase 22: Asset Library — Library Sets
 // ============================================================================
@@ -1771,6 +1795,42 @@ export function updateCastBinding(
 /** DELETE /api/cast-bindings/{id} — delete cast binding */
 export function deleteCastBinding(id: string): Promise<void> {
   return request<void>(`/api/cast-bindings/${id}`, { method: "DELETE" });
+}
+
+// --- Cast Looks ---
+
+/** GET /api/cast-bindings/{id}/looks — list cast looks */
+export function listCastLooks(bindingId: string): Promise<CastLook[]> {
+  return request<CastLook[]>(`/api/cast-bindings/${bindingId}/looks`);
+}
+
+/** POST /api/cast-bindings/{id}/looks — create cast look */
+export function createCastLook(
+  bindingId: string,
+  data: { wardrobe_preset_id: string; tag: string; is_default?: boolean },
+): Promise<CastLook> {
+  return request<CastLook>(`/api/cast-bindings/${bindingId}/looks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/cast-looks/{id} — update cast look */
+export function updateCastLook(
+  id: string,
+  data: Partial<{ tag: string; wardrobe_preset_id: string; is_default: boolean }>,
+): Promise<CastLook> {
+  return request<CastLook>(`/api/cast-looks/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/cast-looks/{id} — delete cast look */
+export function deleteCastLook(id: string): Promise<void> {
+  return request<void>(`/api/cast-looks/${id}`, { method: "DELETE" });
 }
 
 // --- Set Bindings ---

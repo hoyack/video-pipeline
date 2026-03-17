@@ -915,6 +915,8 @@ async def generate_keyframes(
                     else:
                         tag_prompt = ""
 
+                    _tag_source = "shot manifest" if shot_char_tags else "scene prompt"
+
                     if tag_prompt:
                         _cast_resolved = await resolve_tags_with_assets(
                             tag_prompt, scene.production_bible_id, session,
@@ -928,12 +930,35 @@ async def generate_keyframes(
                                         ref_image_bytes_list.append(ref_data)
                                     except Exception:
                                         pass
-                        if ref_image_bytes_list:
-                            logger.info(
-                                f"Shot {shot.shot_index}: CastBinding resolved "
-                                f"{len(ref_image_bytes_list)} ref(s) from "
-                                f"{'shot manifest' if shot_char_tags else 'scene prompt'}"
-                            )
+
+                    # Fallback: if shot manifest tags yielded no CHARACTER refs
+                    # (e.g. LLM typo in tag), retry with scene.prompt which has
+                    # the original user-authored tags
+                    if not ref_image_bytes_list and shot_char_tags and scene.prompt:
+                        logger.warning(
+                            f"Shot {shot.shot_index}: shot manifest tags yielded no "
+                            f"CHARACTER refs, falling back to scene.prompt"
+                        )
+                        _cast_resolved = await resolve_tags_with_assets(
+                            scene.prompt, scene.production_bible_id, session,
+                        )
+                        _tag_source = "scene prompt (fallback)"
+                        for aref in _cast_resolved.asset_refs:
+                            if aref.asset_type == "CHARACTER" and aref.reference_image_urls:
+                                _cast_char_text_description = aref.text_description
+                                for ref_url in aref.reference_image_urls:
+                                    try:
+                                        ref_data = await file_mgr.read_bytes(ref_url)
+                                        ref_image_bytes_list.append(ref_data)
+                                    except Exception:
+                                        pass
+
+                    if ref_image_bytes_list:
+                        logger.info(
+                            f"Shot {shot.shot_index}: CastBinding resolved "
+                            f"{len(ref_image_bytes_list)} ref(s) from "
+                            f"{_tag_source}"
+                        )
                 except Exception as e:
                     logger.warning(
                         f"Shot {shot.shot_index}: CastBinding ref resolution failed "

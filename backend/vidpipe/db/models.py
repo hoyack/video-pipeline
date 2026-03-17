@@ -670,6 +670,29 @@ class CastBinding(Base):
     )
 
 
+class CastLook(Base):
+    """A wardrobe-specific look for a CastBinding.
+
+    Each CastLook ties a tag (e.g. BRANDON_PIRATE) to a wardrobe preset,
+    enabling @BRANDON_PIRATE in screenplays to resolve to wardrobe-specific
+    reference images and descriptions instead of the base actor refs.
+
+    If is_default=True, the parent CastBinding's own tag resolves to this
+    wardrobe preset instead of base ActorRefs.
+    """
+    __tablename__ = "cast_looks"
+    __table_args__ = (
+        UniqueConstraint("cast_binding_id", "tag", name="uq_cast_look_binding_tag"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    cast_binding_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cast_bindings.id"), index=True)
+    wardrobe_preset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actor_wardrobe_presets.id"), index=True)
+    tag: Mapped[str] = mapped_column(String(100))  # e.g. BRANDON_PIRATE
+    is_default: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class SetBinding(Base):
     """Binds a LibrarySet to a Production Bible with overrides.
 
@@ -795,6 +818,7 @@ class Scene(Base):
     aspect_ratio: Mapped[str] = mapped_column(String(10))
     target_clip_duration: Mapped[int] = mapped_column(Integer)
     target_shot_count: Mapped[int] = mapped_column(Integer, default=3)
+    dynamic_shot_count: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     total_duration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     text_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     image_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

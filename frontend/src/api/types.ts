@@ -39,6 +39,7 @@ export interface GenerateRequest {
   candidate_count?: number;
   vision_model?: string;
   run_through?: string | null;
+  dynamic_shot_count?: boolean;
 }
 
 /** Response from POST /api/generate */
@@ -124,6 +125,7 @@ export interface SceneDetail {
   candidate_count?: number;
   vision_model?: string | null;
   run_through?: string | null;
+  dynamic_shot_count?: boolean | null;
   // PipeSVN
   head_sha?: string | null;
 }
@@ -151,6 +153,7 @@ export interface EditSceneRequest {
   vision_model?: string;
   audio_enabled?: boolean;
   production_bible_id?: string | null;
+  dynamic_shot_count?: boolean;
   shot_edits?: Record<number, ShotEditPayload>;
   removed_shots?: number[];
   shot_order?: number[];  // shot_indices in desired display order
@@ -1019,6 +1022,17 @@ export interface SoundAssetListItem {
 
 // === Binding Types ===
 
+/** Cast look (wardrobe-specific tag for a cast binding) */
+export interface CastLook {
+  id: string;
+  cast_binding_id: string;
+  wardrobe_preset_id: string;
+  tag: string;
+  is_default: boolean;
+  wardrobe_label: string | null;
+  created_at: string;
+}
+
 /** Cast binding (actor to production bible) */
 export interface CastBinding {
   id: string;
@@ -1036,6 +1050,7 @@ export interface CastBinding {
   actor_name: string | null;
   primary_ref_url: string | null;
   actor?: Actor;
+  looks: CastLook[];
   created_at: string;
   updated_at: string;
 }

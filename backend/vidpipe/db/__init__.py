@@ -232,6 +232,8 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE shots ADD COLUMN beat_index INTEGER",
         "ALTER TABLE shots ADD COLUMN narrative_intent TEXT",
         "ALTER TABLE shots ADD COLUMN emotional_weight REAL",
+        # Dynamic shot count: let screenwriter decide shot count vs user-fixed
+        "ALTER TABLE scenes ADD COLUMN dynamic_shot_count BOOLEAN DEFAULT false",
     ]
     blob_type = "BLOB" if is_sqlite else "BYTEA"
 

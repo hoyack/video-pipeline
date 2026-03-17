@@ -393,20 +393,22 @@ async def generate_storyboard(
         )
 
     # Build system prompt with style, aspect ratio, and shot count
+    is_dynamic = getattr(scene, "dynamic_shot_count", False)
     if use_manifests:
         system_prompt = ENHANCED_STORYBOARD_PROMPT.format(
             style=style_label,
             aspect_ratio=scene.aspect_ratio,
             asset_registry_block=asset_registry_block,
-        ).replace(
-            "- Break the script into 3-5 distinct visual shots",
-            f"- Break the script into exactly {scene.target_shot_count} distinct visual shots",
         )
     else:
         system_prompt = STORYBOARD_SYSTEM_PROMPT.format(
             style=style_label,
             aspect_ratio=scene.aspect_ratio,
-        ).replace(
+        )
+
+    if not is_dynamic:
+        # Fixed shot count: replace the default range with an exact count
+        system_prompt = system_prompt.replace(
             "- Break the script into 3-5 distinct visual shots",
             f"- Break the script into exactly {scene.target_shot_count} distinct visual shots",
         )
@@ -563,6 +565,13 @@ async def generate_storyboard(
     # Update scene with storyboard data
     scene.style_guide = storyboard.style_guide.model_dump()
     scene.storyboard_raw = storyboard.model_dump()
+
+    # Dynamic shot count: sync target_shot_count to what the LLM actually produced
+    if is_dynamic and storyboard.shots:
+        scene.target_shot_count = len(storyboard.shots)
+        logger.info(
+            f"Scene {scene.id}: dynamic shot count → {scene.target_shot_count} shots"
+        )
 
     # ----------------------------------------------------------------
     # Persist shots: update existing rows (draft) or create new ones

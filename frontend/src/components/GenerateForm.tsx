@@ -39,6 +39,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
   const [visionModel, setVisionModel] = useState<string>("");
   const [runThrough, setRunThrough] = useState<string | null>(null);
   const [directShotCount, setDirectShotCount] = useState(3);
+  const [dynamicShotCount, setDynamicShotCount] = useState(false);
   const [qualityMode, setQualityMode] = useState(false);
   const [candidateCount, setCandidateCount] = useState(2);
   const [submitting, setSubmitting] = useState(false);
@@ -194,6 +195,7 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         candidate_count: qualityMode ? candidateCount : undefined,
         vision_model: visionModel || undefined,
         run_through: runThrough,
+        dynamic_shot_count: dynamicShotCount || undefined,
       });
       onGenerated(res.scene_id);
     } catch (err) {
@@ -322,9 +324,20 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
       {isPartialMode ? (
         /* Shot Count — direct picker in partial mode (no video model chosen yet) */
         <div>
-          <label htmlFor="shotCount" className="mb-2 block text-sm font-medium text-gray-300">
-            Shots: {directShotCount}
-          </label>
+          <div className="flex items-center justify-between mb-2">
+            <label htmlFor="shotCount" className="text-sm font-medium text-gray-300">
+              Shots: {dynamicShotCount ? "Auto" : directShotCount}
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={dynamicShotCount}
+                onChange={(e) => setDynamicShotCount(e.target.checked)}
+                className="rounded border-gray-600 accent-cyan-500"
+              />
+              Dynamic
+            </label>
+          </div>
           <input
             id="shotCount"
             type="range"
@@ -333,12 +346,16 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
             step={1}
             value={directShotCount}
             onChange={(e) => setDirectShotCount(Number(e.target.value))}
-            className="w-full accent-cyan-500"
+            disabled={dynamicShotCount}
+            className={clsx("w-full accent-cyan-500", dynamicShotCount && "opacity-30 cursor-not-allowed")}
           />
           <div className="mt-1 flex justify-between text-xs text-gray-600">
             <span>1</span>
             <span>50</span>
           </div>
+          {dynamicShotCount && (
+            <p className="mt-1 text-xs text-cyan-400/70">Screenwriter will decide the number of shots</p>
+          )}
         </div>
       ) : (
         <>
@@ -368,9 +385,20 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
 
           {/* Total Duration */}
           <div>
-            <label htmlFor="totalDuration" className="mb-2 block text-sm font-medium text-gray-300">
-              Total Duration: {totalDuration}s ({shotCount} shots)
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label htmlFor="totalDuration" className="text-sm font-medium text-gray-300">
+                Total Duration: {totalDuration}s ({dynamicShotCount ? "auto" : shotCount} shots)
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={dynamicShotCount}
+                  onChange={(e) => setDynamicShotCount(e.target.checked)}
+                  className="rounded border-gray-600 accent-blue-500"
+                />
+                Dynamic shots
+              </label>
+            </div>
             <input
               id="totalDuration"
               type="range"
@@ -385,6 +413,9 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
               <span>{TOTAL_DURATION_MIN}s</span>
               <span>{TOTAL_DURATION_MAX}s</span>
             </div>
+            {dynamicShotCount && (
+              <p className="mt-1 text-xs text-blue-400/70">Screenwriter will decide the number of shots</p>
+            )}
           </div>
         </>
       )}

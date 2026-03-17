@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.db.models import (
     Actor,
+    ActorWardrobePreset,
     Asset,
     CastBinding,
+    CastLook,
     Keyframe,
     LibraryProp,
     LibrarySet,
@@ -937,6 +939,25 @@ async def format_binding_registry(
             return ""
         return text[:max_len] + "..." if len(text) > max_len else text
 
+    # Load CastLooks for wardrobe-specific tags
+    looks_by_binding: dict[uuid.UUID, list] = {}
+    wardrobe_presets_by_id: dict[uuid.UUID, ActorWardrobePreset] = {}
+    if cast_bindings:
+        binding_ids = [b.id for b in cast_bindings]
+        looks_result = await session.execute(
+            select(CastLook).where(CastLook.cast_binding_id.in_(binding_ids))
+        )
+        all_looks = looks_result.scalars().all()
+        wp_ids_needed: set[uuid.UUID] = set()
+        for lk in all_looks:
+            looks_by_binding.setdefault(lk.cast_binding_id, []).append(lk)
+            wp_ids_needed.add(lk.wardrobe_preset_id)
+        if wp_ids_needed:
+            wp_result = await session.execute(
+                select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids_needed)))
+            )
+            wardrobe_presets_by_id = {wp.id: wp for wp in wp_result.scalars().all()}
+
     # CHARACTER bindings
     for cb in cast_bindings:
         actor = actors_by_id.get(cb.actor_id)
@@ -949,6 +970,18 @@ async def format_binding_registry(
         else:
             lines.append(f'[CHARACTER] @{cb.tag} — "{cb.character_name}"{role_str} (asset deleted)')
         lines.append("")
+
+        # Add CastLook entries for this binding
+        for lk in looks_by_binding.get(cb.id, []):
+            wp = wardrobe_presets_by_id.get(lk.wardrobe_preset_id)
+            wp_label = wp.label if wp else "Unknown"
+            wp_desc = _truncate(wp.description, 150) if wp and wp.description else ""
+            lines.append(f'[CHARACTER] @{lk.tag} — "{cb.character_name} — {wp_label}" (wardrobe look)')
+            if actor and actor.base_appearance_prompt:
+                lines.append(f"  {_truncate(actor.base_appearance_prompt)}")
+            if wp_desc:
+                lines.append(f"  Wearing: {wp_desc}")
+            lines.append("")
 
     # SET bindings
     for sb in set_bindings:

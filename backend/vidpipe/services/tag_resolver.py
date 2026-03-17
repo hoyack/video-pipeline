@@ -22,7 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vidpipe.db.models import (
     Actor,
     ActorRef,
+    ActorWardrobePreset,
     CastBinding,
+    CastLook,
     LibraryProp,
     LibraryPropRef,
     LibrarySet,
@@ -302,6 +304,28 @@ async def resolve_tags_with_assets(
     set_bindings = set_result.scalars().all()
     set_by_tag: dict[str, SetBinding] = {b.tag.upper(): b for b in set_bindings}
 
+    # --- Load CastLooks for wardrobe-specific tags ---
+    looks_by_tag: dict[str, CastLook] = {}
+    default_look_by_binding: dict[uuid.UUID, CastLook] = {}
+    wardrobe_presets_by_id: dict[uuid.UUID, ActorWardrobePreset] = {}
+    if cast_bindings:
+        binding_ids = [b.id for b in cast_bindings]
+        looks_result = await session.execute(
+            select(CastLook).where(CastLook.cast_binding_id.in_(binding_ids))
+        )
+        all_looks = looks_result.scalars().all()
+        wp_ids_needed: set[uuid.UUID] = set()
+        for lk in all_looks:
+            looks_by_tag[lk.tag.upper()] = lk
+            if lk.is_default:
+                default_look_by_binding[lk.cast_binding_id] = lk
+            wp_ids_needed.add(lk.wardrobe_preset_id)
+        if wp_ids_needed:
+            wp_result = await session.execute(
+                select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids_needed)))
+            )
+            wardrobe_presets_by_id = {wp.id: wp for wp in wp_result.scalars().all()}
+
     # --- Batch-load all referenced entities and their refs ---
     # Actors
     actor_ids = [b.actor_id for b in cast_bindings]
@@ -402,6 +426,7 @@ async def resolve_tags_with_assets(
         resolved_text = resolved_text.replace(full_tag, tag_name, 1)
 
     # Phase 2: Process @tag matches (cross-type lookup from pre-loaded dicts)
+    # Priority: CastLook -> CastBinding -> PropBinding -> SetBinding
     for tag_name in at_matches:
         upper_tag = tag_name.upper()
 
@@ -409,28 +434,56 @@ async def resolve_tags_with_assets(
             resolved_text = resolved_text.replace(f"@{tag_name}", "", 1)
             continue
 
-        # Cross-type lookup: CastBinding -> PropBinding -> SetBinding
         resolved = False
-        match_types = []
 
-        if upper_tag in cast_by_tag:
-            match_types.append("CHAR")
-        if upper_tag in prop_by_tag:
-            match_types.append("PROP")
-        if upper_tag in set_by_tag:
-            match_types.append("SET")
+        # Check CastLook tags first (wardrobe-specific looks)
+        if upper_tag in looks_by_tag:
+            look = looks_by_tag[upper_tag]
+            # Find the parent CastBinding
+            parent_binding = None
+            for cb in cast_bindings:
+                if cb.id == look.cast_binding_id:
+                    parent_binding = cb
+                    break
+            if parent_binding:
+                replacement, asset_ref = _build_look_resolution(
+                    look, parent_binding, actors_by_id, wardrobe_presets_by_id, character_refs
+                )
+                if replacement is not None:
+                    resolved_text = resolved_text.replace(f"@{tag_name}", replacement, 1)
+                    resolved_tag_names.add(upper_tag)
+                    if asset_ref:
+                        asset_refs.append(asset_ref)
+                    resolved = True
 
-        if len(match_types) > 1:
-            logger.warning(
-                "@tag '%s' matches %d binding types: %s. Using first match per priority.",
-                tag_name, len(match_types), match_types,
-            )
+        # Cross-type lookup: CastBinding -> PropBinding -> SetBinding
+        if not resolved:
+            match_types = []
+            if upper_tag in cast_by_tag:
+                match_types.append("CHAR")
+            if upper_tag in prop_by_tag:
+                match_types.append("PROP")
+            if upper_tag in set_by_tag:
+                match_types.append("SET")
 
-        if upper_tag in cast_by_tag:
+            if len(match_types) > 1:
+                logger.warning(
+                    "@tag '%s' matches %d binding types: %s. Using first match per priority.",
+                    tag_name, len(match_types), match_types,
+                )
+
+        if not resolved and upper_tag in cast_by_tag:
             binding = cast_by_tag[upper_tag]
-            replacement, asset_ref = _build_char_resolution(
-                binding, actors_by_id, actor_refs_by_actor_id, character_refs
-            )
+            # Check if this binding has a default look override
+            default_lk = default_look_by_binding.get(binding.id)
+            if default_lk:
+                replacement, asset_ref = _build_look_resolution(
+                    default_lk, binding, actors_by_id, wardrobe_presets_by_id, character_refs
+                )
+            else:
+                replacement, asset_ref = _build_char_resolution(
+                    binding, actors_by_id, actor_refs_by_actor_id, character_refs
+                )
             if replacement is not None:
                 resolved_text = resolved_text.replace(f"@{tag_name}", replacement, 1)
                 resolved_tag_names.add(upper_tag)
@@ -510,6 +563,49 @@ def _build_char_resolution(
         reference_image_urls=ref_urls,
         lora_url=getattr(actor, 'lora_url', None),
         wardrobe_override=binding.wardrobe_override,
+        lighting_notes=None,
+    )
+    return replacement, asset_ref
+
+
+def _build_look_resolution(
+    look: CastLook,
+    binding: CastBinding,
+    actors_by_id: dict[uuid.UUID, Actor],
+    wardrobe_presets_by_id: dict[uuid.UUID, ActorWardrobePreset],
+    character_refs: list[dict],
+) -> tuple[str | None, ResolvedAssetRef | None]:
+    """Build replacement text and ResolvedAssetRef for a CastLook (wardrobe-specific tag)."""
+    actor = actors_by_id.get(binding.actor_id)
+    if actor is None:
+        logger.warning("Actor %s referenced by CastBinding %s not found", binding.actor_id, binding.id)
+        return binding.character_name, None
+
+    preset = wardrobe_presets_by_id.get(look.wardrobe_preset_id)
+    if preset is None:
+        logger.warning("WardrobePreset %s referenced by CastLook %s not found", look.wardrobe_preset_id, look.id)
+        # Fall back to base actor resolution
+        return binding.character_name, None
+
+    # Use wardrobe preset's reference_images for visual conditioning
+    ref_urls = list(preset.reference_images or [])
+    if ref_urls:
+        character_refs.append({"actor_id": str(actor.id), "ref_urls": ref_urls})
+
+    # Build combined text description: base appearance + wardrobe
+    appearance = actor.base_appearance_prompt or ""
+    wardrobe_desc = preset.description or preset.label
+    text_description = f"{appearance}; wearing: {wardrobe_desc}" if appearance else f"wearing: {wardrobe_desc}"
+    replacement = f"{binding.character_name} ({text_description})"
+
+    asset_ref = ResolvedAssetRef(
+        tag=look.tag.upper(),
+        asset_type="CHARACTER",
+        display_name=binding.character_name,
+        text_description=text_description,
+        reference_image_urls=ref_urls,
+        lora_url=getattr(actor, 'lora_url', None),
+        wardrobe_override={"wardrobe_description": wardrobe_desc},
         lighting_notes=None,
     )
     return replacement, asset_ref

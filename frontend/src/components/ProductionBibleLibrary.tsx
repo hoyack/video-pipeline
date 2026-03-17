@@ -9,16 +9,6 @@ interface ProductionBibleLibraryProps {
   onViewManifest: (manifestId: string) => void;
 }
 
-const CATEGORIES = [
-  { value: "ALL", label: "All" },
-  { value: "CHARACTERS", label: "Characters" },
-  { value: "ENVIRONMENT", label: "Environment" },
-  { value: "FULL_PRODUCTION", label: "Full Production" },
-  { value: "STYLE_KIT", label: "Style Kit" },
-  { value: "BRAND_KIT", label: "Brand Kit" },
-  { value: "CUSTOM", label: "Custom" },
-];
-
 const SORT_OPTIONS = [
   { value: "updated_at", label: "Updated" },
   { value: "created_at", label: "Created" },
@@ -35,7 +25,6 @@ export function ProductionBibleLibrary({
   const [productionBibles, setProductionBibles] = useState<ProductionBibleListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState("updated_at");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -46,7 +35,6 @@ export function ProductionBibleLibrary({
     setError(null);
     try {
       const data = await listProductionBibles({
-        category: categoryFilter !== "ALL" ? categoryFilter : undefined,
         sort_by: sortBy,
         sort_order: sortOrder,
       });
@@ -56,7 +44,7 @@ export function ProductionBibleLibrary({
     } finally {
       setLoading(false);
     }
-  }, [categoryFilter, sortBy, sortOrder]);
+  }, [sortBy, sortOrder]);
 
   useEffect(() => {
     fetchProductionBibles();
@@ -121,25 +109,8 @@ export function ProductionBibleLibrary({
         </button>
       </div>
 
-      {/* Filter/Sort bar */}
+      {/* Sort bar */}
       <div className="mb-6 flex flex-wrap items-center gap-4">
-        {/* Category filter pills */}
-        <div className="flex flex-wrap gap-2">
-          {CATEGORIES.map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => setCategoryFilter(value)}
-              className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                categoryFilter === value
-                  ? "bg-gray-700 text-white"
-                  : "border border-gray-800 bg-gray-900 text-gray-400 hover:text-gray-300"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
         {/* Sort dropdown */}
         <select
           value={sortBy}

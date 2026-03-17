@@ -54,11 +54,8 @@ export function ProductionBibleCard({
         )}
       </p>
 
-      {/* Metadata row: Category + Asset count + Version */}
+      {/* Metadata row: Asset count + Version */}
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded bg-gray-800 px-2 py-0.5 text-gray-300">
-          {manifest.category}
-        </span>
         <span className="text-gray-500">
           {manifest.asset_count} asset{manifest.asset_count !== 1 ? "s" : ""}
         </span>

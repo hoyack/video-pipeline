@@ -59,6 +59,7 @@ video-pipeline/
 - **Node.js 18+**
 - **ffmpeg** — `sudo apt-get install ffmpeg` (Ubuntu) or `brew install ffmpeg` (macOS)
 - **Google Cloud service account** with Vertex AI API enabled
+- **Supabase (self-hosted)** — see [Supabase Storage](#supabase-storage-s3--minio) below
 
 ## Quick Start
 
@@ -215,6 +216,48 @@ Costs vary by model selection. Examples using default models (Imagen 4 Fast + Ve
 | 5 | 8s | ~$7.00 |
 
 Higher-tier models (Veo 3.1 GA, Imagen 4 Ultra) cost more. The UI shows a cost estimate before generation starts.
+
+## Supabase Storage (S3 + MinIO)
+
+Asset storage (keyframes, video clips, asset library images) uses Supabase Storage backed by a MinIO S3-compatible object store. The Supabase project lives in a sibling directory (`../supabase-project/`).
+
+### Starting Supabase with S3 storage
+
+Supabase Storage **must** be started with the S3 compose overlay. Without it, the storage service defaults to `STORAGE_BACKEND=file` and cannot read MinIO's internal object format, causing `EISDIR` 500 errors on all asset requests.
+
+```bash
+cd ../supabase-project
+
+# Correct — includes the S3 overlay so storage talks to MinIO over HTTP
+docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
+
+# WRONG — storage defaults to file backend, all asset GETs return 500
+# docker compose up -d
+```
+
+### After rebuilding Supabase containers
+
+If you run `docker compose down` and bring services back up, make sure to include the S3 overlay again. `docker compose down` removes containers and networks but **not** volumes or bind-mounted data, so MinIO (`./volumes/storage/`) and PostgreSQL (`./volumes/db/data/`) data survive. Just ensure you start with both compose files:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
+```
+
+### Troubleshooting
+
+**Symptom:** All images/assets return 500. Backend logs show `FileNotFoundError: S3 GET failed: 500`.
+
+**Cause:** Supabase Storage is running with `STORAGE_BACKEND=file` instead of `s3`. Verify with:
+```bash
+docker exec supabase-storage env | grep STORAGE_BACKEND
+# Should show: STORAGE_BACKEND=s3
+```
+
+**Fix:** Restart storage with the S3 overlay:
+```bash
+cd ../supabase-project
+docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d storage
+```
 
 ## License
 

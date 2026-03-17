@@ -457,9 +457,7 @@ async def generate_storyboard(
                     scene.id,
                 )
 
-    full_prompt = f"{system_prompt}{filled_context}\n\n{screenplay_enrichment}Script: {resolved_prompt_text}"
-
-    # Set generation_status on empty shots before generating
+    # Set generation_status on empty shots FIRST so the UI shows progress immediately
     for s in empty_shots:
         s.generation_status = "generating_text"
     if empty_shots:
@@ -467,6 +465,69 @@ async def generate_storyboard(
 
     from vidpipe.services.event_bus import event_bus
     event_bus.emit(scene.id, "phase_started", phase="storyboard", total_shots=scene.target_shot_count)
+
+    # ── Screenwriter Agent: Script Analysis + Shot Breakdown ──────────
+    # Runs 2 LLM calls BEFORE the storyboard call to produce explicit
+    # characters_present[] per shot as hard constraints.
+    screenwriter_breakdown = None  # ShotBreakdown | None
+    if use_manifests or not existing_shots:
+        try:
+            from vidpipe.services.screenwriter_agent import ScreenwriterAgentService
+            agent = ScreenwriterAgentService(adapter)
+
+            # Step 1: Analyze script
+            analysis = await agent.analyze_script(
+                scene_prompt=scene.prompt,
+                binding_registry_block=asset_registry_block,
+            )
+            scene.script_analysis = analysis.model_dump()
+            await session.commit()
+
+            # Step 2: Break into shots
+            filled_context_for_agent = ""
+            if filled_shots:
+                lines = []
+                for s in filled_shots:
+                    lines.append(f"Shot {s.shot_index}: {s.shot_description}")
+                filled_context_for_agent = (
+                    "EXISTING SHOTS (preserve these, assign characters to them):\n"
+                    + "\n".join(lines)
+                )
+
+            screenwriter_breakdown = await agent.break_into_shots(
+                scene_prompt=scene.prompt,
+                analysis=analysis,
+                target_shot_count=scene.target_shot_count,
+                binding_registry_block=asset_registry_block,
+                existing_shot_context=filled_context_for_agent,
+            )
+            logger.info(
+                "Scene %s: screenwriter agent produced %d shot assignments",
+                scene.id, len(screenwriter_breakdown.shots),
+            )
+        except Exception as e:
+            logger.warning("Screenwriter agent failed (non-fatal, continuing): %s", e)
+
+    # Inject shot breakdown as constraint into storyboard prompt
+    shot_constraints = ""
+    if screenwriter_breakdown:
+        constraint_lines = ["\nSHOT BREAKDOWN (follow these character assignments exactly):"]
+        for sa in screenwriter_breakdown.shots:
+            chars = (
+                ", ".join(f"@{c}" for c in sa.characters_present)
+                if sa.characters_present
+                else "(none — scenery only)"
+            )
+            constraint_lines.append(
+                f"  Shot {sa.shot_index}: {sa.narrative_intent}. Characters visible: {chars}"
+            )
+        constraint_lines.append(
+            "\nIMPORTANT: Each shot's placements MUST include ALL characters listed above "
+            "and MUST NOT include characters NOT listed. Scenery shots must have NO character placements."
+        )
+        shot_constraints = "\n".join(constraint_lines)
+
+    full_prompt = f"{system_prompt}{filled_context}\n\n{screenplay_enrichment}{shot_constraints}\n\nScript: {resolved_prompt_text}"
 
     # Retry strategy: up to 3 attempts, reduce temperature on each retry
     attempt = 0
@@ -559,6 +620,15 @@ async def generate_storyboard(
 
     # Persist shot and audio manifests if manifest-aware mode
     if use_manifests:
+        # Clean up existing manifests from prior runs to avoid unique constraint violations
+        from sqlalchemy import delete as sa_delete
+        await session.execute(
+            sa_delete(ShotManifestModel).where(ShotManifestModel.scene_id == scene.id)
+        )
+        await session.execute(
+            sa_delete(ShotAudioManifestModel).where(ShotAudioManifestModel.scene_id == scene.id)
+        )
+
         # Pre-compute ordered list of manifest CHARACTER tags for remapping
         manifest_characters = sorted(
             [tag for tag in asset_tags_set if tag.startswith("CHAR_")]
@@ -631,6 +701,20 @@ async def generate_storyboard(
             "Scene %s: persisted %d shot manifests and audio manifests",
             scene.id, len(storyboard.shots)
         )
+
+    # Populate screenwriter agent metadata on shots (characters_present, etc.)
+    if screenwriter_breakdown:
+        breakdown_by_index = {sa.shot_index: sa for sa in screenwriter_breakdown.shots}
+        all_shots_result = await session.execute(
+            sa_select(Shot).where(Shot.scene_id == scene.id).order_by(Shot.shot_index)
+        )
+        for shot_row in all_shots_result.scalars():
+            sa = breakdown_by_index.get(shot_row.shot_index)
+            if sa:
+                shot_row.characters_present = sa.characters_present
+                shot_row.beat_index = sa.beat_index
+                shot_row.narrative_intent = sa.narrative_intent
+                shot_row.emotional_weight = sa.emotional_weight
 
     # Update scene status to indicate storyboard completion
     scene.status = "keyframing"

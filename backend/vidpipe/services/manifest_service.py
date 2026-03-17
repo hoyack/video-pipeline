@@ -776,7 +776,7 @@ async def increment_usage(
         raise ValueError(f"Manifest {manifest_id} not found")
 
     manifest.times_used += 1
-    manifest.last_used_at = datetime.now(timezone.utc)
+    manifest.last_used_at = func.now()
     await session.flush()
 
 

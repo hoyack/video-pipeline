@@ -24,7 +24,7 @@ export function ProductionBibleSelector({
     setFetchingList(true);
     try {
       const items = await listProductionBibles({ sort_by: "updated_at", sort_order: "desc" });
-      setProductionBibles(items.filter((m) => m.status === "READY"));
+      setProductionBibles(items);
     } catch (err) {
       console.error("Failed to fetch production bibles:", err);
       setProductionBibles([]);
@@ -168,7 +168,7 @@ export function ProductionBibleSelector({
           </div>
         ) : filteredBibles.length === 0 ? (
           <div className="py-6 text-center text-sm text-gray-500">
-            {search ? "No production bibles match your filter" : "No ready production bibles found"}
+            {search ? "No production bibles match your filter" : "No production bibles found"}
           </div>
         ) : (
           filteredBibles.map((m) => (

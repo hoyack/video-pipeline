@@ -23,8 +23,29 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential, wait_random, before_sleep_log
 
 logger = logging.getLogger(__name__)
+
+
+def _is_retriable_http(exc: BaseException) -> bool:
+    """Return True for transient HTTP errors worth retrying (429, 5xx, connection errors)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout,
+                        httpx.PoolTimeout, httpx.ConnectTimeout, ConnectionError,
+                        TimeoutError, OSError)):
+        return True
+    return False
+
+
+_comfyui_retry = retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=60) + wait_random(0, 3),
+    retry=retry_if_exception(_is_retriable_http),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
 
 # ---------------------------------------------------------------------------
 # Resolution mapping
@@ -231,6 +252,7 @@ class ComfyUIClient:
             )
         return self._client
 
+    @_comfyui_retry
     async def upload_image(self, image_bytes: bytes, filename: str) -> str:
         """Upload an image to ComfyUI Cloud.
 
@@ -253,6 +275,7 @@ class ComfyUIClient:
         logger.info("  server filename: %s", server_name)
         return server_name
 
+    @_comfyui_retry
     async def queue_prompt(self, workflow: dict) -> str:
         """Submit a workflow prompt for execution.
 
@@ -274,6 +297,7 @@ class ComfyUIClient:
         logger.info("  prompt_id: %s", prompt_id)
         return prompt_id
 
+    @_comfyui_retry
     async def poll_status(self, prompt_id: str) -> tuple[str, Optional[str]]:
         """Check execution status of a queued prompt.
 
@@ -293,6 +317,7 @@ class ComfyUIClient:
         logger.debug("  raw status=%s error=%s", raw_status, error_msg)
         return raw_status, error_msg
 
+    @_comfyui_retry
     async def get_history(self, prompt_id: str) -> dict:
         """Get execution history with output filenames.
 
@@ -317,6 +342,7 @@ class ComfyUIClient:
                     )
         return data
 
+    @_comfyui_retry
     async def download_output(
         self,
         filename: str,

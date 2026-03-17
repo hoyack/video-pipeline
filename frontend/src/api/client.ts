@@ -381,6 +381,13 @@ export function getProcessingProgress(productionBibleId: string): Promise<Proces
   return request<ProcessingProgress>(`/api/production-bibles/${productionBibleId}/progress`);
 }
 
+/** POST /api/production-bibles/{id}/finalize — mark bindings-only bible as READY */
+export function finalizeProductionBible(productionBibleId: string): Promise<{ status: string; production_bible_id: string }> {
+  return request<{ status: string; production_bible_id: string }>(`/api/production-bibles/${productionBibleId}/finalize`, {
+    method: "POST",
+  });
+}
+
 /** @deprecated Use uploadVideoForProductionBible */
 export const uploadVideoForManifest = uploadVideoForProductionBible;
 /** @deprecated Use processProductionBible */

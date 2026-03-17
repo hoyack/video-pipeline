@@ -10,6 +10,7 @@ import { AssetPicker } from "./AssetPicker.tsx";
 
 interface CastingSectionProps {
   bibleId: string;
+  onBindingsChange?: (count: number) => void;
 }
 
 const ROLES = ["LEAD", "SUPPORTING", "EXTRA", "NARRATOR"] as const;
@@ -29,7 +30,7 @@ function generateTag(name: string): string {
     .replace(/\s+/g, "_");
 }
 
-export function CastingSection({ bibleId }: CastingSectionProps) {
+export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProps) {
   const [bindings, setBindings] = useState<CastBinding[]>([]);
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -61,6 +62,7 @@ export function CastingSection({ bibleId }: CastingSectionProps) {
     try {
       const data = await listCastBindings(bibleId);
       setBindings(data);
+      onBindingsChange?.(data.length);
     } catch {
       // silently fail
     } finally {
@@ -141,7 +143,9 @@ export function CastingSection({ bibleId }: CastingSectionProps) {
   const handleDelete = async (id: string) => {
     try {
       await deleteCastBinding(id);
-      setBindings((prev) => prev.filter((b) => b.id !== id));
+      const updated = bindings.filter((b) => b.id !== id);
+      setBindings(updated);
+      onBindingsChange?.(updated.length);
     } catch {
       // silently fail
     }

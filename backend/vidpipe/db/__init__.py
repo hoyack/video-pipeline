@@ -223,9 +223,23 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE actors ADD COLUMN lora_training_job_id VARCHAR(200)",
         "ALTER TABLE user_settings ADD COLUMN replicate_api_token TEXT",
         "ALTER TABLE user_settings ADD COLUMN replicate_username VARCHAR(200)",
+        # Phase 27: Cache ArcFace embeddings on ActorRef for identity verification
+        # BLOB for SQLite, BYTEA for PostgreSQL (BLOB is not a valid PG type)
+        "ALTER TABLE actor_refs ADD COLUMN face_embedding {blob_type}",
+        # Screenwriter Agent: script analysis and shot-level character assignment
+        "ALTER TABLE scenes ADD COLUMN script_analysis TEXT",
+        "ALTER TABLE shots ADD COLUMN characters_present TEXT",
+        "ALTER TABLE shots ADD COLUMN beat_index INTEGER",
+        "ALTER TABLE shots ADD COLUMN narrative_intent TEXT",
+        "ALTER TABLE shots ADD COLUMN emotional_weight REAL",
     ]
+    blob_type = "BLOB" if is_sqlite else "BYTEA"
+
     for i, raw_sql in enumerate(migrations):
-        sql = raw_sql.format(uuid_type=uuid_type) if "{uuid_type}" in raw_sql else raw_sql
+        if "{" in raw_sql:
+            sql = raw_sql.format(uuid_type=uuid_type, blob_type=blob_type)
+        else:
+            sql = raw_sql
         sp = f"mig_sp_{i}"
         try:
             if not is_sqlite:

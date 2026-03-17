@@ -3367,6 +3367,58 @@ async def process_production_bible(production_bible_id: uuid.UUID):
     }
 
 
+@router.post("/production-bibles/{production_bible_id}/finalize", status_code=200)
+async def finalize_production_bible(production_bible_id: uuid.UUID):
+    """Finalize a bindings-only production bible (DRAFT -> READY).
+
+    Use when a bible has Asset Library bindings but no uploaded images
+    that need the full manifesting pipeline.
+    """
+    from sqlalchemy import func as sa_func
+    from vidpipe.db.models import CastBinding, SetBinding, PropBinding, SoundBinding
+
+    manifest_id = production_bible_id
+    async with async_session() as session:
+        manifest = await manifest_service.get_manifest(session, manifest_id)
+        if not manifest:
+            raise HTTPException(status_code=404, detail="Production Bible not found")
+
+        if manifest.status not in ("DRAFT", "ERROR"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot finalize production bible in status {manifest.status}. Must be DRAFT or ERROR.",
+            )
+
+        # Count bindings to ensure there's something to finalize
+        binding_count = 0
+        for model in (CastBinding, SetBinding, PropBinding, SoundBinding):
+            result = await session.execute(
+                select(sa_func.count(model.id)).where(model.production_bible_id == manifest_id)
+            )
+            binding_count += result.scalar() or 0
+
+        # Also count uploaded assets
+        asset_count_result = await session.execute(
+            select(sa_func.count(Asset.id)).where(Asset.production_bible_id == manifest_id)
+        )
+        asset_count = asset_count_result.scalar() or 0
+
+        if binding_count == 0 and asset_count == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Nothing to finalize — add bindings or assets first.",
+            )
+
+        manifest.status = "READY"
+        manifest.asset_count = asset_count
+        await session.commit()
+
+    return {
+        "status": "ready",
+        "production_bible_id": str(manifest_id),
+    }
+
+
 @router.get("/production-bibles/{production_bible_id}/progress", response_model=ProcessingProgressResponse)
 async def get_production_bible_progress(production_bible_id: uuid.UUID):
     """Get processing progress for a production bible."""
@@ -4593,14 +4645,16 @@ async def generate_new_shot(
         if not scene:
             raise HTTPException(status_code=404, detail="Scene not found")
 
-        # Check no existing shot at requested index
+        # Check for existing shot at requested index — reuse if empty, reject if populated
         existing_result = await session.execute(
             select(Shot).where(
                 Shot.scene_id == scene.id,
                 Shot.shot_index == body.shot_index,
             )
         )
-        if existing_result.scalar_one_or_none():
+        existing_shot = existing_result.scalar_one_or_none()
+        if existing_shot and (existing_shot.start_frame_prompt or existing_shot.end_frame_prompt
+                or existing_shot.video_motion_prompt):
             raise HTTPException(status_code=409, detail=f"Shot already exists at index {body.shot_index}")
 
         # Load all shots for neighbor context
@@ -4707,18 +4761,28 @@ async def generate_new_shot(
             logger.error("Generate new shot text failed for scene %s shot %d: %s", scene_id, body.shot_index, e)
             raise HTTPException(status_code=500, detail=f"Shot text generation failed: {e}")
 
-        # --- Create Shot DB row ---
-        new_shot = Shot(
-            scene_id=scene.id,
-            shot_index=body.shot_index,
-            shot_description=text_result.shot_description,
-            start_frame_prompt=text_result.start_frame_prompt,
-            end_frame_prompt=text_result.end_frame_prompt,
-            video_motion_prompt=text_result.video_motion_prompt,
-            transition_notes=text_result.transition_notes,
-            status="pending",
-        )
-        session.add(new_shot)
+        # --- Create or update Shot DB row ---
+        if existing_shot:
+            # Reuse the empty placeholder shot
+            new_shot = existing_shot
+            new_shot.shot_description = text_result.shot_description
+            new_shot.start_frame_prompt = text_result.start_frame_prompt
+            new_shot.end_frame_prompt = text_result.end_frame_prompt
+            new_shot.video_motion_prompt = text_result.video_motion_prompt
+            new_shot.transition_notes = text_result.transition_notes
+            new_shot.status = "pending"
+        else:
+            new_shot = Shot(
+                scene_id=scene.id,
+                shot_index=body.shot_index,
+                shot_description=text_result.shot_description,
+                start_frame_prompt=text_result.start_frame_prompt,
+                end_frame_prompt=text_result.end_frame_prompt,
+                video_motion_prompt=text_result.video_motion_prompt,
+                transition_notes=text_result.transition_notes,
+                status="pending",
+            )
+            session.add(new_shot)
 
         # Update target_shot_count if needed
         scene.target_shot_count = max(scene.target_shot_count, body.shot_index + 1)
@@ -5607,6 +5671,18 @@ async def _run_storyboard_regeneration(
                 event_bus.emit(scene_id, "regen_complete", scope="storyboard")
     except Exception as e:
         logger.error("Storyboard regeneration failed for %s: %s", scene_id, e, exc_info=True)
+        # Clear stuck generation_status so the UI doesn't spin forever
+        try:
+            async with async_session() as cleanup_session:
+                from sqlalchemy import update
+                await cleanup_session.execute(
+                    update(Shot)
+                    .where(Shot.scene_id == scene_id, Shot.generation_status == "generating_text")
+                    .values(generation_status=None)
+                )
+                await cleanup_session.commit()
+        except Exception:
+            logger.error("Failed to clear generation_status for %s", scene_id, exc_info=True)
         event_bus.emit(scene_id, "error", phase="storyboard", message=str(e))
         if not _emit_complete:
             raise  # propagate to chained caller so subsequent phases are skipped

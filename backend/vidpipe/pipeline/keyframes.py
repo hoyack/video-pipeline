@@ -65,7 +65,62 @@ _IDENTITY_EMPHASIS_PREFIXES = [
         "jawline, and skin tone. The generated face must be recognizable as the "
         "SAME PERSON shown in the reference images. "
     ),
+    # Level 2: maximum emphasis — sacrifice composition for face identity
+    (
+        "ABSOLUTE PRIORITY — FACE IDENTITY: Every facial feature in the generated "
+        "image must match the reference photos with photographic accuracy. "
+        "The face is the single most important element of this image. Sacrifice "
+        "background detail or composition fidelity if needed to preserve exact "
+        "face identity. "
+    ),
 ]
+
+
+def _build_identity_instruction(
+    text_description: str | None = None,
+    emphasis_level: int = 0,
+) -> str:
+    """Build feature-anchored identity instruction for Gemini.
+
+    Injects specific facial features from Actor.base_appearance_prompt
+    into the identity grounding instruction, improving retention ~41%
+    over generic "same person" instructions.
+
+    Args:
+        text_description: Actor.base_appearance_prompt facial features text.
+        emphasis_level: 0=standard, 1=escalated, 2=maximum.
+
+    Returns:
+        Identity instruction string to prepend before reference images.
+    """
+    features = ""
+    if text_description:
+        # Truncate very long descriptions to keep prompt focused
+        desc = text_description[:300].strip()
+        features = f" This person's key features: {desc}"
+
+    if emphasis_level <= 0:
+        return (
+            "The following reference photo(s) show the EXACT person who must appear "
+            "in the generated image." + features + " "
+            "Match their face structure, skin tone, and distinguishing features precisely. "
+            "The generated character MUST be recognizable as the SAME PERSON.\n\n"
+        )
+    elif emphasis_level == 1:
+        return (
+            "CRITICAL IDENTITY REQUIREMENT: The character's face must EXACTLY match "
+            "the reference photo(s)." + features + " "
+            "Pay extreme attention to facial bone structure, eye shape and spacing, "
+            "nose bridge, jawline contour, and skin tone. "
+            "The face must be the SAME PERSON, not merely similar.\n\n"
+        )
+    else:  # Level 2+
+        return (
+            "ABSOLUTE PRIORITY — FACE IDENTITY: Match the reference photos with "
+            "photographic accuracy." + features + " "
+            "The face is the most important element. Sacrifice background detail or "
+            "composition fidelity if needed to preserve exact face identity.\n\n"
+        )
 
 
 def _is_retriable(exc: BaseException) -> bool:
@@ -90,6 +145,7 @@ async def _generate_image_from_text(
     client, prompt: str, aspect_ratio: str, image_model: str,
     seed: int | None = None,
     reference_images: list[bytes] | None = None,
+    identity_instruction: str | None = None,
 ) -> bytes:
     """Generate image from text prompt using Gemini generate_content().
 
@@ -103,6 +159,8 @@ async def _generate_image_from_text(
         image_model: Model ID to use for generation
         seed: Optional seed for reproducibility
         reference_images: Optional list of PNG bytes for identity grounding
+        identity_instruction: Optional feature-anchored identity prompt
+            (from _build_identity_instruction). Falls back to generic prefix.
 
     Returns:
         PNG image data as bytes
@@ -110,12 +168,12 @@ async def _generate_image_from_text(
     Raises:
         ValueError: If no image found in response
     """
-    # Build contents: [ref_image_1, ref_image_2, ..., text_prompt]
+    # Build contents: [identity_instruction, ref_image_1, ..., text_prompt]
     # When reference images are present, prepend an identity-matching instruction
     # so Gemini knows these images define the characters' visual appearance.
     contents: list = []
     if reference_images:
-        ref_prefix = (
+        ref_prefix = identity_instruction or (
             "The following reference photo(s) show the EXACT person(s) who must appear "
             "in the generated image. Match their face, skin tone, head shape, and "
             "distinguishing features as closely as possible. "
@@ -157,6 +215,7 @@ async def _generate_image_conditioned(
     aspect_ratio: str,
     conditioned_model: str,
     reference_images: list[bytes] | None = None,
+    identity_instruction: str | None = None,
 ) -> bytes:
     """Generate image using conditioning frame + optional asset reference images.
 
@@ -171,6 +230,8 @@ async def _generate_image_conditioned(
         aspect_ratio: Image aspect ratio (e.g., "16:9", "9:16", "1:1")
         conditioned_model: Model ID to use for conditioned generation
         reference_images: Optional list of PNG bytes for identity grounding
+        identity_instruction: Optional feature-anchored identity prompt
+            (from _build_identity_instruction). Falls back to generic prefix.
 
     Returns:
         PNG image data as bytes
@@ -183,11 +244,12 @@ async def _generate_image_conditioned(
         types.Part.from_bytes(data=reference_image_bytes, mime_type=_detect_image_mime(reference_image_bytes)),
     ]
     if reference_images:
-        contents.append(types.Part.from_text(text=(
+        ref_prefix = identity_instruction or (
             "The following reference photo(s) show the EXACT person(s) who must appear "
             "in the generated image. Match their face, skin tone, head shape, and "
             "distinguishing features as closely as possible."
-        )))
+        )
+        contents.append(types.Part.from_text(text=ref_prefix))
         for ref_bytes in reference_images:
             contents.append(
                 types.Part.from_bytes(data=ref_bytes, mime_type=_detect_image_mime(ref_bytes))
@@ -214,13 +276,18 @@ async def _verify_keyframe_faces(
     keyframe_bytes: bytes,
     placed_char_assets: list,
     threshold: float | None = None,
+    ref_embeddings: list | None = None,
 ) -> tuple[bool, float, str]:
     """Verify generated keyframe contains faces matching placed CHARACTER assets.
 
     Uses YOLO face detection + ArcFace embedding comparison.
 
+    Supports two embedding sources:
+    - Legacy: Asset.face_embedding bytes from manifest pathway
+    - CastBinding: ref_embeddings (numpy arrays) from prequalification service
+
     Soft degradation — returns (True, ...) when:
-    - No placed chars have face_embedding → "no_embeddings_available"
+    - No embeddings available from either source → "no_embeddings_available"
     - No faces detected in keyframe → "no_faces_detected"
     - CV services fail → "verification_error"
 
@@ -228,6 +295,8 @@ async def _verify_keyframe_faces(
         keyframe_bytes: Generated keyframe image bytes
         placed_char_assets: Asset objects for placed CHARACTERs (must have face_embedding)
         threshold: Cosine similarity threshold (default from config)
+        ref_embeddings: Pre-computed numpy embeddings from prequalification
+            (bridges CastBinding flow where no Asset.face_embedding exists)
 
     Returns:
         (passed, best_similarity, detail_string)
@@ -235,12 +304,20 @@ async def _verify_keyframe_faces(
     if threshold is None:
         threshold = settings.cv_analysis.keyframe_face_match_threshold
 
-    # Filter to assets that actually have face embeddings
-    assets_with_emb = [
-        a for a in placed_char_assets
-        if a.face_embedding is not None
-    ]
-    if not assets_with_emb:
+    # Collect reference embeddings from both sources
+    all_ref_embeddings: list = []
+
+    # Source 1: Legacy Asset.face_embedding bytes
+    for a in placed_char_assets:
+        if a.face_embedding is not None:
+            emb = np.frombuffer(a.face_embedding, dtype=np.float32).copy()
+            all_ref_embeddings.append(emb)
+
+    # Source 2: Prequalified ActorRef embeddings (numpy arrays)
+    if ref_embeddings:
+        all_ref_embeddings.extend(ref_embeddings)
+
+    if not all_ref_embeddings:
         return True, 0.0, "no_embeddings_available"
 
     try:
@@ -289,18 +366,15 @@ async def _verify_keyframe_faces(
             except ValueError:
                 continue
 
-            # Compare against each placed CHARACTER's stored embedding
-            for asset in assets_with_emb:
-                ref_embedding = np.frombuffer(
-                    asset.face_embedding, dtype=np.float32
-                ).copy()
-                sim = FaceMatchingService.cosine_similarity(gen_embedding, ref_embedding)
+            # Compare against all reference embeddings
+            for ref_emb in all_ref_embeddings:
+                sim = FaceMatchingService.cosine_similarity(gen_embedding, ref_emb)
                 best_similarity = max(best_similarity, sim)
 
         passed = best_similarity >= threshold
         detail = (
             f"best_sim={best_similarity:.3f} threshold={threshold:.3f} "
-            f"faces_detected={len(faces)} chars_checked={len(assets_with_emb)}"
+            f"faces_detected={len(faces)} refs_checked={len(all_ref_embeddings)}"
         )
         return passed, best_similarity, detail
 
@@ -802,8 +876,120 @@ async def generate_keyframes(
                     rewritten_start_prompt = None  # Fall back to original
                     ref_image_bytes_list = []  # Reset on failure
 
-            # Face verification retry config (max 2 retries = 3 total attempts)
-            _max_identity_retries = 2
+            # ── CastBinding fallback ────────────────────────────────────
+            # When the Production Bible has CastBindings (new flow) but no
+            # legacy Assets, load reference images via the tag resolver.
+            # This bridges the gap where load_manifest_assets() returns []
+            # but ActorRefs exist with images.
+            _cast_char_text_description: str | None = None
+            _cast_resolved = None  # Tag resolver result (used by prequalification)
+            if not ref_image_bytes_list and scene.production_bible_id and not is_comfyui:
+                try:
+                    from vidpipe.services.tag_resolver import resolve_tags_with_assets
+
+                    # Shot-aware: extract CHARACTER tags from this shot's manifest placements
+                    # instead of resolving ALL @tags from scene.prompt for every shot
+                    shot_char_tags: set[str] = set()
+                    if shot_manifest_row and shot_manifest_row.manifest_json:
+                        for p in shot_manifest_row.manifest_json.get("placements", []):
+                            tag = p.get("asset_tag")
+                            if tag:
+                                clean_tag = tag.lstrip("@")
+                                if clean_tag and clean_tag not in asset_map:
+                                    shot_char_tags.add(clean_tag)
+
+                    if shot_char_tags:
+                        # Resolve only THIS shot's CastBinding tags
+                        tag_prompt = " ".join(f"@{t}" for t in shot_char_tags)
+                    elif hasattr(shot, 'characters_present') and shot.characters_present is not None:
+                        # Screenwriter agent populated characters_present —
+                        # use it as authoritative source (empty = scenery shot)
+                        if shot.characters_present:
+                            tag_prompt = " ".join(f"@{t.lstrip('@')}" for t in shot.characters_present)
+                        else:
+                            tag_prompt = ""  # Scenery shot: no character refs
+                    elif scene.prompt:
+                        # Fallback: no manifest AND no agent data — use scene.prompt
+                        # (pre-agent backward compat)
+                        tag_prompt = scene.prompt
+                    else:
+                        tag_prompt = ""
+
+                    if tag_prompt:
+                        _cast_resolved = await resolve_tags_with_assets(
+                            tag_prompt, scene.production_bible_id, session,
+                        )
+                        for aref in _cast_resolved.asset_refs:
+                            if aref.asset_type == "CHARACTER" and aref.reference_image_urls:
+                                _cast_char_text_description = aref.text_description
+                                for ref_url in aref.reference_image_urls:
+                                    try:
+                                        ref_data = await file_mgr.read_bytes(ref_url)
+                                        ref_image_bytes_list.append(ref_data)
+                                    except Exception:
+                                        pass
+                        if ref_image_bytes_list:
+                            logger.info(
+                                f"Shot {shot.shot_index}: CastBinding resolved "
+                                f"{len(ref_image_bytes_list)} ref(s) from "
+                                f"{'shot manifest' if shot_char_tags else 'scene prompt'}"
+                            )
+                except Exception as e:
+                    logger.warning(
+                        f"Shot {shot.shot_index}: CastBinding ref resolution failed "
+                        f"(non-fatal): {e}"
+                    )
+
+            # Face verification retry config (max 3 retries = 4 total attempts)
+            # Level 0: standard, Level 1: escalated, Level 2+: iterative refinement
+            _max_identity_retries = 3
+
+            # Collect prequalified ref embeddings for face verification
+            # (bridges CastBinding flow where Asset.face_embedding is absent)
+            _prequalified_ref_embeddings: list = []
+
+            # Extract character appearance description for identity prompt anchoring
+            # Prefer legacy Asset.reverse_prompt, fall back to CastBinding text
+            _char_text_description: str | None = None
+            for ca in placed_char_assets:
+                if getattr(ca, "reverse_prompt", None):
+                    _char_text_description = ca.reverse_prompt
+                    break
+            if not _char_text_description:
+                _char_text_description = _cast_char_text_description
+
+            if ref_image_bytes_list and not any(
+                getattr(a, "face_embedding", None) for a in placed_char_assets
+            ):
+                # No legacy Asset embeddings — prequalify refs on-the-fly
+                try:
+                    from vidpipe.services.ref_prequalification import (
+                        prequalify_refs, QualifiedRef,
+                    )
+                    _ref_urls = [
+                        u for a in selected_ref_assets
+                        for u in ([a.reference_image_url] if getattr(a, "reference_image_url", None) else [])
+                    ]
+                    # If no selected_ref_assets (CastBinding path), prequalify
+                    # directly from ref_image_bytes_list via the resolved URLs
+                    if not _ref_urls and _cast_resolved and _cast_resolved.asset_refs:
+                        _ref_urls = [
+                            url for aref in _cast_resolved.asset_refs
+                            if aref.asset_type == "CHARACTER"
+                            for url in aref.reference_image_urls
+                        ]
+                    if _ref_urls:
+                        _qualified = await prequalify_refs(_ref_urls, file_mgr)
+                        _prequalified_ref_embeddings = [q.face_embedding for q in _qualified]
+                        # Use only qualified ref bytes for generation
+                        if _qualified:
+                            ref_image_bytes_list = [q.image_bytes for q in _qualified]
+                            logger.info(
+                                f"Shot {shot.shot_index}: prequalified "
+                                f"{len(_qualified)} / {len(_ref_urls)} refs"
+                            )
+                except Exception as e:
+                    logger.warning(f"Ref prequalification failed (non-fatal): {e}")
 
             # ---- START FRAME: Generate or inherit (skip if existing) ----
             if existing_start_kf:
@@ -822,9 +1008,16 @@ async def generate_keyframes(
                 else:
                     enriched_prompt = f"{style_prefix}{character_prefix}{shot.start_frame_prompt}"
 
-                # Face verification retry loop
+                # Face verification retry loop with best-so-far tracking
                 start_frame_bytes = None
+                best_frame_bytes: bytes | None = None
+                best_similarity: float = -1.0
                 for identity_level in range(_max_identity_retries + 1):
+                    # Build identity instruction with feature anchoring
+                    identity_instr = _build_identity_instruction(
+                        _char_text_description, emphasis_level=identity_level,
+                    ) if ref_image_bytes_list else None
+
                     prompt_with_emphasis = (
                         _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                         + enriched_prompt
@@ -881,17 +1074,32 @@ async def generate_keyframes(
                         start_frame_bytes = await _generate_image_comfyui(
                             comfy_client, prompt_with_emphasis, seed=scene.seed,
                         )
+                    elif identity_level >= 2 and best_frame_bytes is not None:
+                        # Level 2+: iterative refinement — feed best attempt as
+                        # conditioning frame alongside original refs
+                        start_frame_bytes = await _generate_image_conditioned(
+                            image_client, best_frame_bytes, prompt_with_emphasis,
+                            scene.aspect_ratio, image_model,
+                            reference_images=ref_image_bytes_list or None,
+                            identity_instruction=identity_instr,
+                        )
                     else:
                         start_frame_bytes = await _generate_image_from_text(
                             image_client, prompt_with_emphasis, scene.aspect_ratio, image_model,
                             seed=scene.seed,
                             reference_images=ref_image_bytes_list or None,
+                            identity_instruction=identity_instr,
                         )
                     # Verify face match if placed chars exist and not final attempt
                     if placed_char_assets and identity_level < _max_identity_retries:
                         passed, sim, detail = await _verify_keyframe_faces(
                             start_frame_bytes, placed_char_assets,
+                            ref_embeddings=_prequalified_ref_embeddings or None,
                         )
+                        # Track best attempt
+                        if sim > best_similarity:
+                            best_similarity = sim
+                            best_frame_bytes = start_frame_bytes
                         if passed:
                             logger.info(
                                 f"Shot {shot.shot_index} start: face verification passed "
@@ -906,6 +1114,9 @@ async def generate_keyframes(
                             continue
                     else:
                         break  # No verification needed or final attempt
+                # Use best attempt if we tracked one and it's better
+                if best_frame_bytes is not None and best_similarity > 0:
+                    start_frame_bytes = best_frame_bytes
                 start_source = "generated"
 
                 # Save start keyframe
@@ -973,9 +1184,16 @@ async def generate_keyframes(
                     f"{character_prefix}"
                 )
 
-                # Face verification retry loop for end frame
+                # Face verification retry loop for end frame with best-so-far tracking
                 end_frame_bytes = None
+                best_end_bytes: bytes | None = None
+                best_end_sim: float = -1.0
                 for identity_level in range(_max_identity_retries + 1):
+                    # Build identity instruction with feature anchoring
+                    end_identity_instr = _build_identity_instruction(
+                        _char_text_description, emphasis_level=identity_level,
+                    ) if ref_image_bytes_list else None
+
                     prompt_with_emphasis = (
                         _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                         + conditioning_prompt
@@ -1004,16 +1222,31 @@ async def generate_keyframes(
                                 comfy_client, prompt_with_emphasis,
                                 seed=scene.seed + shot.shot_index + 1000,
                             )
+                    elif identity_level >= 2 and best_end_bytes is not None:
+                        # Level 2+: iterative refinement — feed best end attempt
+                        # as conditioning alongside original refs
+                        end_frame_bytes = await _generate_image_conditioned(
+                            image_client, best_end_bytes, prompt_with_emphasis,
+                            scene.aspect_ratio, image_model,
+                            reference_images=ref_image_bytes_list or None,
+                            identity_instruction=end_identity_instr,
+                        )
                     else:
                         end_frame_bytes = await _generate_image_conditioned(
                             image_client, start_frame_bytes, prompt_with_emphasis,
                             scene.aspect_ratio, image_model,
                             reference_images=ref_image_bytes_list or None,
+                            identity_instruction=end_identity_instr,
                         )
                     if placed_char_assets and identity_level < _max_identity_retries:
                         passed, sim, detail = await _verify_keyframe_faces(
                             end_frame_bytes, placed_char_assets,
+                            ref_embeddings=_prequalified_ref_embeddings or None,
                         )
+                        # Track best attempt
+                        if sim > best_end_sim:
+                            best_end_sim = sim
+                            best_end_bytes = end_frame_bytes
                         if passed:
                             logger.info(
                                 f"Shot {shot.shot_index} end: face verification passed "
@@ -1028,6 +1261,9 @@ async def generate_keyframes(
                             continue
                     else:
                         break
+                # Use best attempt if we tracked one
+                if best_end_bytes is not None and best_end_sim > 0:
+                    end_frame_bytes = best_end_bytes
 
                 # Save end keyframe
                 end_stored_path = await file_mgr.save_keyframe_async(

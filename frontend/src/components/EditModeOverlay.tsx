@@ -501,10 +501,16 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     onCancel();
   }
 
-  // Model settings
+  // Model settings — apply user defaults to empty model fields
   const [modelSettings, setModelSettings] = useState<EnabledModelsResponse | null>(null);
   useEffect(() => {
-    getEnabledModels().then(setModelSettings).catch(() => {});
+    getEnabledModels().then((ms) => {
+      setModelSettings(ms);
+      if (!textModel && ms.default_text_model) setTextModel(ms.default_text_model);
+      if (!imageModel && ms.default_image_model) setImageModel(ms.default_image_model);
+      if (!videoModel && ms.default_video_model) setVideoModel(ms.default_video_model);
+      if (!visionModel && ms.default_vision_model) setVisionModel(ms.default_vision_model);
+    }).catch(() => {});
   }, []);
 
   const filteredTextModels = useMemo(() => {

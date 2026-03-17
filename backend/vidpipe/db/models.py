@@ -472,6 +472,7 @@ class ActorRef(Base):
     image_url: Mapped[str] = mapped_column(String(500))
     label: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # front/profile/3-4
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    face_embedding: Mapped[Optional[bytes]] = mapped_column(nullable=True)  # numpy.tobytes() 512-dim float32
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
@@ -843,6 +844,9 @@ class Scene(Base):
     screenplay_breakdown_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     screenplay_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
+    # Screenwriter Agent: script analysis output
+    script_analysis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
     status: Mapped[str] = mapped_column(String(50))
     style_guide: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     storyboard_raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -874,6 +878,12 @@ class Shot(Base):
     generation_status: Mapped[Optional[str]] = mapped_column(
         String(32), nullable=True, default=None
     )
+
+    # Screenwriter Agent: per-shot character assignment and narrative metadata
+    characters_present: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    beat_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    narrative_intent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    emotional_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class ShotManifest(Base):

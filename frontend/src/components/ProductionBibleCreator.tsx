@@ -14,6 +14,7 @@ import {
   deleteAsset,
   uploadAssetImage,
   processProductionBible,
+  finalizeProductionBible,
   getProcessingProgress,
   reprocessAsset,
   uploadVideoForProductionBible,
@@ -55,15 +56,6 @@ interface ProductionBibleCreatorProps {
   onSaved: (productionBibleId: string) => void;
   onCancel: () => void;
 }
-
-const CATEGORIES = [
-  "CUSTOM",
-  "CHARACTERS",
-  "ENVIRONMENTS",
-  "OBJECTS",
-  "PROPS",
-  "STYLES",
-];
 
 const ASSET_TYPES = ["CHARACTER", "OBJECT", "VEHICLE", "ENVIRONMENT", "PROP", "STYLE", "OTHER"];
 
@@ -174,6 +166,17 @@ export function ProductionBibleCreator({
   const [showLegacyCasting, setShowLegacyCasting] = useState(false);
   const [showLegacyArt, setShowLegacyArt] = useState(false);
   const [showLegacySound, setShowLegacySound] = useState(false);
+
+  // Cast binding count (from CastingSection callback)
+  const [castBindingCount, setCastBindingCount] = useState(0);
+
+  // Collapsible section state
+  const [uploadExpanded, setUploadExpanded] = useState(true);
+  const [importExpanded, setImportExpanded] = useState(false);
+  const [assetsExpanded, setAssetsExpanded] = useState(true);
+  const [libraryExpanded, setLibraryExpanded] = useState(true);
+  const [addRefsExpanded, setAddRefsExpanded] = useState(false);
+  const [departmentsExpanded, setDepartmentsExpanded] = useState(true);
 
   // Lightbox state for Stage 3 image preview
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -352,10 +355,10 @@ export function ProductionBibleCreator({
     }
   }, [productionBibleId]);
 
-  // Fetch entity counts for Stage 3 tab badges
+  // Fetch entity counts for department tab badges
   useEffect(() => {
     const bibleId = productionBibleId || manifest?.production_bible_id;
-    if (!bibleId || currentStage !== 3) return;
+    if (!bibleId) return;
 
     const fetchCounts = async () => {
       try {
@@ -376,12 +379,12 @@ export function ProductionBibleCreator({
       }
     };
     fetchCounts();
-  }, [productionBibleId, manifest?.production_bible_id, currentStage]);
+  }, [productionBibleId, manifest?.production_bible_id]);
 
   // Fetch bindings for Art Dept and Sound tabs
   useEffect(() => {
     const bibleId = productionBibleId || manifest?.production_bible_id;
-    if (!bibleId || currentStage !== 3) return;
+    if (!bibleId) return;
 
     const fetchBindings = async () => {
       try {
@@ -398,7 +401,7 @@ export function ProductionBibleCreator({
       }
     };
     fetchBindings();
-  }, [productionBibleId, manifest?.production_bible_id, currentStage]);
+  }, [productionBibleId, manifest?.production_bible_id]);
 
   // Polling for Stage 2 (PROCESSING)
   useEffect(() => {
@@ -636,6 +639,21 @@ export function ProductionBibleCreator({
     }
   };
 
+  const handleFinalize = async () => {
+    if (!manifest?.production_bible_id) return;
+    setProcessing(true);
+    setError(null);
+    try {
+      await finalizeProductionBible(manifest.production_bible_id);
+      setManifest((prev) => (prev ? { ...prev, status: "READY" } : null));
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(`Failed to finalize: ${errorMessage}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleReprocess = async (assetId: string) => {
     setReprocessingAssets((prev) => new Set(prev).add(assetId));
     setError(null);
@@ -856,7 +874,7 @@ export function ProductionBibleCreator({
         {/* Casting tab */}
         {activeTab === "casting" && (
           <div className="mb-8 space-y-6">
-            <CastingSection bibleId={manifest.production_bible_id} />
+            <CastingSection bibleId={manifest.production_bible_id} onBindingsChange={setCastBindingCount} />
             <div>
               <button
                 onClick={() => setShowLegacyCasting(!showLegacyCasting)}
@@ -1169,35 +1187,6 @@ export function ProductionBibleCreator({
           />
         </div>
 
-        {/* Category + Tags */}
-        <div className="flex gap-4">
-          <div className="flex-1">
-            <label className="block text-sm text-gray-400 mb-1">
-              Category
-            </label>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 w-full focus:border-blue-500 outline-none"
-            >
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex-1">
-            <label className="block text-sm text-gray-400 mb-1">Tags</label>
-            <input
-              type="text"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 w-full focus:border-blue-500 outline-none"
-              placeholder="tag1, tag2, tag3"
-            />
-          </div>
-        </div>
       </div>
 
       {/* Extraction progress (shown during video extraction) */}
@@ -1205,41 +1194,72 @@ export function ProductionBibleCreator({
 
       {/* Upload zone (hidden during extraction) */}
       {!extracting && (
-        <div className="mb-8">
-          <AssetUploader
-            onFilesSelected={handleFilesSelected}
-            onVideoSelected={handleVideoSelected}
-            disabled={saving}
-          />
+        <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50">
+          <button
+            type="button"
+            onClick={() => setUploadExpanded(!uploadExpanded)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Upload Assets</h3>
+            <svg
+              className={`h-4 w-4 text-gray-500 transition-transform shrink-0 ${uploadExpanded ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {uploadExpanded && (
+            <div className="px-4 pb-4">
+              <AssetUploader
+                onFilesSelected={handleFilesSelected}
+                onVideoSelected={handleVideoSelected}
+                disabled={saving}
+              />
+            </div>
+          )}
         </div>
       )}
 
       {/* Import from Scene */}
       {!extracting && (
-        <div className="mb-8 rounded-lg border border-gray-700 bg-gray-900/50 p-4">
-          <h3 className="text-sm font-medium text-gray-300 mb-1">
-            Import from Scene
-          </h3>
-          <p className="text-xs text-gray-500 mb-3">
-            Paste a scene ID to auto-create assets from its storyboard
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={sceneImportId}
-              onChange={(e) => setSceneImportId(e.target.value)}
-              placeholder="Scene ID (UUID)"
-              disabled={importing || saving}
-              className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-purple-500 outline-none disabled:opacity-50"
-            />
-            <button
-              onClick={handleSceneImport}
-              disabled={importing || saving || !sceneImportId.trim()}
-              className="bg-purple-600 hover:bg-purple-500 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+        <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50">
+          <button
+            type="button"
+            onClick={() => setImportExpanded(!importExpanded)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Import from Scene</h3>
+            <svg
+              className={`h-4 w-4 text-gray-500 transition-transform shrink-0 ${importExpanded ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
             >
-              {importing ? "Importing..." : "Import"}
-            </button>
-          </div>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {importExpanded && (
+            <div className="px-4 pb-4">
+              <p className="text-xs text-gray-500 mb-3">
+                Paste a scene ID to auto-create assets from its storyboard
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={sceneImportId}
+                  onChange={(e) => setSceneImportId(e.target.value)}
+                  placeholder="Scene ID (UUID)"
+                  disabled={importing || saving}
+                  className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-purple-500 outline-none disabled:opacity-50"
+                />
+                <button
+                  onClick={handleSceneImport}
+                  disabled={importing || saving || !sceneImportId.trim()}
+                  className="bg-purple-600 hover:bg-purple-500 text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  {importing ? "Importing..." : "Import"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1247,42 +1267,75 @@ export function ProductionBibleCreator({
       {!extracting && renderVideoInfoBanner()}
 
       {/* Asset list */}
-      <div className="mb-8">
-        <h3 className="text-lg font-medium text-gray-200 mb-4">
-          Assets ({assets.length})
-        </h3>
-        {assets.length === 0 && !extracting ? (
-          <p className="text-sm text-gray-500 text-center py-8">
-            No assets yet. Drop images or a video above to add assets.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {assets.map((asset) => (
-              <AssetEditor
-                key={asset.asset_id}
-                asset={asset}
-                imageFile={pendingFiles.get(asset.asset_id)}
-                onUpdate={handleAssetUpdate}
-                onDelete={handleAssetDelete}
-                isUploading={uploadingAssets.has(asset.asset_id)}
-              />
-            ))}
+      <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50">
+        <button
+          type="button"
+          onClick={() => setAssetsExpanded(!assetsExpanded)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Assets ({assets.length})</h3>
+          </div>
+          <svg
+            className={`h-4 w-4 text-gray-500 transition-transform shrink-0 ${assetsExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {assetsExpanded && (
+          <div className="px-4 pb-4">
+            {assets.length === 0 && !extracting ? (
+              <p className="text-sm text-gray-500 text-center py-8">
+                No assets yet. Drop images or a video above to add assets.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {assets.map((asset) => (
+                  <AssetEditor
+                    key={asset.asset_id}
+                    asset={asset}
+                    imageFile={pendingFiles.get(asset.asset_id)}
+                    onUpdate={handleAssetUpdate}
+                    onDelete={handleAssetDelete}
+                    isUploading={uploadingAssets.has(asset.asset_id)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* Asset Library Bindings — available in Stage 1 for existing bibles */}
       {manifest?.production_bible_id && !extracting && (
-        <div className="mb-8">
-          <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50 p-4">
-            <h3 className="text-sm font-semibold text-gray-200 mb-1">
-              Asset Library
-            </h3>
-            <p className="text-xs text-gray-500">
-              Bind reusable assets from the Asset Library to this Production Bible. Use @tags in scene prompts to reference them.
-            </p>
-          </div>
-          {renderDepartmentTabs()}
+        <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50">
+          <button
+            type="button"
+            onClick={() => setLibraryExpanded(!libraryExpanded)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className="text-sm font-medium text-gray-300 shrink-0">Asset Library</h3>
+              {!libraryExpanded && (
+                <span className="text-xs text-gray-500 truncate">Bind reusable assets via @tags</span>
+              )}
+            </div>
+            <svg
+              className={`h-4 w-4 text-gray-500 transition-transform shrink-0 ${libraryExpanded ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {libraryExpanded && (
+            <div className="px-4 pb-4">
+              <p className="text-xs text-gray-500 mb-4">
+                Bind reusable assets from the Asset Library to this Production Bible. Use @tags in scene prompts to reference them.
+              </p>
+              {renderDepartmentTabs()}
+            </div>
+          )}
         </div>
       )}
 
@@ -1301,6 +1354,16 @@ export function ProductionBibleCreator({
             className="bg-green-600 hover:bg-green-500 text-white rounded-lg px-6 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {processing ? "Starting..." : "Process"}
+          </button>
+        )}
+        {assets.length === 0 && !extracting && manifest?.production_bible_id &&
+          (castBindingCount > 0 || setBindings.length > 0 || propBindings.length > 0 || soundBindings.length > 0) && (
+          <button
+            onClick={handleFinalize}
+            disabled={processing}
+            className="bg-green-600 hover:bg-green-500 text-white rounded-lg px-6 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {processing ? "Finalizing..." : "Finalize"}
           </button>
         )}
         <button
@@ -1472,34 +1535,74 @@ export function ProductionBibleCreator({
 
         {/* Add more assets */}
         {!extracting && (
-          <div className="mb-8">
-            <h3 className="text-sm font-medium text-gray-400 mb-3">
-              Add more references
-            </h3>
-            <AssetUploader
-              onFilesSelected={handleFilesSelected}
-              onVideoSelected={handleVideoSelected}
-              disabled={processing}
-            />
+          <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50">
+            <button
+              type="button"
+              onClick={() => setAddRefsExpanded(!addRefsExpanded)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <h3 className="text-sm font-medium text-gray-300 shrink-0">Add More References</h3>
+              <svg
+                className={`h-4 w-4 text-gray-500 transition-transform shrink-0 ${addRefsExpanded ? "rotate-180" : ""}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {addRefsExpanded && (
+              <div className="px-4 pb-4">
+                <AssetUploader
+                  onFilesSelected={handleFilesSelected}
+                  onVideoSelected={handleVideoSelected}
+                  disabled={processing}
+                />
+              </div>
+            )}
           </div>
         )}
 
         {extracting && extractionProgress && renderExtractionProgress()}
 
-        {renderDepartmentTabs()}
+        {/* Department Tabs */}
+        <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50">
+          <button
+            type="button"
+            onClick={() => setDepartmentsExpanded(!departmentsExpanded)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Departments</h3>
+            <svg
+              className={`h-4 w-4 text-gray-500 transition-transform shrink-0 ${departmentsExpanded ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {departmentsExpanded && (
+            <div className="px-4 pb-4">
+              {renderDepartmentTabs()}
+            </div>
+          )}
+        </div>
 
         {/* Collapsible Raw Assets section */}
-        <div className="mb-8">
+        <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50">
           <button
+            type="button"
             onClick={() => setShowRawAssets(!showRawAssets)}
-            className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 mb-3"
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
           >
-            <span className={`transition-transform ${showRawAssets ? "rotate-90" : ""}`}>&#9654;</span>
-            Raw Assets ({filteredAssets.length})
+            <h3 className="text-sm font-medium text-gray-300 shrink-0">Raw Assets ({filteredAssets.length})</h3>
+            <svg
+              className={`h-4 w-4 text-gray-500 transition-transform shrink-0 ${showRawAssets ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
           </button>
 
           {showRawAssets && (
-            <div className="space-y-4">
+            <div className="px-4 pb-4 space-y-4">
               {filteredAssets.length === 0 ? (
                 <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-dashed border-gray-700">
                   <p className="text-sm text-gray-500">

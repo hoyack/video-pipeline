@@ -373,6 +373,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 - [x] **ATED-03**: Actor detail view shows LoRA training status with Train/Regenerate buttons and training date
 - [x] **ATED-04**: Production Bible "Tag Reference Sheet" tab lists all bound assets with @tag syntax, type, and thumbnail
 
+## Storyboard Performance Optimization
+
+- [ ] **SBPERF-01**: Storyboard Call #3 decomposed into N parallel per-shot LLM calls; each generates manifest + keyframe prompts + audio for one shot via asyncio.gather
+- [ ] **SBPERF-02**: Per-shot `shot_text_ready` SSE progress events emitted as each parallel call completes, visible in the frontend during generation
+- [ ] **SBPERF-03**: Screenwriter agent (Calls #1-2) skipped when `dynamic_shot_count=False` and single-shot scene; minimal shot_constraints injected from target_shot_count
+- [ ] **SBPERF-04**: Redundant `characters[]` and `style_guide` fields removed from per-shot output schema; uses existing actor binding data and scene style field instead
+
 **Coverage:
 - v1 requirements: 41 total (all complete)
 - LLM Provider Abstraction: 7 total (all complete)
@@ -387,9 +394,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 - ComfyUI Flux.1 Workflows: 8 total (planned)
 - LoRA Training Infrastructure: 5 total (planned)
 - Asset Tag Frontend Enhancements: 4 total (planned)
-- **Total mapped: 142 requirements across 23 phases**
+- Storyboard Performance Optimization: 4 total (planned)
+- **Total mapped: 146 requirements across 24 phases**
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-14*
-*Last updated: 2026-03-14 after Phase 23-26 planning*
+*Last updated: 2026-03-17 after Phase 27 addition*

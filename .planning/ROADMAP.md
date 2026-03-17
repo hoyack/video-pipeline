@@ -40,6 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 24: ComfyUI Flux.1 Workflows** - Flux.1 Dev workflow templates (base, LoRA, reference, hybrid), workflow builder function, keyframe pipeline routing for binding-based asset references (completed 2026-03-14)
 - [x] **Phase 25: LoRA Training Infrastructure** - Per-actor LoRA training pipeline with dataset prep, pluggable training backend (Replicate API), training job management, Actor model extensions (completed 2026-03-14)
 - [x] **Phase 26: Asset Tag Frontend Enhancements** - @tag autocomplete in scene editor, tag preview panel, LoRA training status UI, Production Bible tag reference sheet (completed 2026-03-14)
+- [ ] **Phase 27: Storyboard Performance Optimization** - Split monolithic storyboard Call #3 into parallel per-shot calls, add per-shot progress events, skip screenwriter agent for simple scenes, eliminate redundant schema fields
 
 ## Phase Details
 
@@ -129,6 +130,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 24. ComfyUI Flux.1 Workflows | 2/2 | Complete    | 2026-03-14 |
 | 25. LoRA Training Infrastructure | 2/2 | Complete    | 2026-03-14 |
 | 26. Asset Tag Frontend | 3/3 | Complete    | 2026-03-14 |
+| 27. Storyboard Performance | 0/0 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -566,3 +568,15 @@ Plans:
 - [ ] 26-01-PLAN.md — CodeMirror @tag autocomplete extension, hover tooltip, TagPreviewPanel, component tree wiring
 - [ ] 26-02-PLAN.md — Tag Reference Sheet tab on Production Bible, ATED-03 (LoRA status) verification
 - [ ] 26-03-PLAN.md — Gap closure: click-to-open @tag preview panel, fix unused _onTagSelect lint error
+
+### Phase 27: Storyboard Performance Optimization
+**Goal**: Storyboard generation completes 3-5x faster on slow models by splitting the monolithic LLM call into parallel per-shot calls with real-time progress, and skipping unnecessary steps for simple scenes
+**Depends on**: Phase 18
+**Requirements**: SBPERF-01, SBPERF-02, SBPERF-03, SBPERF-04
+**PRD**: `docs/storyboard-gap.md`
+**Success Criteria** (what must be TRUE):
+  1. Storyboard Call #3 is decomposed into N parallel per-shot LLM calls that each generate manifest + keyframe prompts + audio for a single shot
+  2. Per-shot `shot_text_ready` progress events are emitted as each parallel call completes, visible in the UI during generation
+  3. Screenwriter agent (Calls #1-2) is skipped when `dynamic_shot_count=False` and scene has a single shot, saving 30-80 seconds
+  4. Redundant `characters[]` and `style_guide` generation removed from per-shot output (uses existing actor/binding data instead)
+**Plans**: 0 plans

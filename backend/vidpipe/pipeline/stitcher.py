@@ -124,7 +124,13 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
         await session.commit()
 
         from vidpipe.services.event_bus import event_bus
-        event_bus.emit(scene.id, "stitch_ready")
+        event_bus.emit(
+            scene.id,
+            "phase_completed",
+            phase="stitch",
+            message="Stitching complete",
+        )
+        event_bus.emit(scene.id, "stitch_ready", message="Final video ready")
         event_bus.emit(scene.id, "refresh")
 
     except subprocess.CalledProcessError as e:

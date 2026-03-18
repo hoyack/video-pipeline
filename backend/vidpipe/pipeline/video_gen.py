@@ -860,7 +860,13 @@ async def generate_videos(
     shots = result.scalars().all()
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(scene.id, "phase_started", phase="clips", total_shots=len(shots))
+    event_bus.emit(
+        scene.id,
+        "phase_started",
+        phase="clips",
+        total_shots=len(shots),
+        message=f"Starting clip generation for {len(shots)} shot(s)",
+    )
 
     for shot in shots:
         # Per-shot stop flag check (VGED-11)
@@ -888,7 +894,14 @@ async def generate_videos(
         # Set generation_status before video generation (VGED-05)
         shot.generation_status = "generating_clip"
         await session.commit()
-        event_bus.emit(scene.id, "shot_status", shot_index=shot.shot_index, status="generating_clip", phase="clips")
+        event_bus.emit(
+            scene.id,
+            "shot_status",
+            shot_index=shot.shot_index,
+            status="generating_clip",
+            phase="clips",
+            message=f"Shot {shot.shot_index + 1}: generating video clip",
+        )
 
         try:
             if is_comfyui:
@@ -906,7 +919,12 @@ async def generate_videos(
             # Clear generation_status after successful generation (VGED-05)
             shot.generation_status = None
             await session.commit()
-            event_bus.emit(scene.id, "shot_clip_ready", shot_index=shot.shot_index)
+            event_bus.emit(
+                scene.id,
+                "shot_clip_ready",
+                shot_index=shot.shot_index,
+                message=f"Shot {shot.shot_index + 1} clip ready",
+            )
             event_bus.emit(scene.id, "refresh")
         except Exception as e:
             # On exception: set generation_status to "failed" (VGED-05)
@@ -918,7 +936,12 @@ async def generate_videos(
     # Update scene status
     scene.status = "stitching"
     await session.commit()
-    event_bus.emit(scene.id, "phase_completed", phase="clips")
+    event_bus.emit(
+        scene.id,
+        "phase_completed",
+        phase="clips",
+        message="Clip generation complete",
+    )
 
 
 # ---------------------------------------------------------------------------

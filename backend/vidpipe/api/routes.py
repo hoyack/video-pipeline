@@ -4855,7 +4855,13 @@ async def _run_shot_regeneration(
 ):
     """Background task for shot regeneration."""
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(scene_id, "shot_regen_started", shot_index=shot_idx, targets=targets)
+    event_bus.emit(
+        scene_id,
+        "shot_regen_started",
+        shot_index=shot_idx,
+        targets=targets,
+        message=f"Shot {shot_idx + 1} regeneration started for {', '.join(t.replace('_', ' ') for t in targets)}",
+    )
     logger.info("Regenerating shot %d for scene %s: %s", shot_idx, scene_id, targets)
 
     async with async_session() as session:
@@ -4980,7 +4986,12 @@ async def _run_shot_regeneration(
                     metadata={"regenerated": regenerated, "shot_index": shot_idx},
                 )
             await session.commit()
-            event_bus.emit(scene_id, "shot_regen_done", shot_index=shot_idx)
+            event_bus.emit(
+                scene_id,
+                "shot_regen_done",
+                shot_index=shot_idx,
+                message=f"Shot {shot_idx + 1} regeneration complete",
+            )
             event_bus.emit(scene_id, "refresh")
 
 
@@ -5613,6 +5624,16 @@ async def scene_websocket(websocket: WebSocket, scene_id: str):
         event_bus.unsubscribe(scene_id, queue)
 
 
+def _all_phases_complete_message(run_through: Optional[str]) -> str:
+    if run_through == "storyboard":
+        return "Full regeneration complete through storyboard"
+    if run_through == "keyframes":
+        return "Full regeneration complete through keyframes"
+    if run_through == "video":
+        return "Full regeneration complete through clips"
+    return "Full regeneration complete"
+
+
 async def _run_restitch(scene_id: uuid.UUID, *, _emit_complete: bool = True):
     """Background task to re-stitch current clips."""
     from vidpipe.services.event_bus import event_bus
@@ -5623,6 +5644,13 @@ async def _run_restitch(scene_id: uuid.UUID, *, _emit_complete: bool = True):
             return
 
         from vidpipe.pipeline.stitcher import stitch_videos
+        event_bus.emit(
+            scene_id,
+            "phase_started",
+            phase="stitch",
+            total_shots=0,
+            message="Starting video stitch",
+        )
         await stitch_videos(session, scene)
         await session.refresh(scene)
 
@@ -5631,7 +5659,7 @@ async def _run_restitch(scene_id: uuid.UUID, *, _emit_complete: bool = True):
         await session.commit()
         event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Re-stitched video")
         if _emit_complete:
-            event_bus.emit(scene_id, "regen_complete", scope="stitch")
+            event_bus.emit(scene_id, "regen_complete", scope="stitch", message="Stitching complete")
 
 
 async def _run_storyboard_regeneration(
@@ -5676,7 +5704,7 @@ async def _run_storyboard_regeneration(
             await session.commit()
             event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated storyboard text")
             if _emit_complete:
-                event_bus.emit(scene_id, "regen_complete", scope="storyboard")
+                event_bus.emit(scene_id, "regen_complete", scope="storyboard", message="Storyboard regeneration complete")
     except Exception as e:
         logger.error("Storyboard regeneration failed for %s: %s", scene_id, e, exc_info=True)
         # Clear stuck generation_status so the UI doesn't spin forever
@@ -5743,7 +5771,7 @@ async def _run_keyframes_regeneration(
             from vidpipe.services.event_bus import event_bus
             event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale keyframes")
             if _emit_complete:
-                event_bus.emit(scene_id, "regen_complete", scope="keyframes")
+                event_bus.emit(scene_id, "regen_complete", scope="keyframes", message="Keyframe regeneration complete")
     except Exception as e:
         logger.error("Keyframes regeneration failed for %s: %s", scene_id, e, exc_info=True)
         from vidpipe.services.event_bus import event_bus
@@ -5822,7 +5850,7 @@ async def _run_clips_regeneration(
             from vidpipe.services.event_bus import event_bus
             event_bus.emit(scene_id, "checkpoint_created", sha=cp.sha if cp else None, message="Regenerated stale clips")
             if _emit_complete:
-                event_bus.emit(scene_id, "regen_complete", scope="clips")
+                event_bus.emit(scene_id, "regen_complete", scope="clips", message="Clip regeneration complete")
     except Exception as e:
         logger.error("Clips regeneration failed for %s: %s", scene_id, e, exc_info=True)
         from vidpipe.services.event_bus import event_bus
@@ -5848,7 +5876,12 @@ async def _run_all_phases_regeneration(
         )
 
         if run_through == "storyboard":
-            event_bus.emit(scene_id, "regen_complete", scope="all_phases")
+            event_bus.emit(
+                scene_id,
+                "regen_complete",
+                scope="all_phases",
+                message=_all_phases_complete_message(run_through),
+            )
             return
 
         # Keyframes
@@ -5860,7 +5893,12 @@ async def _run_all_phases_regeneration(
         )
 
         if run_through == "keyframes":
-            event_bus.emit(scene_id, "regen_complete", scope="all_phases")
+            event_bus.emit(
+                scene_id,
+                "regen_complete",
+                scope="all_phases",
+                message=_all_phases_complete_message(run_through),
+            )
             return
 
         # Clips
@@ -5872,12 +5910,22 @@ async def _run_all_phases_regeneration(
         )
 
         if run_through == "video":
-            event_bus.emit(scene_id, "regen_complete", scope="all_phases")
+            event_bus.emit(
+                scene_id,
+                "regen_complete",
+                scope="all_phases",
+                message=_all_phases_complete_message(run_through),
+            )
             return
 
         # Full pipeline — also restitch
         await _run_restitch(scene_id, _emit_complete=False)
-        event_bus.emit(scene_id, "regen_complete", scope="all_phases")
+        event_bus.emit(
+            scene_id,
+            "regen_complete",
+            scope="all_phases",
+            message=_all_phases_complete_message(run_through),
+        )
     except Exception as e:
         logger.error("All-phases regeneration failed for %s: %s", scene_id, e, exc_info=True)
         event_bus.emit(scene_id, "error", message=str(e))

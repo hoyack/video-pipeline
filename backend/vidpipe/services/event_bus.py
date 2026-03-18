@@ -9,6 +9,7 @@ import uuid as _uuid
 from typing import Any, Union
 
 logger = logging.getLogger(__name__)
+_TASK_LOG_DETAIL_LIMIT = 12000
 
 
 class EventBus:
@@ -34,7 +35,7 @@ class EventBus:
 
     def subscribe(self, scene_id: Union[str, _uuid.UUID]) -> asyncio.Queue:
         key = self._normalize(scene_id)
-        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
         self._subscribers.setdefault(key, set()).add(queue)
         logger.debug("EventBus: subscribed to %s (total=%d)", key, len(self._subscribers[key]))
         return queue
@@ -63,3 +64,35 @@ class EventBus:
 
 # Module-level singleton
 event_bus = EventBus()
+
+
+def _truncate_detail(detail: str | None, limit: int = _TASK_LOG_DETAIL_LIMIT) -> str | None:
+    if detail is None or len(detail) <= limit:
+        return detail
+    omitted = len(detail) - limit
+    return f"{detail[:limit]}\n\n...[truncated {omitted} characters]"
+
+
+def emit_task_log(
+    scene_id: Union[str, _uuid.UUID],
+    *,
+    summary: str,
+    detail: str | None = None,
+    phase: str | None = None,
+    shot_index: int | None = None,
+    level: str = "info",
+    kind: str | None = None,
+    source: str | None = None,
+) -> None:
+    """Emit a verbose task-log event for the Scene Edit live feed."""
+    event_bus.emit(
+        scene_id,
+        "task_log",
+        phase=phase,
+        shot_index=shot_index,
+        level=level,
+        kind=kind,
+        source=source,
+        summary=summary,
+        detail=_truncate_detail(detail),
+    )

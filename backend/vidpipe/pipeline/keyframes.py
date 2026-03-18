@@ -688,7 +688,13 @@ async def generate_keyframes(
     previous_end_frame_bytes = None
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(scene.id, "phase_started", phase="keyframes", total_shots=len(shots))
+    event_bus.emit(
+        scene.id,
+        "phase_started",
+        phase="keyframes",
+        total_shots=len(shots),
+        message=f"Starting keyframe generation for {len(shots)} shot(s)",
+    )
 
     # Process each shot sequentially (no parallelization)
     for shot in shots:
@@ -731,7 +737,14 @@ async def generate_keyframes(
             if not existing_start_kf:
                 shot.generation_status = "generating_start_kf"
                 await session.commit()
-                event_bus.emit(scene.id, "shot_status", shot_index=shot.shot_index, status="generating_start_kf", phase="keyframes")
+                event_bus.emit(
+                    scene.id,
+                    "shot_status",
+                    shot_index=shot.shot_index,
+                    status="generating_start_kf",
+                    phase="keyframes",
+                    message=f"Shot {shot.shot_index + 1}: generating start keyframe",
+                )
 
             # Phase 10: Adaptive Prompt Rewriting for manifest scenes
             # Also resolves asset reference images for multimodal keyframe generation
@@ -1191,7 +1204,14 @@ async def generate_keyframes(
                 # Update generation_status for end frame (VGED-05)
                 shot.generation_status = "generating_end_kf"
                 await session.commit()
-                event_bus.emit(scene.id, "shot_status", shot_index=shot.shot_index, status="generating_end_kf", phase="keyframes")
+                event_bus.emit(
+                    scene.id,
+                    "shot_status",
+                    shot_index=shot.shot_index,
+                    status="generating_end_kf",
+                    phase="keyframes",
+                    message=f"Shot {shot.shot_index + 1}: generating end keyframe",
+                )
 
                 style_label = scene.style.replace("_", " ")
                 conditioning_prompt = (
@@ -1313,7 +1333,13 @@ async def generate_keyframes(
 
             # Commit after each shot for crash recovery
             await session.commit()
-            event_bus.emit(scene.id, "shot_keyframe_ready", shot_index=shot.shot_index, position="end")
+            event_bus.emit(
+                scene.id,
+                "shot_keyframe_ready",
+                shot_index=shot.shot_index,
+                position="end",
+                message=f"Shot {shot.shot_index + 1} keyframes ready",
+            )
             event_bus.emit(scene.id, "refresh")
 
             # Rate limiting delay (KEYF-05)
@@ -1328,4 +1354,9 @@ async def generate_keyframes(
     # Update scene status after all keyframes generated
     scene.status = "generating_video"
     await session.commit()
-    event_bus.emit(scene.id, "phase_completed", phase="keyframes")
+    event_bus.emit(
+        scene.id,
+        "phase_completed",
+        phase="keyframes",
+        message="Keyframe generation complete",
+    )

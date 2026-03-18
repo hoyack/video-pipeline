@@ -8,9 +8,11 @@ Transforms user text prompts into shot-by-shot breakdowns with:
 Spec reference: STOR-01 through STOR-05
 """
 
+import asyncio
 import json
 import logging
-from typing import Optional
+import re
+from typing import Any, Optional
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, retry_if_exception_type
@@ -19,12 +21,61 @@ from vidpipe.config import settings
 from vidpipe.db.models import Scene, Shot
 from vidpipe.db.models import ShotManifest as ShotManifestModel
 from vidpipe.db.models import ShotAudioManifest as ShotAudioManifestModel
-from vidpipe.schemas.storyboard import StoryboardOutput
-from vidpipe.schemas.storyboard_enhanced import EnhancedStoryboardOutput
+from vidpipe.schemas.storyboard import CharacterDescription, StoryboardOutput, StyleGuide
+from vidpipe.schemas.storyboard_enhanced import (
+    EnhancedStoryboardOutput,
+    ShotManifestPackageOutput,
+    ShotPromptPackageOutput,
+)
+from vidpipe.services.event_bus import emit_task_log
 from vidpipe.services.llm import get_adapter, LLMAdapter
 from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry, format_binding_registry
 
 logger = logging.getLogger(__name__)
+
+
+_DUPLICATE_AT_TAG_PATTERN = re.compile(r"@{2,}([A-Za-z0-9_]+)")
+
+
+def _format_llm_detail(*, model_label: str | None, schema_name: str, content: Any) -> str:
+    if isinstance(content, str):
+        body = content
+    else:
+        body = json.dumps(content, indent=2)
+    return (
+        f"MODEL: {model_label or 'unknown'}\n"
+        f"SCHEMA: {schema_name}\n\n"
+        f"{body}"
+    )
+
+
+def _display_at_tag(tag: str) -> str:
+    """Render a tag with exactly one leading @ for human-readable prompts."""
+    normalized = (tag or "").lstrip("@")
+    return f"@{normalized}" if normalized else "@"
+
+
+def _collapse_duplicate_at_tags(text: str | None) -> str | None:
+    """Collapse repeated @ prefixes in freeform prompt text."""
+    if text is None:
+        return None
+    return _DUPLICATE_AT_TAG_PATTERN.sub(r"@\1", text)
+
+
+def _sanitized_prompt_fields(
+    *,
+    start_frame_prompt: str | None,
+    end_frame_prompt: str | None,
+    video_motion_prompt: str | None,
+    transition_notes: str | None,
+) -> dict[str, str | None]:
+    """Normalize duplicated @tag mentions in persisted storyboard prompts."""
+    return {
+        "start_frame_prompt": _collapse_duplicate_at_tags(start_frame_prompt),
+        "end_frame_prompt": _collapse_duplicate_at_tags(end_frame_prompt),
+        "video_motion_prompt": _collapse_duplicate_at_tags(video_motion_prompt),
+        "transition_notes": _collapse_duplicate_at_tags(transition_notes),
+    }
 
 
 def _remap_unrecognized_tags(
@@ -186,6 +237,839 @@ Bad example: "A blonde woman in anime style turns around in a congressional hear
 GOAL: Ensure all shots maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 
 
+def _split_appearance_and_clothing(text: str | None) -> tuple[str, str]:
+    """Split a freeform appearance prompt into physical/clothing halves when possible."""
+    if not text:
+        return "", ""
+    cleaned = " ".join(str(text).replace("\n", " ").split())
+    match = re.search(r"\bwearing\b", cleaned, flags=re.IGNORECASE)
+    if not match:
+        return cleaned, ""
+    physical = cleaned[:match.start()].strip(" ,.;:-")
+    clothing = cleaned[match.end():].strip(" ,.;:-")
+    return (physical or cleaned), clothing
+
+
+def _deterministic_style_guide(style: str, aspect_ratio: str) -> StyleGuide:
+    """Build a lightweight style guide without another LLM call."""
+    style_label = style.replace("_", " ").strip() or "cinematic"
+    if aspect_ratio == "9:16":
+        camera_style = (
+            "portrait-first framing with close and medium compositions designed for vertical viewing"
+        )
+    else:
+        camera_style = (
+            "wide-to-medium cinematic framing with strong horizontal staging for 16:9 playback"
+        )
+    return StyleGuide(
+        visual_style=style_label,
+        color_palette=f"{style_label} palette with lighting choices that reinforce the requested mood",
+        camera_style=camera_style,
+    )
+
+
+async def _load_storyboard_character_entries(
+    session: AsyncSession,
+    production_bible_id,
+    *,
+    using_bindings: bool,
+    legacy_assets: list[Any],
+) -> list[dict[str, str]]:
+    """Load deterministic character descriptions from bindings or legacy assets."""
+    entries: list[dict[str, str]] = []
+
+    if not production_bible_id:
+        return entries
+
+    if using_bindings:
+        from sqlalchemy import select as sa_select
+        from vidpipe.db.models import Actor, CastBinding
+
+        result = await session.execute(
+            sa_select(CastBinding, Actor)
+            .outerjoin(Actor, Actor.id == CastBinding.actor_id)
+            .where(CastBinding.production_bible_id == production_bible_id)
+            .order_by(CastBinding.created_at)
+        )
+        seen: set[str] = set()
+        for binding, actor in result.all():
+            if not binding.tag or binding.tag in seen:
+                continue
+            seen.add(binding.tag)
+            source_text = (
+                (actor.base_appearance_prompt if actor else None)
+                or binding.character_description
+                or binding.character_name
+                or binding.tag
+            )
+            physical, clothing = _split_appearance_and_clothing(source_text)
+            if not clothing and binding.wardrobe_override:
+                clothing = ", ".join(
+                    f"{k}: {v}" for k, v in binding.wardrobe_override.items()
+                )
+            entries.append({
+                "tag": binding.tag,
+                "name": binding.character_name or (actor.name if actor else binding.tag),
+                "physical_description": physical or binding.character_name or binding.tag,
+                "clothing_description": clothing,
+            })
+        return entries
+
+    seen = set()
+    for asset in sorted(legacy_assets, key=lambda a: (a.sort_order, a.manifest_tag, a.name)):
+        if asset.manifest_tag in seen:
+            continue
+        if asset.asset_type != "CHARACTER" and not asset.manifest_tag.startswith("CHAR_"):
+            continue
+        seen.add(asset.manifest_tag)
+        source_text = asset.reverse_prompt or asset.description or asset.name
+        physical, clothing = _split_appearance_and_clothing(source_text)
+        entries.append({
+            "tag": asset.manifest_tag,
+            "name": asset.name,
+            "physical_description": physical or asset.name,
+            "clothing_description": clothing,
+        })
+    return entries
+
+
+def _character_models_from_entries(
+    entries: list[dict[str, str]],
+) -> list[CharacterDescription]:
+    """Convert internal character registry entries into public storyboard characters."""
+    return [
+        CharacterDescription(
+            name=entry["name"],
+            physical_description=entry["physical_description"],
+            clothing_description=entry["clothing_description"],
+        )
+        for entry in entries
+    ]
+
+
+def _character_bible_block(
+    entries: list[dict[str, str]],
+    visible_tags: list[str],
+) -> str:
+    """Render a compact character bible block for the current shot."""
+    if not visible_tags:
+        return "CHARACTER BIBLE:\n- No visible characters in this shot."
+
+    by_tag = {entry["tag"]: entry for entry in entries}
+    lines = ["CHARACTER BIBLE:"]
+    for tag in visible_tags:
+        entry = by_tag.get(tag)
+        if entry:
+            clothing = entry["clothing_description"] or "same established wardrobe"
+            lines.append(
+                f"- {_display_at_tag(tag)}: {entry['name']} — {entry['physical_description']}. Wearing {clothing}."
+            )
+        else:
+            lines.append(f"- {_display_at_tag(tag)}: visible in this shot; keep the established appearance consistent.")
+    return "\n".join(lines)
+
+
+def _existing_storyboard_shots_map(
+    scene: Scene,
+    existing_shots: list[Shot],
+) -> dict[int, dict[str, Any]]:
+    """Build a mutable shot-index map from existing storyboard_raw and DB rows."""
+    by_index: dict[int, dict[str, Any]] = {}
+
+    raw = scene.storyboard_raw or {}
+    if isinstance(raw, dict):
+        for shot_entry in raw.get("shots", []):
+            if isinstance(shot_entry, dict) and "shot_index" in shot_entry:
+                by_index[int(shot_entry["shot_index"])] = dict(shot_entry)
+
+    for shot in existing_shots:
+        entry = by_index.get(shot.shot_index, {})
+        entry.setdefault("shot_index", shot.shot_index)
+        entry.setdefault("key_details", [])
+        entry["shot_description"] = shot.shot_description or entry.get("shot_description", "")
+        entry["start_frame_prompt"] = shot.start_frame_prompt or entry.get("start_frame_prompt", "")
+        entry["end_frame_prompt"] = shot.end_frame_prompt or entry.get("end_frame_prompt", "")
+        entry["video_motion_prompt"] = shot.video_motion_prompt or entry.get("video_motion_prompt", "")
+        entry["transition_notes"] = shot.transition_notes or entry.get("transition_notes", "")
+        by_index[shot.shot_index] = entry
+
+    return by_index
+
+
+def _storyboard_raw_payload(
+    style_guide: StyleGuide,
+    characters: list[CharacterDescription],
+    shots_by_index: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    """Rebuild the public storyboard_raw payload in the legacy shape."""
+    return {
+        "style_guide": style_guide.model_dump(),
+        "characters": [character.model_dump() for character in characters],
+        "shots": [shots_by_index[idx] for idx in sorted(shots_by_index)],
+    }
+
+
+def _build_storyboard_shot_entry(
+    shot_index: int,
+    shot_description: str,
+    key_details: list[str],
+    prompt_package: ShotPromptPackageOutput,
+    manifest_dict: dict[str, Any],
+    audio_dict: dict[str, Any],
+) -> dict[str, Any]:
+    """Build one shot entry for scene.storyboard_raw."""
+    sanitized_fields = _sanitized_prompt_fields(
+        start_frame_prompt=prompt_package.start_frame_prompt,
+        end_frame_prompt=prompt_package.end_frame_prompt,
+        video_motion_prompt=prompt_package.video_motion_prompt,
+        transition_notes=prompt_package.transition_notes,
+    )
+    return {
+        "shot_index": shot_index,
+        "shot_description": shot_description,
+        "key_details": key_details,
+        "start_frame_prompt": sanitized_fields["start_frame_prompt"],
+        "end_frame_prompt": sanitized_fields["end_frame_prompt"],
+        "video_motion_prompt": sanitized_fields["video_motion_prompt"],
+        "transition_notes": sanitized_fields["transition_notes"],
+        "shot_manifest": manifest_dict,
+        "audio_manifest": audio_dict,
+    }
+
+
+def _build_manifest_generation_prompt(
+    *,
+    style_label: str,
+    aspect_ratio: str,
+    asset_registry_block: str,
+    resolved_prompt_text: str,
+    screenplay_enrichment: str,
+    shot_assignment: Any,
+    previous_assignment: Any,
+    next_assignment: Any,
+    fixed_description: str | None,
+) -> str:
+    """Prompt for per-shot manifest and audio package generation."""
+    sections = [
+        "You are generating ONE storyboard shot package for an AI video pipeline.",
+        f"VISUAL STYLE: {style_label}",
+        f"ASPECT RATIO: {aspect_ratio}",
+        "",
+        asset_registry_block,
+        "",
+    ]
+    if screenplay_enrichment.strip():
+        sections.extend([screenplay_enrichment.strip(), ""])
+    sections.extend([
+        "ORIGINAL SCRIPT:",
+        resolved_prompt_text,
+        "",
+        "SHOT ASSIGNMENT (authoritative):",
+        json.dumps(shot_assignment.model_dump(), indent=2),
+    ])
+    if previous_assignment is not None:
+        sections.extend([
+            "",
+            "PREVIOUS SHOT SUMMARY:",
+            json.dumps(previous_assignment.model_dump(), indent=2),
+        ])
+    if next_assignment is not None:
+        sections.extend([
+            "",
+            "NEXT SHOT SUMMARY:",
+            json.dumps(next_assignment.model_dump(), indent=2),
+        ])
+    if fixed_description:
+        sections.extend([
+            "",
+            "FIXED SHOT DESCRIPTION:",
+            fixed_description,
+            "Keep the shot_description semantically identical to the fixed description above.",
+        ])
+    sections.extend([
+        "",
+        "Return ONLY this shot's package.",
+        "Requirements:",
+        "- Use the shot_assignment exactly; do not add characters not listed in characters_present.",
+        "- If characters_present is empty, placements must contain NO character assets.",
+        "- Produce shot_description, key_details, shot_manifest, and audio_manifest only.",
+        "- shot_manifest.asset_tag and audio_manifest.speaker_tag values must use existing raw tags with NO leading @.",
+        "- shot_manifest.shot_index and audio_manifest.shot_index must equal the requested shot_index.",
+        "- shot_manifest must include at least one placement.",
+        "- audio_manifest must always include ambient or another minimal sound layer.",
+        "- Do not generate start/end prompts, motion prompts, style guides, or top-level character lists.",
+    ])
+    return "\n".join(sections)
+
+
+def _build_prompt_generation_prompt(
+    *,
+    style_label: str,
+    aspect_ratio: str,
+    style_guide: StyleGuide,
+    shot_assignment: Any,
+    manifest_package: ShotManifestPackageOutput,
+    character_entries: list[dict[str, str]],
+    previous_assignment: Any,
+    next_assignment: Any,
+    fixed_description: str | None,
+) -> str:
+    """Prompt for per-shot keyframe/motion prompt writing."""
+    sections = [
+        "You are writing detailed storyboard prompts for ONE shot.",
+        f"VISUAL STYLE: {style_label}",
+        f"ASPECT RATIO: {aspect_ratio}",
+        "",
+        "STYLE GUIDE:",
+        json.dumps(style_guide.model_dump(), indent=2),
+        "",
+        _character_bible_block(character_entries, shot_assignment.characters_present or []),
+        "",
+        "SHOT ASSIGNMENT:",
+        json.dumps(shot_assignment.model_dump(), indent=2),
+        "",
+        "SHOT PACKAGE:",
+        json.dumps(manifest_package.model_dump(), indent=2),
+    ]
+    if previous_assignment is not None:
+        sections.extend([
+            "",
+            "PREVIOUS SHOT SUMMARY:",
+            json.dumps(previous_assignment.model_dump(), indent=2),
+        ])
+    if next_assignment is not None:
+        sections.extend([
+            "",
+            "NEXT SHOT SUMMARY:",
+            json.dumps(next_assignment.model_dump(), indent=2),
+        ])
+    if fixed_description:
+        sections.extend([
+            "",
+            "FIXED SHOT DESCRIPTION:",
+            fixed_description,
+        ])
+    sections.extend([
+        "",
+        "Write ONLY: start_frame_prompt, end_frame_prompt, video_motion_prompt, transition_notes.",
+        "Prompt rules:",
+        f"- Both frame prompts MUST begin with: \"A {style_label} rendering of...\"",
+        "- Frame prompts must describe subject, action, setting, lighting, camera, style cues, and color palette.",
+        "- video_motion_prompt must describe motion and camera movement only; do not restate appearance details.",
+        "- transition_notes must connect this shot to the next shot, or resolve the scene if it is the last shot.",
+        "- Keep character appearance consistent with the character bible and shot placements.",
+        "- Do not generate style guides, top-level characters, manifests, or audio.",
+    ])
+    return "\n".join(sections)
+
+
+async def _run_manifest_shot_pipeline(
+    *,
+    semaphore: asyncio.Semaphore,
+    adapter: LLMAdapter,
+    scene_id,
+    event_bus,
+    manifest_prompt: str,
+    style_label: str,
+    aspect_ratio: str,
+    style_guide: StyleGuide,
+    shot_assignment: Any,
+    character_entries: list[dict[str, str]],
+    previous_assignment: Any,
+    next_assignment: Any,
+    fixed_description: str | None,
+    shot_index: int,
+    model_label: str | None,
+) -> dict[str, Any]:
+    """Run the per-shot manifest + prompt pipeline and return a structured result."""
+    try:
+        event_bus.emit(
+            scene_id,
+            "shot_status",
+            shot_index=shot_index,
+            status="generating_manifest",
+            phase="storyboard",
+            message=f"Shot {shot_index + 1}: generating manifest and audio plan",
+        )
+        emit_task_log(
+            scene_id,
+            phase="storyboard",
+            shot_index=shot_index,
+            kind="prompt",
+            source="storyboard.manifest.prompt",
+            summary=f"Shot {shot_index + 1} manifest prompt sent",
+            detail=_format_llm_detail(
+                model_label=model_label,
+                schema_name=ShotManifestPackageOutput.__name__,
+                content=manifest_prompt,
+            ),
+        )
+        async with semaphore:
+            manifest_package = await adapter.generate_text(
+                prompt=manifest_prompt,
+                schema=ShotManifestPackageOutput,
+                temperature=0.5,
+                max_retries=2,
+            )
+        emit_task_log(
+            scene_id,
+            phase="storyboard",
+            shot_index=shot_index,
+            level="success",
+            kind="response",
+            source="storyboard.manifest.response",
+            summary=f"Shot {shot_index + 1} manifest response received",
+            detail=_format_llm_detail(
+                model_label=model_label,
+                schema_name=ShotManifestPackageOutput.__name__,
+                content=manifest_package.model_dump(),
+            ),
+        )
+
+        event_bus.emit(
+            scene_id,
+            "shot_status",
+            shot_index=shot_index,
+            status="generating_prompts",
+            phase="storyboard",
+            message=f"Shot {shot_index + 1}: writing storyboard prompts",
+        )
+        prompt_prompt = _build_prompt_generation_prompt(
+            style_label=style_label,
+            aspect_ratio=aspect_ratio,
+            style_guide=style_guide,
+            shot_assignment=shot_assignment,
+            manifest_package=manifest_package,
+            character_entries=character_entries,
+            previous_assignment=previous_assignment,
+            next_assignment=next_assignment,
+            fixed_description=fixed_description,
+        )
+        emit_task_log(
+            scene_id,
+            phase="storyboard",
+            shot_index=shot_index,
+            kind="prompt",
+            source="storyboard.prompts.prompt",
+            summary=f"Shot {shot_index + 1} prompt-writer request sent",
+            detail=_format_llm_detail(
+                model_label=model_label,
+                schema_name=ShotPromptPackageOutput.__name__,
+                content=prompt_prompt,
+            ),
+        )
+        async with semaphore:
+            prompt_package = await adapter.generate_text(
+                prompt=prompt_prompt,
+                schema=ShotPromptPackageOutput,
+                temperature=0.5,
+                max_retries=2,
+            )
+        emit_task_log(
+            scene_id,
+            phase="storyboard",
+            shot_index=shot_index,
+            level="success",
+            kind="response",
+            source="storyboard.prompts.response",
+            summary=f"Shot {shot_index + 1} prompt-writer response received",
+            detail=_format_llm_detail(
+                model_label=model_label,
+                schema_name=ShotPromptPackageOutput.__name__,
+                content=prompt_package.model_dump(),
+            ),
+        )
+        return {
+            "shot_index": shot_index,
+            "manifest_package": manifest_package,
+            "prompt_package": prompt_package,
+        }
+    except Exception as exc:
+        emit_task_log(
+            scene_id,
+            phase="storyboard",
+            shot_index=shot_index,
+            level="error",
+            kind="error",
+            source="storyboard.pipeline.error",
+            summary=f"Shot {shot_index + 1} storyboard worker failed",
+            detail=str(exc),
+        )
+        return {
+            "shot_index": shot_index,
+            "error": exc,
+        }
+
+
+async def _generate_manifest_storyboard_parallel(
+    session: AsyncSession,
+    scene: Scene,
+    adapter: LLMAdapter,
+    *,
+    existing_shots: list[Shot],
+    filled_shots: list[Shot],
+    empty_shots: list[Shot],
+    asset_registry_block: str,
+    asset_tags_set: set[str],
+    style_label: str,
+    screenplay_enrichment: str,
+    resolved_prompt_text: str,
+    screenwriter_breakdown: Any,
+    is_dynamic: bool,
+    using_bindings: bool,
+    legacy_assets: list[Any],
+) -> None:
+    """Generate manifest-aware storyboard text via per-shot parallel calls."""
+    from sqlalchemy import delete as sa_delete
+    from vidpipe.services.event_bus import event_bus
+
+    breakdown_by_index = {
+        assignment.shot_index: assignment
+        for assignment in screenwriter_breakdown.shots
+    }
+    target_indices = (
+        [shot.shot_index for shot in empty_shots]
+        if existing_shots
+        else [assignment.shot_index for assignment in screenwriter_breakdown.shots]
+    )
+    total_targets = len(target_indices)
+
+    if is_dynamic and screenwriter_breakdown.shots:
+        scene.target_shot_count = len(screenwriter_breakdown.shots)
+        logger.info(
+            "Scene %s: dynamic shot count → %d shots",
+            scene.id, scene.target_shot_count,
+        )
+
+    style_guide = _deterministic_style_guide(scene.style, scene.aspect_ratio)
+    character_entries = await _load_storyboard_character_entries(
+        session,
+        scene.production_bible_id,
+        using_bindings=using_bindings,
+        legacy_assets=legacy_assets,
+    )
+    character_models = _character_models_from_entries(character_entries)
+
+    existing_by_index = {shot.shot_index: shot for shot in existing_shots}
+    shots_by_index = _existing_storyboard_shots_map(scene, existing_shots)
+
+    for shot_row in existing_shots:
+        assignment = breakdown_by_index.get(shot_row.shot_index)
+        if not assignment:
+            continue
+        shot_row.characters_present = assignment.characters_present
+        shot_row.beat_index = assignment.beat_index
+        shot_row.narrative_intent = assignment.narrative_intent
+        shot_row.emotional_weight = assignment.emotional_weight
+
+    scene.style_guide = style_guide.model_dump()
+    scene.storyboard_raw = _storyboard_raw_payload(
+        style_guide,
+        character_models,
+        shots_by_index,
+    )
+    await session.commit()
+
+    progress = {
+        "completed": 0,
+        "active": total_targets,
+    }
+    heartbeat_stop = asyncio.Event()
+
+    async def _heartbeat() -> None:
+        while not heartbeat_stop.is_set():
+            await asyncio.sleep(10)
+            if heartbeat_stop.is_set():
+                break
+            event_bus.emit(
+                scene.id,
+                "phase_progress",
+                phase="storyboard",
+                completed_shots=progress["completed"],
+                total_shots=total_targets,
+                active_shots=progress["active"],
+                message=(
+                    f"Storyboard still generating: {progress['completed']}/{total_targets} shots complete, "
+                    f"{progress['active']} active"
+                ),
+            )
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
+
+    failures: list[tuple[int, Exception | str]] = []
+    semaphore = asyncio.Semaphore(max(1, min(4, total_targets or 1)))
+    tasks = []
+
+    for shot_index in target_indices:
+        assignment = breakdown_by_index.get(shot_index)
+        if assignment is None:
+            failures.append((shot_index, "missing shot breakdown"))
+            progress["active"] -= 1
+            continue
+
+        existing_shot = existing_by_index.get(shot_index)
+        fixed_description = None
+        if existing_shot and existing_shot.shot_description and existing_shot.shot_description.strip():
+            fixed_description = existing_shot.shot_description.strip()
+
+        manifest_prompt = _build_manifest_generation_prompt(
+            style_label=style_label,
+            aspect_ratio=scene.aspect_ratio,
+            asset_registry_block=asset_registry_block,
+            resolved_prompt_text=resolved_prompt_text,
+            screenplay_enrichment=screenplay_enrichment,
+            shot_assignment=assignment,
+            previous_assignment=breakdown_by_index.get(shot_index - 1),
+            next_assignment=breakdown_by_index.get(shot_index + 1),
+            fixed_description=fixed_description,
+        )
+
+        tasks.append(asyncio.create_task(
+            _run_manifest_shot_pipeline(
+                semaphore=semaphore,
+                adapter=adapter,
+                scene_id=scene.id,
+                event_bus=event_bus,
+                manifest_prompt=manifest_prompt,
+                style_label=style_label,
+                aspect_ratio=scene.aspect_ratio,
+                style_guide=style_guide,
+                shot_assignment=assignment,
+                character_entries=character_entries,
+                previous_assignment=breakdown_by_index.get(shot_index - 1),
+                next_assignment=breakdown_by_index.get(shot_index + 1),
+                fixed_description=fixed_description,
+                shot_index=shot_index,
+                model_label=scene.text_model,
+            )
+        ))
+
+    try:
+        event_bus.emit(
+            scene.id,
+            "phase_progress",
+            phase="storyboard",
+            completed_shots=0,
+            total_shots=total_targets,
+            active_shots=progress["active"],
+            message=f"Generating storyboard for {total_targets} shot(s)",
+        )
+
+        manifest_characters = sorted(
+            [tag for tag in asset_tags_set if tag.startswith("CHAR_")]
+        )
+
+        for task in asyncio.as_completed(tasks):
+            result = await task
+            shot_index = result["shot_index"]
+
+            if "error" in result:
+                failures.append((shot_index, result["error"]))
+                logger.error(
+                    "Scene %s shot %d: storyboard generation failed: %s",
+                    scene.id, shot_index, result["error"],
+                    exc_info=result["error"],
+                )
+                progress["active"] -= 1
+                event_bus.emit(
+                    scene.id,
+                    "phase_progress",
+                    phase="storyboard",
+                    completed_shots=progress["completed"],
+                    total_shots=total_targets,
+                    active_shots=progress["active"],
+                    message=(
+                        f"Shot {shot_index + 1} failed; {progress['completed']}/{total_targets} shots complete"
+                    ),
+                )
+                continue
+
+            manifest_package: ShotManifestPackageOutput = result["manifest_package"]
+            prompt_package: ShotPromptPackageOutput = result["prompt_package"]
+            sanitized_fields = _sanitized_prompt_fields(
+                start_frame_prompt=prompt_package.start_frame_prompt,
+                end_frame_prompt=prompt_package.end_frame_prompt,
+                video_motion_prompt=prompt_package.video_motion_prompt,
+                transition_notes=prompt_package.transition_notes,
+            )
+            existing = existing_by_index.get(shot_index)
+
+            shot_description = manifest_package.shot_description
+            if existing and existing.shot_description and existing.shot_description.strip():
+                shot_description = existing.shot_description
+
+            if existing:
+                if not existing.shot_description or not existing.shot_description.strip():
+                    existing.shot_description = shot_description
+                for attr in (
+                    "start_frame_prompt",
+                    "end_frame_prompt",
+                    "video_motion_prompt",
+                    "transition_notes",
+                ):
+                    current = getattr(existing, attr)
+                    if not current or not current.strip():
+                        setattr(existing, attr, sanitized_fields[attr])
+                shot_row = existing
+            else:
+                shot_row = Shot(
+                    scene_id=scene.id,
+                    shot_index=shot_index,
+                    shot_description=shot_description,
+                    start_frame_prompt=sanitized_fields["start_frame_prompt"],
+                    end_frame_prompt=sanitized_fields["end_frame_prompt"],
+                    video_motion_prompt=sanitized_fields["video_motion_prompt"],
+                    transition_notes=sanitized_fields["transition_notes"],
+                    status="pending",
+                )
+                session.add(shot_row)
+                existing_by_index[shot_index] = shot_row
+
+            assignment = breakdown_by_index.get(shot_index)
+            if assignment:
+                shot_row.characters_present = assignment.characters_present
+                shot_row.beat_index = assignment.beat_index
+                shot_row.narrative_intent = assignment.narrative_intent
+                shot_row.emotional_weight = assignment.emotional_weight
+            shot_row.status = "pending"
+            shot_row.generation_status = None
+
+            manifest_dict = manifest_package.shot_manifest.model_dump()
+            for placement in manifest_dict.get("placements", []):
+                tag = placement.get("asset_tag")
+                if isinstance(tag, str) and tag.startswith("@"):
+                    placement["asset_tag"] = tag[1:]
+            _remap_unrecognized_tags(manifest_dict, asset_tags_set, manifest_characters)
+
+            audio_dict = manifest_package.audio_manifest.model_dump()
+            audio_dialogue = audio_dict.get("dialogue_lines", []) or []
+            for dialogue_entry in audio_dialogue:
+                speaker = dialogue_entry.get("speaker_tag", "")
+                if isinstance(speaker, str) and speaker.startswith("@"):
+                    speaker = speaker[1:]
+                    dialogue_entry["speaker_tag"] = speaker
+                if speaker.startswith("CHAR_") and speaker not in asset_tags_set:
+                    for placement in manifest_dict.get("placements", []):
+                        candidate = placement.get("asset_tag", "")
+                        if isinstance(candidate, str) and candidate in asset_tags_set and candidate.startswith("CHAR_"):
+                            logger.info(
+                                "Audio tag remap: speaker_tag %s -> %s",
+                                speaker, candidate,
+                            )
+                            dialogue_entry["speaker_tag"] = candidate
+                            break
+
+            await session.execute(
+                sa_delete(ShotManifestModel).where(
+                    ShotManifestModel.scene_id == scene.id,
+                    ShotManifestModel.shot_index == shot_index,
+                )
+            )
+            await session.execute(
+                sa_delete(ShotAudioManifestModel).where(
+                    ShotAudioManifestModel.scene_id == scene.id,
+                    ShotAudioManifestModel.shot_index == shot_index,
+                )
+            )
+
+            shot_manifest = ShotManifestModel(
+                scene_id=scene.id,
+                shot_index=shot_index,
+                manifest_json=manifest_dict,
+                composition_shot_type=manifest_package.shot_manifest.composition.shot_type,
+                composition_camera_movement=manifest_package.shot_manifest.composition.camera_movement,
+                asset_tags=[p.get("asset_tag", "") for p in manifest_dict.get("placements", [])],
+                new_asset_count=len(manifest_dict.get("new_asset_declarations") or []),
+            )
+            session.add(shot_manifest)
+
+            audio_manifest = ShotAudioManifestModel(
+                scene_id=scene.id,
+                shot_index=shot_index,
+                dialogue_json=audio_dialogue,
+                sfx_json=audio_dict.get("sfx", []),
+                ambient_json=audio_dict.get("ambient"),
+                music_json=audio_dict.get("music"),
+                audio_continuity_json=audio_dict.get("audio_continuity"),
+                speaker_tags=[d.get("speaker_tag", "") for d in audio_dialogue],
+                has_dialogue=len(audio_dialogue) > 0,
+                has_music=audio_dict.get("music") is not None,
+            )
+            session.add(audio_manifest)
+
+            shots_by_index[shot_index] = _build_storyboard_shot_entry(
+                shot_index,
+                shot_description,
+                manifest_package.key_details,
+                prompt_package,
+                manifest_dict,
+                audio_dict,
+            )
+            scene.storyboard_raw = _storyboard_raw_payload(
+                style_guide,
+                character_models,
+                shots_by_index,
+            )
+            scene.style_guide = style_guide.model_dump()
+            scene.error_message = None
+
+            await session.commit()
+
+            progress["completed"] += 1
+            progress["active"] -= 1
+            event_bus.emit(
+                scene.id,
+                "shot_text_ready",
+                shot_index=shot_index,
+                message=f"Shot {shot_index + 1} storyboard text ready",
+            )
+            event_bus.emit(
+                scene.id,
+                "phase_progress",
+                phase="storyboard",
+                completed_shots=progress["completed"],
+                total_shots=total_targets,
+                active_shots=progress["active"],
+                message=(
+                    f"Storyboard complete for shot {shot_index + 1}; "
+                    f"{progress['completed']}/{total_targets} shots ready"
+                ),
+            )
+
+    finally:
+        heartbeat_stop.set()
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+
+    for shot in filled_shots:
+        shot.generation_status = None
+    for shot in empty_shots:
+        if shot.generation_status == "generating_text":
+            shot.generation_status = None
+
+    if failures:
+        failed_labels = ", ".join(str(index + 1) for index, _ in failures)
+        scene.status = "failed"
+        scene.error_message = f"Storyboard generation failed for shot(s): {failed_labels}"
+        await session.commit()
+        raise RuntimeError(scene.error_message)
+
+    scene.status = "keyframing"
+    scene.error_message = None
+    await session.commit()
+
+    event_bus.emit(
+        scene.id,
+        "phase_completed",
+        phase="storyboard",
+        message="Storyboard generation complete",
+    )
+    event_bus.emit(scene.id, "refresh")
+
+
 # Enhanced system prompt for manifest-aware storyboarding
 ENHANCED_STORYBOARD_PROMPT = """You are a storyboard director specializing in short-form video content.
 
@@ -339,29 +1223,43 @@ async def generate_storyboard(
     # Determine if production-bible-aware mode
     use_manifests = scene.production_bible_id is not None
 
+    binding_registry_used = False
+    legacy_assets: list[Any] = []
     if use_manifests:
         # Try binding registry path first (Phase 23 -- @tag syntax)
         binding_block = await format_binding_registry(session, scene.production_bible_id)
         if binding_block:
             asset_registry_block = binding_block
-            # For asset_tags_set, extract tags from bindings for post-LLM remapping
+            binding_registry_used = True
             from vidpipe.db.models import CastBinding as _CB
+            from vidpipe.db.models import PropBinding as _PB
+            from vidpipe.db.models import SetBinding as _SB
             _cast_res = await session.execute(
                 sa_select(_CB.tag).where(_CB.production_bible_id == scene.production_bible_id)
             )
-            asset_tags_set = {t.upper() for (t,) in _cast_res.all()}
+            _set_res = await session.execute(
+                sa_select(_SB.tag).where(_SB.production_bible_id == scene.production_bible_id)
+            )
+            _prop_res = await session.execute(
+                sa_select(_PB.tag).where(_PB.production_bible_id == scene.production_bible_id)
+            )
+            asset_tags_set = {
+                *(t for (t,) in _cast_res.all()),
+                *(t for (t,) in _set_res.all()),
+                *(t for (t,) in _prop_res.all()),
+            }
             logger.info(
                 "Scene %s: binding-aware storyboard with binding registry",
                 scene.id,
             )
         else:
             # Fallback to legacy manifest asset path
-            assets = await load_manifest_assets(session, scene.production_bible_id)
-            asset_registry_block = format_asset_registry(assets)
-            asset_tags_set = {a.manifest_tag for a in assets}
+            legacy_assets = await load_manifest_assets(session, scene.production_bible_id)
+            asset_registry_block = format_asset_registry(legacy_assets)
+            asset_tags_set = {a.manifest_tag for a in legacy_assets}
             logger.info(
                 "Scene %s: manifest-aware storyboard with %d assets (legacy path)",
-                scene.id, len(assets),
+                scene.id, len(legacy_assets),
             )
     else:
         asset_registry_block = ""
@@ -466,7 +1364,13 @@ async def generate_storyboard(
         await session.commit()
 
     from vidpipe.services.event_bus import event_bus
-    event_bus.emit(scene.id, "phase_started", phase="storyboard", total_shots=scene.target_shot_count)
+    event_bus.emit(
+        scene.id,
+        "phase_started",
+        phase="storyboard",
+        total_shots=scene.target_shot_count,
+        message=f"Starting storyboard generation for {scene.target_shot_count} shot(s)",
+    )
 
     # ── Screenwriter Agent: Script Analysis + Shot Breakdown ──────────
     # Runs 2 LLM calls BEFORE the storyboard call to produce explicit
@@ -475,7 +1379,11 @@ async def generate_storyboard(
     if use_manifests or not existing_shots:
         try:
             from vidpipe.services.screenwriter_agent import ScreenwriterAgentService
-            agent = ScreenwriterAgentService(adapter)
+            agent = ScreenwriterAgentService(
+                adapter,
+                scene_id=scene.id,
+                model_label=scene.text_model,
+            )
 
             # Step 1: Analyze script
             analysis = await agent.analyze_script(
@@ -510,13 +1418,33 @@ async def generate_storyboard(
         except Exception as e:
             logger.warning("Screenwriter agent failed (non-fatal, continuing): %s", e)
 
+    if use_manifests and screenwriter_breakdown:
+        await _generate_manifest_storyboard_parallel(
+            session,
+            scene,
+            adapter,
+            existing_shots=existing_shots,
+            filled_shots=filled_shots,
+            empty_shots=empty_shots,
+            asset_registry_block=asset_registry_block,
+            asset_tags_set=asset_tags_set,
+            style_label=style_label,
+            screenplay_enrichment=screenplay_enrichment,
+            resolved_prompt_text=resolved_prompt_text,
+            screenwriter_breakdown=screenwriter_breakdown,
+            is_dynamic=is_dynamic,
+            using_bindings=binding_registry_used,
+            legacy_assets=legacy_assets,
+        )
+        return
+
     # Inject shot breakdown as constraint into storyboard prompt
     shot_constraints = ""
     if screenwriter_breakdown:
         constraint_lines = ["\nSHOT BREAKDOWN (follow these character assignments exactly):"]
         for sa in screenwriter_breakdown.shots:
             chars = (
-                ", ".join(f"@{c}" for c in sa.characters_present)
+                ", ".join(_display_at_tag(c) for c in sa.characters_present)
                 if sa.characters_present
                 else "(none — scenery only)"
             )
@@ -551,11 +1479,36 @@ async def generate_storyboard(
 
         # Call LLM adapter with structured output constraint
         # max_retries=1 so temperature reduction (outer retry) works correctly
+        emit_task_log(
+            scene.id,
+            phase="storyboard",
+            kind="prompt",
+            source="storyboard.full.prompt",
+            summary=f"Storyboard prompt attempt {attempt} sent",
+            detail=_format_llm_detail(
+                model_label=scene.text_model,
+                schema_name=response_schema.__name__,
+                content=full_prompt,
+            ),
+        )
         storyboard = await adapter.generate_text(
             prompt=full_prompt,
             schema=response_schema,
             temperature=max(0.0, temperature),
             max_retries=1,
+        )
+        emit_task_log(
+            scene.id,
+            phase="storyboard",
+            level="success",
+            kind="response",
+            source="storyboard.full.response",
+            summary=f"Storyboard response received on attempt {attempt}",
+            detail=_format_llm_detail(
+                model_label=scene.text_model,
+                schema_name=response_schema.__name__,
+                content=storyboard.model_dump(),
+            ),
         )
         return storyboard
 
@@ -580,6 +1533,12 @@ async def generate_storyboard(
         # Draft scene: Shot rows already exist — update only empty shots
         existing_by_index = {s.shot_index: s for s in existing_shots}
         for shot_data in storyboard.shots:
+            sanitized_fields = _sanitized_prompt_fields(
+                start_frame_prompt=shot_data.start_frame_prompt,
+                end_frame_prompt=shot_data.end_frame_prompt,
+                video_motion_prompt=shot_data.video_motion_prompt,
+                transition_notes=shot_data.transition_notes,
+            )
             existing = existing_by_index.get(shot_data.shot_index)
             if existing:
                 # Per-field update: only fill in empty fields, preserve user-provided text
@@ -587,7 +1546,10 @@ async def generate_storyboard(
                              "video_motion_prompt", "transition_notes"):
                     current = getattr(existing, attr)
                     if not current or not current.strip():
-                        setattr(existing, attr, getattr(shot_data, attr))
+                        if attr == "shot_description":
+                            setattr(existing, attr, getattr(shot_data, attr))
+                        else:
+                            setattr(existing, attr, sanitized_fields[attr])
                 existing.status = "pending"
                 existing.generation_status = None  # Clear generation_status
             else:
@@ -596,10 +1558,10 @@ async def generate_storyboard(
                     scene_id=scene.id,
                     shot_index=shot_data.shot_index,
                     shot_description=shot_data.shot_description,
-                    start_frame_prompt=shot_data.start_frame_prompt,
-                    end_frame_prompt=shot_data.end_frame_prompt,
-                    video_motion_prompt=shot_data.video_motion_prompt,
-                    transition_notes=shot_data.transition_notes,
+                    start_frame_prompt=sanitized_fields["start_frame_prompt"],
+                    end_frame_prompt=sanitized_fields["end_frame_prompt"],
+                    video_motion_prompt=sanitized_fields["video_motion_prompt"],
+                    transition_notes=sanitized_fields["transition_notes"],
                     status="pending",
                 )
                 session.add(shot)
@@ -615,14 +1577,20 @@ async def generate_storyboard(
     else:
         # Non-draft scene: no existing shots — create all from scratch
         for shot_data in storyboard.shots:
-            shot = Shot(
-                scene_id=scene.id,
-                shot_index=shot_data.shot_index,
-                shot_description=shot_data.shot_description,
+            sanitized_fields = _sanitized_prompt_fields(
                 start_frame_prompt=shot_data.start_frame_prompt,
                 end_frame_prompt=shot_data.end_frame_prompt,
                 video_motion_prompt=shot_data.video_motion_prompt,
                 transition_notes=shot_data.transition_notes,
+            )
+            shot = Shot(
+                scene_id=scene.id,
+                shot_index=shot_data.shot_index,
+                shot_description=shot_data.shot_description,
+                start_frame_prompt=sanitized_fields["start_frame_prompt"],
+                end_frame_prompt=sanitized_fields["end_frame_prompt"],
+                video_motion_prompt=sanitized_fields["video_motion_prompt"],
+                transition_notes=sanitized_fields["transition_notes"],
                 status="pending",
             )
             session.add(shot)
@@ -734,6 +1702,16 @@ async def generate_storyboard(
 
     # Now emit events — any frontend refresh will see the committed state
     for shot_data in storyboard.shots:
-        event_bus.emit(scene.id, "shot_text_ready", shot_index=shot_data.shot_index)
-    event_bus.emit(scene.id, "phase_completed", phase="storyboard")
+        event_bus.emit(
+            scene.id,
+            "shot_text_ready",
+            shot_index=shot_data.shot_index,
+            message=f"Shot {shot_data.shot_index + 1} storyboard text ready",
+        )
+    event_bus.emit(
+        scene.id,
+        "phase_completed",
+        phase="storyboard",
+        message="Storyboard generation complete",
+    )
     event_bus.emit(scene.id, "refresh")

@@ -11,11 +11,13 @@ Spec reference: Screenwriter Agent Plan (Phases A-E)
 
 import json
 import logging
+import uuid
 
 from vidpipe.schemas.screenwriter_agent import (
     ScriptAnalysis,
     ShotBreakdown,
 )
+from vidpipe.services.event_bus import emit_task_log
 from vidpipe.services.llm.base import LLMAdapter
 
 logger = logging.getLogger(__name__)
@@ -72,8 +74,37 @@ Script:
 class ScreenwriterAgentService:
     """Transforms scene prompts into shot-level screenplays with explicit character assignment."""
 
-    def __init__(self, adapter: LLMAdapter):
+    def __init__(
+        self,
+        adapter: LLMAdapter,
+        *,
+        scene_id: uuid.UUID | str | None = None,
+        model_label: str | None = None,
+    ):
         self._adapter = adapter
+        self._scene_id = scene_id
+        self._model_label = model_label
+
+    def _emit_llm_log(
+        self,
+        *,
+        source: str,
+        summary: str,
+        detail: str,
+        kind: str,
+        level: str = "info",
+    ) -> None:
+        if not self._scene_id:
+            return
+        emit_task_log(
+            self._scene_id,
+            phase="storyboard",
+            level=level,
+            kind=kind,
+            source=source,
+            summary=summary,
+            detail=detail,
+        )
 
     async def analyze_script(
         self,
@@ -85,12 +116,33 @@ class ScreenwriterAgentService:
             binding_registry_block=binding_registry_block,
             scene_prompt=scene_prompt,
         )
+        self._emit_llm_log(
+            source="screenwriter.analysis.prompt",
+            summary="Screenwriter analysis prompt sent",
+            kind="prompt",
+            detail=(
+                f"MODEL: {self._model_label or 'unknown'}\n"
+                f"SCHEMA: {ScriptAnalysis.__name__}\n\n"
+                f"{prompt}"
+            ),
+        )
 
         analysis = await self._adapter.generate_text(
             prompt=prompt,
             schema=ScriptAnalysis,
             temperature=0.5,
             max_retries=1,
+        )
+        self._emit_llm_log(
+            source="screenwriter.analysis.response",
+            summary="Screenwriter analysis response received",
+            kind="response",
+            detail=(
+                f"MODEL: {self._model_label or 'unknown'}\n"
+                f"SCHEMA: {ScriptAnalysis.__name__}\n\n"
+                f"{json.dumps(analysis.model_dump(), indent=2)}"
+            ),
+            level="success",
         )
         logger.info(
             "Script analysis: %d characters, %d beats, tone=%s",
@@ -118,12 +170,33 @@ class ScreenwriterAgentService:
             existing_shot_context=existing_shot_context,
             scene_prompt=scene_prompt,
         )
+        self._emit_llm_log(
+            source="screenwriter.breakdown.prompt",
+            summary="Screenwriter shot-breakdown prompt sent",
+            kind="prompt",
+            detail=(
+                f"MODEL: {self._model_label or 'unknown'}\n"
+                f"SCHEMA: {ShotBreakdown.__name__}\n\n"
+                f"{prompt}"
+            ),
+        )
 
         breakdown = await self._adapter.generate_text(
             prompt=prompt,
             schema=ShotBreakdown,
             temperature=0.5,
             max_retries=1,
+        )
+        self._emit_llm_log(
+            source="screenwriter.breakdown.response",
+            summary="Screenwriter shot-breakdown response received",
+            kind="response",
+            detail=(
+                f"MODEL: {self._model_label or 'unknown'}\n"
+                f"SCHEMA: {ShotBreakdown.__name__}\n\n"
+                f"{json.dumps(breakdown.model_dump(), indent=2)}"
+            ),
+            level="success",
         )
         logger.info(
             "Shot breakdown: %d shots, arc_coverage=%s, uncovered_beats=%s",

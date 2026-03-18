@@ -235,3 +235,43 @@ class EnhancedStoryboardOutput(BaseModel):
     shots: list[EnhancedShotSchema] = Field(
         description="List of shots with detailed prompts, manifest placements, and audio direction"
     )
+
+
+class ShotManifestPackageOutput(BaseModel):
+    """Per-shot manifest generation output for the parallel storyboard pipeline."""
+
+    shot_index: int = Field(
+        description="Shot number this package applies to"
+    )
+    shot_description: str = Field(
+        description="Narrative description of what happens in this shot"
+    )
+    key_details: list[str] = Field(
+        description="Specific names, terms, or concepts this shot must convey"
+    )
+    shot_manifest: ShotManifestSchema = Field(
+        description="Asset placement manifest for this shot"
+    )
+    audio_manifest: ShotAudioManifestSchema = Field(
+        description="Audio direction manifest for this shot"
+    )
+
+
+class ShotPromptPackageOutput(BaseModel):
+    """Per-shot prompt writing output for the parallel storyboard pipeline."""
+
+    shot_index: int = Field(
+        description="Shot number this package applies to"
+    )
+    start_frame_prompt: str = Field(
+        description="Detailed start-frame prompt beginning with the required medium declaration"
+    )
+    end_frame_prompt: str = Field(
+        description="Detailed end-frame prompt beginning with the required medium declaration"
+    )
+    video_motion_prompt: str = Field(
+        description="Motion-only prompt describing camera and subject movement"
+    )
+    transition_notes: str = Field(
+        description="How this shot visually connects to the next shot"
+    )

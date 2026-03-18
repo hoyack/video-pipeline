@@ -20,9 +20,303 @@ import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinat
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
 import { ProductionBibleSelector } from "./ProductionBibleSelector.tsx";
 import { RegenProgressBar } from "./RegenProgressBar.tsx";
+import type { RegenTaskLogEntry } from "./RegenProgressBar.tsx";
 import { useSceneWebSocket } from "../hooks/useSceneWebSocket.ts";
 import type { WsEvent } from "../api/wsTypes.ts";
 import { TagPreviewPanel } from "./TagPreviewPanel.tsx";
+
+const PHASE_LABELS: Record<string, string> = {
+  storyboard: "Storyboard",
+  keyframes: "Keyframes",
+  clips: "Video Clips",
+  stitch: "Stitching",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  generating_text: "Generating text",
+  generating_manifest: "Generating manifest",
+  generating_prompts: "Writing prompts",
+  generating_start_kf: "Generating start keyframe",
+  generating_end_kf: "Generating end keyframe",
+  generating_clip: "Generating clip",
+};
+
+const MAX_TASK_LOG_ENTRIES = 5;
+
+interface WsProgressState {
+  phase: string | null;
+  totalShots: number;
+  completedShots: number;
+  activeShots: number;
+  currentShotIndex: number | null;
+  currentStatus: string | null;
+  statusMessage: string | null;
+  completedPhases: string[];
+}
+
+function createEmptyWsProgress(): WsProgressState {
+  return {
+    phase: null,
+    totalShots: 0,
+    completedShots: 0,
+    activeShots: 0,
+    currentShotIndex: null,
+    currentStatus: null,
+    statusMessage: null,
+    completedPhases: [],
+  };
+}
+
+function phaseFromGenerationStatus(status: string | null | undefined): string | null {
+  switch (status) {
+    case "generating_text":
+    case "generating_manifest":
+    case "generating_prompts":
+      return "storyboard";
+    case "generating_start_kf":
+    case "generating_end_kf":
+      return "keyframes";
+    case "generating_clip":
+      return "clips";
+    default:
+      return null;
+  }
+}
+
+function inferProgressFromDetail(detail: SceneDetail): Partial<WsProgressState> | null {
+  const realShots = detail.shots.filter((shot) => !shot.is_empty_slot);
+  const shotsByPhase = new Map<string, ShotDetail[]>();
+
+  for (const shot of realShots) {
+    const phase = phaseFromGenerationStatus(shot.generation_status);
+    if (!phase) continue;
+    const existing = shotsByPhase.get(phase) ?? [];
+    existing.push(shot);
+    shotsByPhase.set(phase, existing);
+  }
+
+  const activePhase = ["storyboard", "keyframes", "clips"].find((candidate) =>
+    (shotsByPhase.get(candidate)?.length ?? 0) > 0
+  );
+  if (!activePhase) return null;
+
+  const activeShots = [...(shotsByPhase.get(activePhase) ?? [])].sort((a, b) => a.shot_index - b.shot_index);
+  const currentShot = activeShots[activeShots.length - 1] ?? null;
+  const currentStatus = currentShot?.generation_status ?? null;
+  const totalShots = realShots.length || detail.shot_count || activeShots.length || 1;
+  const activeCount = activeShots.length;
+  const statusLabel = currentStatus ? (STATUS_LABELS[currentStatus] ?? currentStatus) : null;
+  const statusMessage = currentShot && statusLabel
+    ? `Shot ${currentShot.shot_index + 1}: ${statusLabel}`
+    : `${formatPhaseLabel(activePhase)} in progress`;
+
+  return {
+    phase: activePhase,
+    totalShots,
+    activeShots: activeCount,
+    currentShotIndex: currentShot?.shot_index ?? null,
+    currentStatus,
+    statusMessage,
+  };
+}
+
+function formatPhaseLabel(phase: string | null | undefined): string {
+  if (!phase) return "Task";
+  return PHASE_LABELS[phase] ?? phase;
+}
+
+function formatScopeLabel(scope: string): string {
+  switch (scope) {
+    case "storyboard":
+      return "Storyboard regeneration";
+    case "keyframes":
+      return "Keyframe regeneration";
+    case "clips":
+      return "Clip regeneration";
+    case "stitch":
+    case "stitch_only":
+      return "Stitching";
+    case "all_phases":
+      return "Full regeneration";
+    default:
+      return scope;
+  }
+}
+
+function formatShotTarget(target: string): string {
+  switch (target) {
+    case "start_keyframe":
+      return "start keyframe";
+    case "end_keyframe":
+      return "end keyframe";
+    case "video_clip":
+      return "video clip";
+    default:
+      return target.replaceAll("_", " ");
+  }
+}
+
+function formatWsEventMessage(event: WsEvent): Omit<RegenTaskLogEntry, "id"> | null {
+  switch (event.type) {
+    case "phase_started":
+      return {
+        ts: event.ts,
+        phase: event.phase,
+        shotIndex: null,
+        tone: "info",
+        message: event.message ?? `${formatPhaseLabel(event.phase)} started`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "phase_progress":
+      return {
+        ts: event.ts,
+        phase: event.phase,
+        shotIndex: null,
+        tone: "info",
+        message: event.message,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "phase_completed":
+      return {
+        ts: event.ts,
+        phase: event.phase,
+        shotIndex: null,
+        tone: "success",
+        message: event.message ?? `${formatPhaseLabel(event.phase)} complete`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "shot_status":
+      return {
+        ts: event.ts,
+        phase: event.phase,
+        shotIndex: event.shot_index,
+        tone: "info",
+        message: event.message ?? `Shot ${event.shot_index + 1}: ${STATUS_LABELS[event.status] ?? event.status}`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "shot_text_ready":
+      return {
+        ts: event.ts,
+        phase: "storyboard",
+        shotIndex: event.shot_index,
+        tone: "success",
+        message: event.message ?? `Shot ${event.shot_index + 1} storyboard ready`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "shot_keyframe_ready":
+      return {
+        ts: event.ts,
+        phase: "keyframes",
+        shotIndex: event.shot_index,
+        tone: "success",
+        message: event.message ?? `Shot ${event.shot_index + 1} ${event.position} keyframe ready`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "shot_clip_ready":
+      return {
+        ts: event.ts,
+        phase: "clips",
+        shotIndex: event.shot_index,
+        tone: "success",
+        message: event.message ?? `Shot ${event.shot_index + 1} clip ready`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "stitch_ready":
+      return {
+        ts: event.ts,
+        phase: "stitch",
+        shotIndex: null,
+        tone: "success",
+        message: event.message ?? "Stitching complete",
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "checkpoint_created":
+      return {
+        ts: event.ts,
+        phase: null,
+        shotIndex: null,
+        tone: "success",
+        message: event.message,
+        detail: null,
+        source: null,
+        kind: "checkpoint",
+      };
+    case "error":
+      return {
+        ts: event.ts,
+        phase: event.phase ?? null,
+        shotIndex: event.shot_index ?? null,
+        tone: "error",
+        message: event.message,
+        detail: null,
+        source: null,
+        kind: "error",
+      };
+    case "shot_regen_started":
+      return {
+        ts: event.ts,
+        phase: null,
+        shotIndex: event.shot_index,
+        tone: "info",
+        message: event.message ?? `Shot ${event.shot_index + 1} regeneration started for ${event.targets.map(formatShotTarget).join(", ")}`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "shot_regen_done":
+      return {
+        ts: event.ts,
+        phase: null,
+        shotIndex: event.shot_index,
+        tone: "success",
+        message: event.message ?? `Shot ${event.shot_index + 1} regeneration complete`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "regen_complete":
+      return {
+        ts: event.ts,
+        phase: null,
+        shotIndex: null,
+        tone: "success",
+        message: event.message ?? `${formatScopeLabel(event.scope)} complete`,
+        detail: null,
+        source: null,
+        kind: "status",
+      };
+    case "task_log":
+      return {
+        ts: event.ts,
+        phase: event.phase ?? null,
+        shotIndex: event.shot_index ?? null,
+        tone: event.level,
+        message: event.summary,
+        detail: event.detail ?? null,
+        source: event.source ?? null,
+        kind: event.kind ?? null,
+      };
+    case "refresh":
+    case "heartbeat":
+      return null;
+  }
+}
 
 /** Schema for scene export/import */
 interface SceneSchema {
@@ -149,55 +443,134 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [generatingShotIndices, setGeneratingShotIndices] = useState<Set<number>>(new Set());
 
   // WebSocket progress state
-  const [wsProgress, setWsProgress] = useState<{
-    phase: string | null;
-    totalShots: number;
-    completedShots: number;
-    currentShotIndex: number | null;
-    currentStatus: string | null;
-    completedPhases: string[];
-  }>({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
+  const [wsProgress, setWsProgress] = useState<WsProgressState>(createEmptyWsProgress);
+  const [taskFeedEntries, setTaskFeedEntries] = useState<RegenTaskLogEntry[]>([]);
+  const [lastTaskScope, setLastTaskScope] = useState<string | null>(null);
+  const taskFeedCounter = useRef(0);
+
+  const resetWsTracking = useCallback((scope: string | null = null) => {
+    setLastTaskScope(scope);
+    setWsProgress(createEmptyWsProgress());
+    setTaskFeedEntries([]);
+  }, []);
+
+  const appendTaskFeedEntry = useCallback((event: WsEvent) => {
+    const entry = formatWsEventMessage(event);
+    if (!entry) return;
+    taskFeedCounter.current += 1;
+    const nextEntry: RegenTaskLogEntry = {
+      id: String(taskFeedCounter.current),
+      ...entry,
+    };
+    setTaskFeedEntries(prev => {
+      const trimmed = prev.length >= MAX_TASK_LOG_ENTRIES
+        ? prev.slice(prev.length - MAX_TASK_LOG_ENTRIES + 1)
+        : prev;
+      return [...trimmed, nextEntry];
+    });
+  }, []);
 
   const handleWsEvent = useCallback((event: WsEvent) => {
+    appendTaskFeedEntry(event);
+
     switch (event.type) {
       case "phase_started":
-        setWsProgress(prev => ({ ...prev, phase: event.phase, totalShots: event.total_shots, completedShots: 0, currentShotIndex: null, currentStatus: null }));
+        setWsProgress(prev => ({
+          ...prev,
+          phase: event.phase,
+          totalShots: event.total_shots,
+          completedShots: 0,
+          activeShots: event.total_shots,
+          currentShotIndex: null,
+          currentStatus: null,
+          statusMessage: event.message ?? `${formatPhaseLabel(event.phase)} started`,
+        }));
+        onRefresh?.();  // Fetch updated generation_status (e.g. "generating_text")
+        break;
+      case "phase_progress":
+        setWsProgress(prev => ({
+          ...prev,
+          phase: event.phase,
+          totalShots: event.total_shots,
+          completedShots: event.completed_shots,
+          activeShots: event.active_shots,
+          statusMessage: event.message,
+        }));
         onRefresh?.();  // Fetch updated generation_status (e.g. "generating_text")
         break;
       case "phase_completed":
         setWsProgress(prev => ({
           ...prev,
           phase: null,
+          activeShots: 0,
           currentShotIndex: null,
           currentStatus: null,
+          statusMessage: event.message ?? `${formatPhaseLabel(event.phase)} complete`,
           completedPhases: prev.completedPhases.includes(event.phase)
             ? prev.completedPhases
             : [...prev.completedPhases, event.phase],
         }));
         break;
       case "shot_status":
-        setWsProgress(prev => ({ ...prev, currentShotIndex: event.shot_index, currentStatus: event.status }));
+        setWsProgress(prev => ({
+          ...prev,
+          phase: event.phase,
+          currentShotIndex: event.shot_index,
+          currentStatus: event.status,
+          statusMessage: event.message ?? `Shot ${event.shot_index + 1}: ${STATUS_LABELS[event.status] ?? event.status}`,
+        }));
         onRefresh?.();
         break;
       case "shot_keyframe_ready":
       case "shot_clip_ready":
-        setWsProgress(prev => ({ ...prev, completedShots: prev.completedShots + 1 }));
+        setWsProgress(prev => ({
+          ...prev,
+          completedShots: prev.completedShots + 1,
+          currentShotIndex: event.shot_index,
+          currentStatus: null,
+          statusMessage: event.message ?? prev.statusMessage,
+        }));
         onRefresh?.();
         break;
       case "shot_text_ready":
         setWsProgress(prev =>
           prev.phase === "storyboard"
-            ? { ...prev, completedShots: prev.completedShots + 1 }
-            : prev,
+            ? {
+              ...prev,
+              completedShots: prev.completedShots + 1,
+              currentShotIndex: event.shot_index,
+              currentStatus: null,
+              statusMessage: event.message ?? prev.statusMessage,
+            }
+            : {
+              ...prev,
+              currentShotIndex: event.shot_index,
+              currentStatus: null,
+              statusMessage: event.message ?? prev.statusMessage,
+            },
         );
         onRefresh?.();
         break;
       case "stitch_ready":
+        setWsProgress(prev => ({
+          ...prev,
+          phase: null,
+          activeShots: 0,
+          currentShotIndex: null,
+          currentStatus: null,
+          statusMessage: event.message ?? "Stitching complete",
+        }));
+        onRefresh?.();
+        break;
       case "refresh":
         onRefresh?.();
         break;
       case "checkpoint_created":
-        // Intermediate progress — just refresh data, don't clear bgOpPending
+        setWsProgress(prev => ({
+          ...prev,
+          currentStatus: null,
+          statusMessage: event.message,
+        }));
         onRefresh?.();
         break;
       case "regen_complete": {
@@ -205,7 +578,14 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         const op = bgOpPending;
         setBgOpPending(null);
         bgOpBaselineSha.current = null;
-        setWsProgress({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
+        setWsProgress(prev => ({
+          ...prev,
+          phase: null,
+          activeShots: 0,
+          currentShotIndex: null,
+          currentStatus: null,
+          statusMessage: event.message ?? `${formatScopeLabel(event.scope)} complete`,
+        }));
         if (op === "stitch") {
           setStitchMessage("Re-stitch complete — video updated.");
         } else if (op) {
@@ -222,17 +602,39 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
         if (bgOpPending) {
           setBgOpPending(null);
           bgOpBaselineSha.current = null;
-          setWsProgress({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
         }
+        setWsProgress(prev => ({
+          ...prev,
+          phase: null,
+          activeShots: 0,
+          currentStatus: null,
+          statusMessage: event.message,
+        }));
         break;
       case "shot_regen_started":
-      case "shot_regen_done":
-        if (event.type === "shot_regen_done") {
-          onRefresh?.();
+        if (!bgOpPending) {
+          setLastTaskScope(null);
         }
+        setWsProgress(prev => ({
+          ...prev,
+          currentShotIndex: event.shot_index,
+          currentStatus: null,
+          statusMessage: event.message ?? `Shot ${event.shot_index + 1} regeneration started`,
+        }));
+        break;
+      case "shot_regen_done":
+        setWsProgress(prev => ({
+          ...prev,
+          currentShotIndex: event.shot_index,
+          currentStatus: null,
+          statusMessage: event.message ?? `Shot ${event.shot_index + 1} regeneration complete`,
+        }));
+        onRefresh?.();
+        break;
+      case "task_log":
         break;
     }
-  }, [bgOpPending, onRefresh]);
+  }, [appendTaskFeedEntry, bgOpPending, onRefresh]);
 
   // Always keep WS connected in Edit Mode — avoids race conditions where
   // toggling enabled creates/destroys the connection before it establishes.
@@ -241,6 +643,33 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     enabled: true,
     onEvent: handleWsEvent,
   });
+
+  const inferredProgress = useMemo(
+    () => inferProgressFromDetail(detail),
+    [detail],
+  );
+
+  const effectiveWsProgress = useMemo(() => ({
+    phase: wsProgress.phase ?? inferredProgress?.phase ?? null,
+    totalShots: wsProgress.totalShots || inferredProgress?.totalShots || detail.shot_count || 0,
+    completedShots: wsProgress.completedShots,
+    activeShots: wsProgress.activeShots || inferredProgress?.activeShots || 0,
+    currentShotIndex: wsProgress.currentShotIndex ?? inferredProgress?.currentShotIndex ?? null,
+    currentStatus: wsProgress.currentStatus ?? inferredProgress?.currentStatus ?? null,
+    statusMessage: wsProgress.statusMessage ?? inferredProgress?.statusMessage ?? null,
+    completedPhases: wsProgress.completedPhases,
+  }), [detail.shot_count, inferredProgress, wsProgress]);
+
+  const hasLiveGeneration = Boolean(
+    regenScope
+    || bgOpPending
+    || generatingShotIndices.size > 0
+    || effectiveWsProgress.phase
+    || effectiveWsProgress.currentStatus
+    || effectiveWsProgress.activeShots > 0,
+  );
+  const progressPanelScope = bgOpPending ?? regenScope ?? lastTaskScope ?? effectiveWsProgress.phase;
+  const showProgressPanel = hasLiveGeneration || taskFeedEntries.length > 0;
 
   // Poll for completion when any background operation is running (fallback when WS is not connected)
   usePolling(
@@ -465,27 +894,46 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   }, []);
 
   const handleGenerateShot = useCallback(async (shotIndex: number) => {
-    const resp = await generateNewShot(detail.scene_id, {
-      shot_index: shotIndex,
-      all_shot_edits: Object.keys(shotEdits).length > 0 ? shotEdits : undefined,
-      text_model: textModel,
-      image_model: imageModel,
-      video_model: videoModel,
-      prompt: prompt || undefined,
-    });
-    // Record baseline SHA for revert-on-cancel
-    handleRegenStarted(resp.head_sha ?? null);
-    // Clear any edits the user had typed for this shot index (now real shot has them)
-    setShotEdits((prev) => {
-      const next = { ...prev };
-      delete next[shotIndex];
-      return next;
-    });
-    // Track as generating
+    setLastTaskScope("all_phases");
+    setWsProgress((prev) => ({
+      ...prev,
+      phase: prev.phase ?? "storyboard",
+      totalShots: prev.totalShots || detail.shot_count || 1,
+      activeShots: Math.max(prev.activeShots, 1),
+      currentShotIndex: shotIndex,
+      currentStatus: prev.currentStatus ?? "generating_text",
+      statusMessage: prev.statusMessage ?? `Shot ${shotIndex + 1}: ${STATUS_LABELS.generating_text}`,
+    }));
     setGeneratingShotIndices((prev) => new Set(prev).add(shotIndex));
-    // Refresh to pick up the new DB shot
-    onRefresh?.();
-  }, [detail.scene_id, shotEdits, textModel, imageModel, videoModel, prompt, handleRegenStarted, onRefresh]);
+
+    try {
+      const resp = await generateNewShot(detail.scene_id, {
+        shot_index: shotIndex,
+        all_shot_edits: Object.keys(shotEdits).length > 0 ? shotEdits : undefined,
+        text_model: textModel,
+        image_model: imageModel,
+        video_model: videoModel,
+        prompt: prompt || undefined,
+      });
+      // Record baseline SHA for revert-on-cancel
+      handleRegenStarted(resp.head_sha ?? null);
+      // Clear any edits the user had typed for this shot index (now real shot has them)
+      setShotEdits((prev) => {
+        const next = { ...prev };
+        delete next[shotIndex];
+        return next;
+      });
+      // Refresh to pick up the new DB shot
+      onRefresh?.();
+    } catch (err) {
+      setGeneratingShotIndices((prev) => {
+        const next = new Set(prev);
+        next.delete(shotIndex);
+        return next;
+      });
+      throw err;
+    }
+  }, [detail.scene_id, detail.shot_count, shotEdits, textModel, imageModel, videoModel, prompt, handleRegenStarted, onRefresh]);
 
   async function handleCancel() {
     if (regenDone.current && baselineSha.current && detail.scene_id) {
@@ -770,6 +1218,17 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       }
 
       bgOpBaselineSha.current = currentSha;
+      resetWsTracking(scope);
+      setWsProgress({
+        phase: scope === "all_phases" ? "storyboard" : scope === "stitch_only" ? "stitch" : scope,
+        totalShots: detail.shot_count || 0,
+        completedShots: 0,
+        activeShots: scope === "stitch_only" ? 0 : detail.shot_count || 0,
+        currentShotIndex: null,
+        currentStatus: null,
+        statusMessage: `${formatScopeLabel(scope)} started`,
+        completedPhases: [],
+      });
       // Set bgOpPending BEFORE the API call so the WS handler is ready for
       // events as soon as the backend starts the background pipeline.
       setBgOpPending(scope);
@@ -797,6 +1256,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     setError(null);
     try {
       bgOpBaselineSha.current = detail.head_sha ?? null;
+      resetWsTracking("stitch");
       setBgOpPending("stitch");
       await regenerateScene(detail.scene_id, { scope: "stitch_only" });
       setStitchMessage("Re-stitching started — video will update when complete.");
@@ -813,7 +1273,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       await stopScene(detail.scene_id);
       setBgOpPending(null);
       bgOpBaselineSha.current = null;
-      setWsProgress({ phase: null, totalShots: 0, completedShots: 0, currentShotIndex: null, currentStatus: null, completedPhases: [] });
+      resetWsTracking(null);
       setRegenMessage("Generation cancelled.");
       onRefresh?.();
     } catch (err) {
@@ -1577,16 +2037,20 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       })()}
 
       {/* WebSocket progress bar — shown during background operations */}
-      {bgOpPending && (
+      {showProgressPanel && (
         <RegenProgressBar
-          scope={bgOpPending}
-          phase={wsProgress.phase}
-          totalShots={wsProgress.totalShots}
-          completedShots={wsProgress.completedShots}
-          currentShotIndex={wsProgress.currentShotIndex}
-          currentStatus={wsProgress.currentStatus}
+          scope={progressPanelScope}
+          phase={effectiveWsProgress.phase}
+          totalShots={effectiveWsProgress.totalShots}
+          completedShots={effectiveWsProgress.completedShots}
+          activeShots={effectiveWsProgress.activeShots}
+          currentShotIndex={effectiveWsProgress.currentShotIndex}
+          currentStatus={effectiveWsProgress.currentStatus}
+          statusMessage={effectiveWsProgress.statusMessage}
           wsConnected={wsConnected}
-          completedPhases={wsProgress.completedPhases}
+          completedPhases={effectiveWsProgress.completedPhases}
+          messages={taskFeedEntries}
+          isActive={hasLiveGeneration}
         />
       )}
 

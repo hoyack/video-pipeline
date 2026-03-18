@@ -277,24 +277,38 @@ def compute_keyframe_staleness(
     """Compare keyframe.prompt_used against the current expected prompt.
 
     Returns "fresh", "stale", or "missing".
+
+    prompt_used is set to shot.start_frame_prompt or shot.end_frame_prompt at
+    generation time.  The rewritten prompt (from the adaptive rewriter) is an
+    intermediate and is NOT stored in prompt_used, so we compare against the
+    raw shot prompt first.  If the raw prompt matches, it's fresh.  We also
+    accept a match against the rewritten prompt for cases where prompt_used
+    was stored from the rewriter output.
     """
     if keyframe is None:
         return "missing"
 
-    # Determine the current expected prompt
-    if keyframe.position == "start":
-        current_prompt = shot.start_frame_prompt
-    else:
-        current_prompt = shot.end_frame_prompt
-
-    # If shot_manifest has a rewritten prompt, that's the real expected prompt
-    if shot_manifest and shot_manifest.rewritten_keyframe_prompt:
-        current_prompt = shot_manifest.rewritten_keyframe_prompt
-
     if not keyframe.prompt_used:
         return "stale"  # No record of what prompt was used
 
-    if keyframe.prompt_used == current_prompt:
+    # Primary check: compare against the raw shot prompt (what prompt_used is set to)
+    if keyframe.position == "start":
+        raw_prompt = shot.start_frame_prompt
+    else:
+        raw_prompt = shot.end_frame_prompt
+
+    if raw_prompt and keyframe.prompt_used == raw_prompt:
+        return "fresh"
+
+    # Secondary check: compare against the rewritten prompt (for cases where
+    # prompt_used was stored from the rewriter output)
+    if shot_manifest and shot_manifest.rewritten_keyframe_prompt:
+        if keyframe.prompt_used == shot_manifest.rewritten_keyframe_prompt:
+            return "fresh"
+
+    # Tertiary: prompt_used may contain the raw prompt as a substring
+    # (e.g. wrapped with style prefix)
+    if raw_prompt and raw_prompt in (keyframe.prompt_used or ""):
         return "fresh"
 
     return "stale"

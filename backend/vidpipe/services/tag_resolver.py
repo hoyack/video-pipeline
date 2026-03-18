@@ -185,15 +185,37 @@ async def _resolve_at_tag_cross_type(
     character_refs: list[dict],
     set_context: list[dict],
 ) -> tuple[str | None, str | None]:
-    """Cross-type lookup for @tag: CastBinding -> PropBinding -> SetBinding.
+    """Cross-type lookup for @tag: CastLook -> CastBinding -> PropBinding -> SetBinding.
 
     Returns (replacement_text, asset_type) or (None, None).
     Case-insensitive matching via func.upper() on the tag field.
     """
     upper_tag = tag_name.upper()
+
+    # 0. CastLook first (wardrobe-specific character look)
+    look_result = await session.execute(
+        select(CastLook).join(CastBinding).where(
+            CastBinding.production_bible_id == bible_id,
+            func.upper(CastLook.tag) == upper_tag,
+        )
+    )
+    cast_look = look_result.scalars().first()
+    if cast_look:
+        # Resolve via parent CastBinding's character identity + wardrobe description
+        binding = await session.get(CastBinding, cast_look.cast_binding_id)
+        if binding:
+            actor = await session.get(Actor, binding.actor_id)
+            if actor:
+                appearance = actor.base_appearance_prompt or ""
+                wp = await session.get(ActorWardrobePreset, cast_look.wardrobe_preset_id)
+                wardrobe_desc = (wp.description or wp.label) if wp else ""
+                text = f"{appearance}; wearing: {wardrobe_desc}" if appearance else f"wearing: {wardrobe_desc}"
+                replacement = f"{binding.character_name} ({text})"
+                return replacement, "CHARACTER"
+
     match_count = 0
 
-    # 1. CastBinding first (character identity is highest priority)
+    # 1. CastBinding (character identity is highest priority)
     result = await session.execute(
         select(CastBinding).where(
             CastBinding.production_bible_id == bible_id,

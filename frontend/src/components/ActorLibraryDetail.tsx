@@ -22,6 +22,7 @@ import {
   deleteActorWardrobePreset,
   generateWardrobeImage,
   deleteWardrobeImage,
+  uploadWardrobePresetImage,
   getEnabledModels,
   generateActorMetadata,
   generateActorImage,
@@ -1081,6 +1082,11 @@ function WardrobeTab({
   const [genExtraPrompt, setGenExtraPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
 
+  // Image upload state
+  const uploadRef = useRef<HTMLInputElement>(null);
+  const [uploadPresetId, setUploadPresetId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
   const handleAdd = async () => {
     if (!label.trim()) return;
     setSaving(true);
@@ -1158,6 +1164,19 @@ function WardrobeTab({
     }
   };
 
+  const handleUploadImage = async (presetId: string, file: File) => {
+    setUploading(true);
+    try {
+      await uploadWardrobePresetImage(presetId, file);
+      onRefresh();
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+      setUploadPresetId(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1206,62 +1225,104 @@ function WardrobeTab({
         <p className="text-xs text-gray-500 text-center py-6">No wardrobe presets yet</p>
       )}
 
+      {/* Hidden file input for image upload */}
+      <input
+        ref={uploadRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file && uploadPresetId) {
+            handleUploadImage(uploadPresetId, file);
+          }
+          e.target.value = "";
+        }}
+      />
+
       {actor.wardrobe_presets.map((wp) =>
         editingId === wp.id ? (
           <div key={wp.id} className="rounded border border-blue-700 bg-gray-800/50 p-3 space-y-2">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Label</label>
-              <input
-                type="text"
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200 focus:border-blue-500 outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Description</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={2}
-                className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none"
-              />
-            </div>
-            <div className="flex gap-1 justify-end">
-              <button onClick={() => setEditingId(null)} className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600">Cancel</button>
-              <button onClick={() => handleUpdate(wp.id)} disabled={saving} className="text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50">
-                {saving ? "..." : "Save"}
-              </button>
+            <div className="flex gap-3">
+              {/* Images on left in edit view */}
+              {wp.reference_images && wp.reference_images.length > 0 && (
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  {wp.reference_images.map((url, idx) => (
+                    <div key={idx} className="relative group">
+                      <img
+                        src={url}
+                        alt={`Ref ${idx + 1}`}
+                        className="w-16 h-16 object-cover rounded border border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+                        onClick={() => setLightboxUrl(url)}
+                      />
+                      <button
+                        onClick={() => handleDeleteImage(wp.id, idx)}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-xs leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Remove image"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex-1 min-w-0 space-y-2">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Label</label>
+                  <input
+                    type="text"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Description</label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    rows={2}
+                    className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-300 focus:border-blue-500 outline-none resize-none"
+                  />
+                </div>
+                <div className="flex gap-1 justify-end">
+                  <button onClick={() => setEditingId(null)} className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600">Cancel</button>
+                  <button onClick={() => handleUpdate(wp.id)} disabled={saving} className="text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50">
+                    {saving ? "..." : "Save"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         ) : (
           <div key={wp.id} className="rounded border border-gray-700 bg-gray-800/50 p-3">
-            <div className="flex items-start justify-between">
+            <div className="flex items-start gap-3">
+              {/* Images on left */}
+              {wp.reference_images && wp.reference_images.length > 0 && (
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  {wp.reference_images.map((url, idx) => (
+                    <div key={idx} className="relative group">
+                      <img
+                        src={url}
+                        alt={`Ref ${idx + 1}`}
+                        className="w-16 h-16 object-cover rounded border border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+                        onClick={() => setLightboxUrl(url)}
+                      />
+                      <button
+                        onClick={() => handleDeleteImage(wp.id, idx)}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-xs leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Remove image"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-medium text-gray-200">{wp.label}</span>
                 {wp.description && (
                   <p className="text-xs text-gray-400 mt-1">{wp.description}</p>
-                )}
-                {wp.reference_images && wp.reference_images.length > 0 && (
-                  <div className="flex gap-1.5 mt-2 flex-wrap">
-                    {wp.reference_images.map((url, idx) => (
-                      <div key={idx} className="relative group">
-                        <img
-                          src={url}
-                          alt={`Ref ${idx + 1}`}
-                          className="w-12 h-12 object-cover rounded border border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
-                          onClick={() => setLightboxUrl(url)}
-                        />
-                        <button
-                          onClick={() => handleDeleteImage(wp.id, idx)}
-                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-xs leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove image"
-                        >
-                          x
-                        </button>
-                      </div>
-                    ))}
-                  </div>
                 )}
 
                 {/* Generate image inline form */}
@@ -1325,19 +1386,32 @@ function WardrobeTab({
               </div>
               <div className="flex gap-1 shrink-0 ml-2">
                 {genPresetId !== wp.id && (
-                  <button
-                    onClick={() => {
-                      setGenPresetId(wp.id);
-                      setGenRefId(actor.refs.find((r) => r.is_primary)?.id || actor.refs[0]?.id || "");
-                      setGenModel("");
-                      setGenExtraPrompt("");
-                    }}
-                    disabled={actor.refs.length === 0}
-                    className="text-xs px-2 py-1 rounded bg-purple-900/50 text-purple-300 hover:bg-purple-800/50 disabled:opacity-30"
-                    title={actor.refs.length === 0 ? "Upload a face ref first" : "Generate wardrobe image"}
-                  >
-                    Gen
-                  </button>
+                  <>
+                    <button
+                      onClick={() => {
+                        setUploadPresetId(wp.id);
+                        uploadRef.current?.click();
+                      }}
+                      disabled={uploading}
+                      className="text-xs px-2 py-1 rounded bg-green-900/50 text-green-300 hover:bg-green-800/50 disabled:opacity-30"
+                      title="Upload wardrobe image"
+                    >
+                      {uploading && uploadPresetId === wp.id ? "..." : "Upload"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setGenPresetId(wp.id);
+                        setGenRefId(actor.refs.find((r) => r.is_primary)?.id || actor.refs[0]?.id || "");
+                        setGenModel("");
+                        setGenExtraPrompt("");
+                      }}
+                      disabled={actor.refs.length === 0}
+                      className="text-xs px-2 py-1 rounded bg-purple-900/50 text-purple-300 hover:bg-purple-800/50 disabled:opacity-30"
+                      title={actor.refs.length === 0 ? "Upload a face ref first" : "Generate wardrobe image"}
+                    >
+                      Gen
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={() => startEdit(wp)}

@@ -1385,6 +1385,42 @@ async def delete_wardrobe_preset(preset_id: str):
         return None
 
 
+# --- Wardrobe Preset Image Upload ---
+
+
+@asset_library_router.post("/actor-wardrobe-presets/{preset_id}/upload-image")
+async def upload_wardrobe_image(preset_id: str, file: UploadFile = File(...)):
+    """Upload a reference image for a wardrobe preset."""
+    content = await file.read()
+    _validate_image_upload(file, content)
+
+    async with async_session() as session:
+        wp = await session.get(ActorWardrobePreset, uuid.UUID(preset_id))
+        if wp is None:
+            raise HTTPException(status_code=404, detail="Wardrobe preset not found")
+
+        filename = file.filename or f"wardrobe_{uuid.uuid4().hex[:8]}.png"
+        stored_path = await _save_upload(
+            content,
+            file.content_type or "image/png",
+            filename,
+            f"actors/{wp.actor_id}/wardrobe/{preset_id}",
+        )
+
+        ref_list = list(wp.reference_images or [])
+        ref_list.append(stored_path)
+        wp.reference_images = ref_list
+        await session.commit()
+        await session.refresh(wp)
+
+        result = _wardrobe_preset_to_dict(wp)
+        result["reference_images"] = [
+            f"/api/asset-library/actor-wardrobe-presets/{preset_id}/images/{i}"
+            for i in range(len(wp.reference_images or []))
+        ]
+        return result
+
+
 # --- Wardrobe Preset Image Generation ---
 
 

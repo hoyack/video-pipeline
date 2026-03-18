@@ -1441,6 +1441,21 @@ export function generateWardrobeImage(
   });
 }
 
+/** POST /api/asset-library/actor-wardrobe-presets/{id}/upload-image — upload wardrobe ref image */
+export async function uploadWardrobePresetImage(presetId: string, file: File): Promise<ActorWardrobePresetResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/asset-library/actor-wardrobe-presets/${presetId}/upload-image`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<ActorWardrobePresetResponse>;
+}
+
 /** DELETE /api/asset-library/actor-wardrobe-presets/{presetId}/images/{index} — delete wardrobe ref image */
 export function deleteWardrobeImage(presetId: string, index: number): Promise<void> {
   return request<void>(`/api/asset-library/actor-wardrobe-presets/${presetId}/images/${index}`, { method: "DELETE" });

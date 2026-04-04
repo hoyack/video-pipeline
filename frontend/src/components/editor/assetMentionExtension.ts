@@ -106,19 +106,38 @@ export const AssetMention = Extension.create({
 
               const colors = TYPE_COLORS[item.type] ?? TYPE_COLORS.PROP;
 
-              // Thumbnail
-              const thumbHtml = item.thumbnailUrl
-                ? `<img src="${item.thumbnailUrl}" alt="" class="h-8 w-8 rounded object-cover bg-gray-900 shrink-0" />`
-                : `<div class="flex h-8 w-8 items-center justify-center rounded bg-gray-900 text-[10px] text-gray-500 shrink-0">${item.type[0]}</div>`;
+              // Thumbnail (safe DOM construction — no innerHTML)
+              if (item.thumbnailUrl) {
+                const img = document.createElement("img");
+                img.src = item.thumbnailUrl;
+                img.alt = "";
+                img.className = "h-8 w-8 rounded object-cover bg-gray-900 shrink-0";
+                btn.appendChild(img);
+              } else {
+                const placeholder = document.createElement("div");
+                placeholder.className = "flex h-8 w-8 items-center justify-center rounded bg-gray-900 text-[10px] text-gray-500 shrink-0";
+                placeholder.textContent = item.type[0];
+                btn.appendChild(placeholder);
+              }
 
-              btn.innerHTML = `
-                ${thumbHtml}
-                <div class="flex flex-col min-w-0 flex-1">
-                  <span class="text-xs font-medium truncate">${item.name}</span>
-                  <span class="text-[10px] text-gray-500 font-mono">@${item.tag}</span>
-                </div>
-                <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium" style="background:${colors.bg};color:${colors.text}">${item.type}</span>
-              `;
+              const textCol = document.createElement("div");
+              textCol.className = "flex flex-col min-w-0 flex-1";
+              const nameSpan = document.createElement("span");
+              nameSpan.className = "text-xs font-medium truncate";
+              nameSpan.textContent = item.name;
+              const tagSpan = document.createElement("span");
+              tagSpan.className = "text-[10px] text-gray-500 font-mono";
+              tagSpan.textContent = `@${item.tag}`;
+              textCol.appendChild(nameSpan);
+              textCol.appendChild(tagSpan);
+              btn.appendChild(textCol);
+
+              const typeBadge = document.createElement("span");
+              typeBadge.className = "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium";
+              typeBadge.style.background = colors.bg;
+              typeBadge.style.color = colors.text;
+              typeBadge.textContent = item.type;
+              btn.appendChild(typeBadge);
 
               btn.addEventListener("mousedown", (e) => {
                 e.preventDefault();

@@ -18,6 +18,8 @@ async def upload_editor_image(file: UploadFile = File(...)):
     content = await file.read()
     _validate_image_upload(file, content)
 
+    # Note: _save_upload generates thumbnails for all images. Editor images don't
+    # use thumbnails, but the overhead is minor and not worth a separate code path.
     ext = (file.filename or "image.png").rsplit(".", 1)[-1].lower()
     if ext not in ("png", "jpg", "jpeg", "webp"):
         ext = "png"

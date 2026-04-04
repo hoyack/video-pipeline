@@ -7,6 +7,7 @@ interface TiptapFullscreenModalProps {
   value: string;
   onChange: (v: string) => void;
   onClose: () => void;
+  productionBibleId?: string | null;
 }
 
 export function TiptapFullscreenModal({
@@ -14,6 +15,7 @@ export function TiptapFullscreenModal({
   value,
   onChange,
   onClose,
+  productionBibleId,
 }: TiptapFullscreenModalProps) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -54,6 +56,7 @@ export function TiptapFullscreenModal({
         <ScenePromptEditor
           value={value}
           onChange={onChange}
+          productionBibleId={productionBibleId}
           className="h-full [&_.ProseMirror]:min-h-full [&_.ProseMirror]:max-h-none [&_.ProseMirror]:resize-none"
         />
       </div>

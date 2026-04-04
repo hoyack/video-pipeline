@@ -277,6 +277,9 @@ export function ScenePromptEditor({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
+  // Ref for image upload — avoids stale closure in handleDrop/handlePaste
+  const doImageUploadRef = useRef<(file: File) => Promise<void>>();
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -310,14 +313,14 @@ export function ScenePromptEditor({
         class: "scene-prompt-prosemirror",
         ...(id ? { id } : {}),
       },
-      handleDrop(view, event, _slice, moved) {
+      handleDrop(_view, event, _slice, moved) {
         if (moved || !event.dataTransfer?.files.length) return false;
         const file = Array.from(event.dataTransfer.files).find((f) =>
           ["image/png", "image/jpeg", "image/webp"].includes(f.type),
         );
         if (!file) return false;
         event.preventDefault();
-        doImageUpload(file);
+        doImageUploadRef.current?.(file);
         return true;
       },
       handlePaste(_view, event) {
@@ -328,7 +331,7 @@ export function ScenePromptEditor({
             const file = item.getAsFile();
             if (file) {
               event.preventDefault();
-              doImageUpload(file);
+              doImageUploadRef.current?.(file);
               return true;
             }
           }
@@ -347,6 +350,10 @@ export function ScenePromptEditor({
   const doImageUpload = useCallback(
     async (file: File) => {
       if (!editor) return;
+      if (file.size > 10 * 1024 * 1024) {
+        console.warn("Image too large (max 10MB)");
+        return;
+      }
       try {
         const { url } = await uploadEditorImage(file);
         editor.chain().focus().setImage({ src: url }).run();
@@ -356,6 +363,7 @@ export function ScenePromptEditor({
     },
     [editor],
   );
+  doImageUploadRef.current = doImageUpload;
 
   // Load Production Bible assets for @-mention suggestions
   useEffect(() => {

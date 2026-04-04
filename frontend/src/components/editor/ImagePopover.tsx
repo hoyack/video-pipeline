@@ -37,18 +37,22 @@ export function ImagePopover({ onInsertUrl, onUploadFile, onClose }: ImagePopove
 
   const handleInsert = () => {
     const trimmed = url.trim();
-    if (trimmed) {
-      onInsertUrl(trimmed);
-      onClose();
+    if (!trimmed) return;
+    if (!trimmed.startsWith("https://") && !trimmed.startsWith("http://") && !trimmed.startsWith("/")) {
+      return;
     }
+    onInsertUrl(trimmed);
+    onClose();
   };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      onUploadFile(file);
-      onClose();
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      return;
     }
+    onUploadFile(file);
+    onClose();
   };
 
   return (

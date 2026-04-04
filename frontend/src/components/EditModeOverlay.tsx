@@ -1559,6 +1559,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                 value={prompt}
                 onChange={setPrompt}
                 onClose={() => setPromptEditorOpen(false)}
+                productionBibleId={manifestId}
               />
             )}
           </div>

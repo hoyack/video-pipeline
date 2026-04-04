@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { generateVideo, getEnabledModels } from "../api/client.ts";
 import { ProductionBibleSelector } from "./ProductionBibleSelector.tsx";
+import { ScenePromptEditor } from "./ScenePromptEditor.tsx";
 import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { EnabledModelsResponse } from "../api/types.ts";
 import {
@@ -229,13 +230,12 @@ export function GenerateForm({ onGenerated }: GenerateFormProps) {
         <label htmlFor="prompt" className="mb-1 block text-sm font-medium text-gray-300">
           Prompt
         </label>
-        <textarea
+        <ScenePromptEditor
           id="prompt"
-          rows={4}
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          onChange={setPrompt}
           placeholder="A sweeping aerial shot of a bioluminescent forest at night..."
-          className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          productionBibleId={selectedManifestId}
         />
       </div>
 

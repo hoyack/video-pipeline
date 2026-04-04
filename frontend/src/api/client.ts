@@ -1351,6 +1351,21 @@ export async function uploadActorLibraryRef(actorId: string, file: File, label?:
   return res.json() as Promise<ActorRefResponse>;
 }
 
+/** POST /api/editor-images — upload image for the scene prompt editor */
+export async function uploadEditorImage(file: File): Promise<{ url: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/editor-images", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, body.detail ?? res.statusText);
+  }
+  return res.json() as Promise<{ url: string }>;
+}
+
 /** DELETE /api/asset-library/actor-refs/{id} — delete actor ref */
 export function deleteActorLibraryRef(refId: string): Promise<void> {
   return request<void>(`/api/asset-library/actor-refs/${refId}`, { method: "DELETE" });

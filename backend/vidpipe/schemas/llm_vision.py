@@ -57,6 +57,41 @@ class SemanticAnalysisOutput(BaseModel):
     )
 
 
+class CharacterKeyframeVerificationOutput(BaseModel):
+    """Structured output for character-level keyframe verification.
+
+    Used by keyframes.py to verify a generated character crop against
+    expected identity and wardrobe references using the scene vision model.
+    """
+
+    passed: bool = Field(
+        description="True if the generated crop is acceptable for this character"
+    )
+    character_visible: bool = Field(
+        description="True if the expected character is visible in the generated crop"
+    )
+    identity_match: bool = Field(
+        description="True if identity/species/markings sufficiently match the references"
+    )
+    wardrobe_match: bool = Field(
+        description="True if wardrobe/look sufficiently matches the references"
+    )
+    identity_score: float = Field(
+        description="Identity match score from 0.0-10.0"
+    )
+    wardrobe_score: float = Field(
+        description="Wardrobe/look match score from 0.0-10.0"
+    )
+    issues: list[str] = Field(
+        default=[],
+        description="Short list of concrete mismatch issues, if any",
+    )
+    summary: str = Field(
+        default="",
+        description="Brief summary of the verification result",
+    )
+
+
 class VisualPromptScoreOutput(BaseModel):
     """Structured output for scoring a candidate clip against visual criteria.
 

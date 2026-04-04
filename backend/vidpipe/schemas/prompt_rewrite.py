@@ -15,8 +15,8 @@ class RewrittenKeyframePromptOutput(BaseModel):
     """Structured output from the keyframe prompt rewriter.
 
     Returned by PromptRewriterService.rewrite_keyframe_prompt().
-    Contains a cinematography-formula static image prompt for Imagen,
-    with LLM-reasoned reference asset selection.
+    Contains a cinematography-formula static image prompt for image generation,
+    with LLM-reasoned supplemental reference asset selection.
     """
 
     rewritten_prompt: str = Field(
@@ -27,12 +27,12 @@ class RewrittenKeyframePromptOutput(BaseModel):
     )
     selected_reference_tags: list[str] = Field(
         description=(
-            "Exactly 3 manifest_tags of assets selected as references, "
+            "Up to 3 supplemental manifest_tags selected as references, "
             "ordered by priority (most important first)"
         )
     )
     reference_reasoning: str = Field(
-        description="One sentence explaining why these 3 references were chosen"
+        description="One sentence explaining why these supplemental references were chosen"
     )
     continuity_applied: Optional[str] = Field(
         default=None,

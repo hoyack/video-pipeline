@@ -10,7 +10,6 @@ Provides:
 import hashlib
 import json
 import logging
-import os
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -28,6 +27,7 @@ from vidpipe.db.models import (
     ShotManifest,
     VideoClip,
 )
+from vidpipe.services.json_compat import normalize_json_dict, normalize_json_list, normalize_json_value
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,14 @@ async def build_snapshot(session: AsyncSession, scene: Scene) -> dict:
         "quality_mode": scene.quality_mode,
         "candidate_count": scene.candidate_count,
         "vision_model": scene.vision_model,
+        "dynamic_shot_count": scene.dynamic_shot_count,
+        "script_analysis": normalize_json_dict(scene.script_analysis),
+        "screenplay_context": normalize_json_dict(scene.screenplay_context),
+        "style_guide": normalize_json_dict(scene.style_guide),
+        "storyboard_raw": normalize_json_dict(scene.storyboard_raw),
         "output_path": scene.output_path,
         "status": scene.status,
+        "error_message": scene.error_message,
     }
 
     # Load shots ordered by index
@@ -184,6 +190,11 @@ async def build_snapshot(session: AsyncSession, scene: Scene) -> dict:
             "video_motion_prompt": shot.video_motion_prompt,
             "transition_notes": shot.transition_notes,
             "status": shot.status,
+            "generation_status": shot.generation_status,
+            "characters_present": normalize_json_list(shot.characters_present),
+            "beat_index": shot.beat_index,
+            "narrative_intent": shot.narrative_intent,
+            "emotional_weight": shot.emotional_weight,
             "keyframes": kf_data,
             "clip": clip_data,
             "shot_manifest": sm_data,
@@ -356,11 +367,16 @@ async def restore_from_snapshot(
         "prompt", "title", "style", "aspect_ratio", "target_clip_duration",
         "target_shot_count", "total_duration", "text_model", "image_model",
         "video_model", "audio_enabled", "seed", "quality_mode", "candidate_count",
-        "vision_model", "output_path",
+        "vision_model", "dynamic_shot_count", "script_analysis",
+        "screenplay_context", "style_guide", "storyboard_raw", "output_path",
+        "error_message",
     ]
     for field in restorable_fields:
         if field in proj_data:
-            setattr(scene, field, proj_data[field])
+            value = proj_data[field]
+            if field in {"script_analysis", "screenplay_context", "style_guide", "storyboard_raw"}:
+                value = normalize_json_value(value)
+            setattr(scene, field, value)
 
     # Delete existing shots (cascades handled below manually)
     existing_shots = await session.execute(
@@ -399,6 +415,11 @@ async def restore_from_snapshot(
             video_motion_prompt=shot_data.get("video_motion_prompt", ""),
             transition_notes=shot_data.get("transition_notes"),
             status=shot_data.get("status", "complete"),
+            generation_status=shot_data.get("generation_status"),
+            characters_present=normalize_json_list(shot_data.get("characters_present")),
+            beat_index=shot_data.get("beat_index"),
+            narrative_intent=shot_data.get("narrative_intent"),
+            emotional_weight=shot_data.get("emotional_weight"),
         )
         session.add(shot)
         await session.flush()
@@ -499,7 +520,9 @@ def compute_diff(old_snapshot: dict, new_snapshot: dict) -> list[dict]:
             old_s = old_shots[idx]
             new_s = new_shots[idx]
             for field in ["shot_description", "start_frame_prompt", "end_frame_prompt",
-                          "video_motion_prompt", "transition_notes", "status"]:
+                          "video_motion_prompt", "transition_notes", "status",
+                          "generation_status", "characters_present", "beat_index",
+                          "narrative_intent", "emotional_weight"]:
                 if old_s.get(field) != new_s.get(field):
                     changes.append({
                         "type": "shot_field",

@@ -272,6 +272,14 @@ class ShotDetail(BaseModel):
     transition_notes: Optional[str] = None
     start_keyframe_url: Optional[str] = None
     end_keyframe_url: Optional[str] = None
+    start_keyframe_source: Optional[str] = None
+    end_keyframe_source: Optional[str] = None
+    start_verification_status: Optional[str] = None
+    start_verification_attempts: Optional[int] = None
+    start_verification_summary: Optional[str] = None
+    end_verification_status: Optional[str] = None
+    end_verification_attempts: Optional[int] = None
+    end_verification_summary: Optional[str] = None
     clip_url: Optional[str] = None
     selected_references: list[ShotReference] = []
     # PipeSVN staleness
@@ -669,6 +677,7 @@ class CreateSceneRequest(BaseModel):
     quality_mode: bool = False
     candidate_count: int = 1
     vision_model: Optional[str] = None
+    dynamic_shot_count: bool = False
 
 
 class CreateSceneResponse(BaseModel):
@@ -914,6 +923,7 @@ async def create_draft_scene(request: CreateSceneRequest):
             aspect_ratio=request.aspect_ratio or "",
             target_clip_duration=clip_dur,
             target_shot_count=request.shot_count,
+            dynamic_shot_count=request.dynamic_shot_count,
             total_duration=request.shot_count * (request.clip_duration or 6),
             text_model=request.text_model,
             image_model=request.image_model,
@@ -1230,6 +1240,14 @@ async def get_scene_detail(scene_id: uuid.UUID):
                 transition_notes=shot.transition_notes,
                 start_keyframe_url=f"/api/keyframes/{start_kf.id}" if start_kf else None,
                 end_keyframe_url=f"/api/keyframes/{end_kf.id}" if end_kf else None,
+                start_keyframe_source=start_kf.source if start_kf else None,
+                end_keyframe_source=end_kf.source if end_kf else None,
+                start_verification_status=start_kf.verification_status if start_kf else None,
+                start_verification_attempts=start_kf.verification_attempts if start_kf else None,
+                start_verification_summary=start_kf.verification_summary if start_kf else None,
+                end_verification_status=end_kf.verification_status if end_kf else None,
+                end_verification_attempts=end_kf.verification_attempts if end_kf else None,
+                end_verification_summary=end_kf.verification_summary if end_kf else None,
                 clip_url=f"/api/clips/{clip.id}" if clip and clip.status == "complete" and clip.local_path else None,
                 generation_status=shot.generation_status,
             ))
@@ -5662,6 +5680,17 @@ async def _run_restitch(scene_id: uuid.UUID, *, _emit_complete: bool = True):
             event_bus.emit(scene_id, "regen_complete", scope="stitch", message="Stitching complete")
 
 
+async def _mark_scene_failed(scene_id: uuid.UUID, message: str) -> None:
+    async with async_session() as session:
+        result = await session.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
+            return
+        scene.status = "failed"
+        scene.error_message = message
+        await session.commit()
+
+
 async def _run_storyboard_regeneration(
     scene_id: uuid.UUID,
     text_model_override: Optional[str] = None,
@@ -5696,8 +5725,9 @@ async def _run_storyboard_regeneration(
             from vidpipe.pipeline.storyboard import generate_storyboard
             await generate_storyboard(session, scene, text_adapter=text_adapter)
 
-            # generate_storyboard sets status to "keyframing" — restore original
-            scene.status = saved_status
+            # Standalone storyboard regeneration preserves the existing scene status.
+            if _emit_complete:
+                scene.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
             cp = await create_checkpoint(session, scene, "Regenerated storyboard text")
@@ -5719,6 +5749,8 @@ async def _run_storyboard_regeneration(
                 await cleanup_session.commit()
         except Exception:
             logger.error("Failed to clear generation_status for %s", scene_id, exc_info=True)
+        if not _emit_complete:
+            await _mark_scene_failed(scene_id, str(e))
         event_bus.emit(scene_id, "error", phase="storyboard", message=str(e))
         if not _emit_complete:
             raise  # propagate to chained caller so subsequent phases are skipped
@@ -5762,8 +5794,9 @@ async def _run_keyframes_regeneration(
             from vidpipe.pipeline.keyframes import generate_keyframes
             await generate_keyframes(session, scene, text_adapter=text_adapter)
 
-            # generate_keyframes sets status — restore original
-            scene.status = saved_status
+            # Standalone keyframe regeneration preserves the existing scene status.
+            if _emit_complete:
+                scene.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
             cp = await create_checkpoint(session, scene, "Regenerated stale keyframes")
@@ -5774,6 +5807,8 @@ async def _run_keyframes_regeneration(
                 event_bus.emit(scene_id, "regen_complete", scope="keyframes", message="Keyframe regeneration complete")
     except Exception as e:
         logger.error("Keyframes regeneration failed for %s: %s", scene_id, e, exc_info=True)
+        if not _emit_complete:
+            await _mark_scene_failed(scene_id, str(e))
         from vidpipe.services.event_bus import event_bus
         event_bus.emit(scene_id, "error", phase="keyframes", message=str(e))
         if not _emit_complete:
@@ -5841,8 +5876,9 @@ async def _run_clips_regeneration(
                 vision_adapter=vision_adapter,
             )
 
-            # Restore original status
-            scene.status = saved_status
+            # Standalone clip regeneration preserves the existing scene status.
+            if _emit_complete:
+                scene.status = saved_status
 
             from vidpipe.services.checkpoint_service import create_checkpoint
             cp = await create_checkpoint(session, scene, "Regenerated stale clips")
@@ -5853,6 +5889,8 @@ async def _run_clips_regeneration(
                 event_bus.emit(scene_id, "regen_complete", scope="clips", message="Clip regeneration complete")
     except Exception as e:
         logger.error("Clips regeneration failed for %s: %s", scene_id, e, exc_info=True)
+        if not _emit_complete:
+            await _mark_scene_failed(scene_id, str(e))
         from vidpipe.services.event_bus import event_bus
         event_bus.emit(scene_id, "error", phase="clips", message=str(e))
         if not _emit_complete:
@@ -5928,6 +5966,7 @@ async def _run_all_phases_regeneration(
         )
     except Exception as e:
         logger.error("All-phases regeneration failed for %s: %s", scene_id, e, exc_info=True)
+        await _mark_scene_failed(scene_id, str(e))
         event_bus.emit(scene_id, "error", message=str(e))
 
 

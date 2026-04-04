@@ -6,7 +6,6 @@ multi-reference confusion in Gemini image generation.
 """
 
 import logging
-import uuid
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,6 +22,7 @@ class QualifiedRef:
 
     image_url: str
     image_bytes: bytes
+    face_crop_bytes: bytes
     face_embedding: np.ndarray  # 512-dim normalized ArcFace
     detection_score: float  # InsightFace detection score
 
@@ -61,10 +61,11 @@ async def prequalify_refs(
             continue
 
         try:
-            embedding, det_score = _extract_embedding_with_score(face_svc, img_bytes)
+            embedding, det_score, face_crop_bytes = _extract_embedding_with_score(face_svc, img_bytes)
             qualified.append(QualifiedRef(
                 image_url=url,
                 image_bytes=img_bytes,
+                face_crop_bytes=face_crop_bytes,
                 face_embedding=embedding,
                 detection_score=det_score,
             ))
@@ -85,14 +86,14 @@ async def prequalify_refs(
 def _extract_embedding_with_score(
     face_svc: FaceMatchingService,
     image_bytes: bytes,
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float, bytes]:
     """Extract ArcFace embedding and detection score from image bytes.
 
     Uses InsightFace's face analysis directly to get both embedding
     and detection confidence in a single pass.
 
     Returns:
-        (normalized_embedding, detection_score)
+        (normalized_embedding, detection_score, cropped_face_bytes)
 
     Raises:
         ValueError: If no face detected.
@@ -114,5 +115,16 @@ def _extract_embedding_with_score(
     best_face = max(faces, key=lambda f: f.det_score)
     embedding = best_face.embedding
     normalized = embedding / np.linalg.norm(embedding)
+    bbox = [int(v) for v in best_face.bbox]
+    x1, y1, x2, y2 = bbox
+    pad_x = max(1, int((x2 - x1) * 0.12))
+    pad_y = max(1, int((y2 - y1) * 0.12))
+    x1 = max(0, x1 - pad_x)
+    y1 = max(0, y1 - pad_y)
+    x2 = min(img_pil.width, x2 + pad_x)
+    y2 = min(img_pil.height, y2 + pad_y)
+    crop = img_pil.crop((x1, y1, x2, y2))
+    crop_buf = io.BytesIO()
+    crop.save(crop_buf, format="PNG")
 
-    return normalized, float(best_face.det_score)
+    return normalized, float(best_face.det_score), crop_buf.getvalue()

@@ -56,6 +56,41 @@ from vidpipe.services.storage_backend import LocalStorageBackend, get_storage_ba
 
 logger = logging.getLogger(__name__)
 
+_ANIMAL_KEYWORDS = re.compile(
+    r"\b(cat|dog|puppy|kitten|bird|horse|rabbit|hamster|parrot|turtle|fish|fox|wolf|bear|lion|tiger|deer|owl|eagle|snake|lizard|frog|monkey|ape|elephant|giraffe|penguin|dolphin|whale)\b",
+    re.IGNORECASE,
+)
+_CREATURE_KEYWORDS = re.compile(
+    r"\b(dragon|monster|alien|robot|mech|golem|demon|spirit|ghost|creature|beast|mutant|cyborg|android)\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_subject_type(text: str) -> tuple[str, str]:
+    """Detect whether the subject is a person, animal, or creature from description text.
+
+    Returns (subject_label, trait_examples) for use in prompt construction.
+    """
+    if _CREATURE_KEYWORDS.search(text):
+        return "character", "silhouette, body shape, markings, color palette, and distinguishing features"
+    if _ANIMAL_KEYWORDS.search(text):
+        return "animal", "species, fur/feather pattern, markings, eye color, body shape, and distinguishing features"
+    return "person", "face shape, skin tone, hair (or lack thereof), build, and distinguishing features"
+
+
+_PHOTOREALISTIC_CUES = re.compile(
+    r"(?:against a |with |in a )?"
+    r"(?:neutral|soft|even|natural|studio|grey|gray|white|diffused|professional)"
+    r"[^.]*(?:background|lighting|light|backdrop|setting)[^.]*\.?\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_photorealistic_cues(text: str) -> str:
+    """Remove studio/lighting descriptions that anchor models to photorealism."""
+    return _PHOTOREALISTIC_CUES.sub("", text).strip()
+
+
 asset_library_router = APIRouter(prefix="/api/asset-library", tags=["asset-library"])
 
 
@@ -859,6 +894,7 @@ class GenerateActorImageRequest(BaseModel):
     prompt: str
     image_model: Optional[str] = None
     reference_image_id: Optional[str] = None
+    style: Optional[str] = None
 
 
 @asset_library_router.post("/actors/{actor_id}/generate-image")
@@ -892,20 +928,49 @@ async def generate_actor_image(actor_id: str, body: GenerateActorImageRequest):
 
     # Build prompt — when a reference image is provided, emphasize identity preservation
     user_prompt = body.prompt.strip()
-    if ref_bytes:
+    style_label = (body.style or "").replace("_", " ").strip() or "photorealistic"
+    is_stylized = style_label.lower() not in ("photorealistic", "cinematic")
+    subject_label, trait_examples = _detect_subject_type(
+        actor.base_appearance_prompt or actor.description or user_prompt
+    )
+    from vidpipe.pipeline.keyframes import COMFYUI_IMAGE_MODELS as _COMFYUI_ACTOR_SET
+    _actor_is_comfyui = image_model in _COMFYUI_ACTOR_SET
+
+    if is_stylized:
+        user_prompt = _strip_photorealistic_cues(user_prompt)
+
+    if is_stylized and (_actor_is_comfyui or not ref_bytes):
+        # ComfyUI is text-only; no-ref Gemini is also text-only
+        # Mirror the scene pipeline: prompt starts with "A {style} rendering of..."
         wrapped_prompt = (
-            "Generate a SINGLE photorealistic image of the SAME person shown in the "
-            "reference photo above. This is the most important requirement — the generated "
-            "person MUST have the same face, head shape, skin tone, hair (or lack thereof), "
-            "and distinguishing features as the reference photo. Do NOT change the person's "
-            "identity. Use the text description below only for pose, setting, and clothing "
-            "guidance — NOT to override the person's physical appearance from the reference.\n"
+            f"A {style_label} rendering of a {subject_label}. "
+            f"{user_prompt}. "
+            f"STYLE CUES: Rendering technique details specific to {style_label} "
+            f"(e.g., line weight, color fills, shading approach, texture). "
+            f"COLOR PALETTE: Dominant colors that reinforce the {style_label} aesthetic. "
+            "Do NOT create a grid, collage, or multiple panels. Output exactly one image."
+        )
+    elif is_stylized and ref_bytes:
+        # Gemini with reference photo — style transformation
+        wrapped_prompt = (
+            f"A {style_label} rendering of the {subject_label} shown in the reference photo. "
+            f"{user_prompt}. "
+            f"STYLE CUES: Rendering technique details specific to {style_label} "
+            f"(e.g., line weight, color fills, shading approach, texture). "
+            f"COLOR PALETTE: Dominant colors that reinforce the {style_label} aesthetic. "
+            "Do NOT create a grid, collage, or multiple panels. Output exactly one image."
+        )
+    elif ref_bytes:
+        wrapped_prompt = (
+            f"Generate a SINGLE {style_label} image of the SAME {subject_label} shown in the "
+            f"reference photo above. The generated {subject_label} MUST have the same "
+            f"{trait_examples} as the reference photo. "
             "Do NOT create a grid, collage, or multiple panels. Output exactly one image.\n\n"
             f"{user_prompt}"
         )
     else:
         wrapped_prompt = (
-            "Generate a SINGLE photorealistic portrait image of this character. "
+            f"Generate a SINGLE photorealistic portrait of this {subject_label}. "
             "Do NOT create a grid, collage, contact sheet, or multiple panels. "
             "Output exactly one image.\n\n"
             f"{user_prompt}"
@@ -947,9 +1012,19 @@ async def generate_actor_image(actor_id: str, body: GenerateActorImageRequest):
             client = get_vertex_client(location=location_for_model(image_model))
 
             if ref_bytes:
+                actor_style_identity = None
+                if is_stylized:
+                    actor_style_identity = (
+                        f"The following reference photo shows the {subject_label}'s identity. "
+                        f"IMPORTANT: Do NOT reproduce the photographic style of the reference. "
+                        f"Instead, render the {subject_label} entirely in {style_label} style. "
+                        f"Extract the {subject_label}'s key visual traits ({trait_examples}) from the reference and "
+                        f"translate them into {style_label} style art.\n\n"
+                    )
                 image_bytes = await _generate_image_from_text(
                     client, wrapped_prompt, "1:1", image_model,
                     reference_images=[ref_bytes],
+                    identity_instruction=actor_style_identity,
                 )
             else:
                 response = await client.aio.models.generate_content(
@@ -1428,6 +1503,7 @@ class GenerateWardrobeImageRequest(BaseModel):
     reference_image_id: str
     image_model: Optional[str] = None
     additional_prompt: Optional[str] = None
+    style: Optional[str] = None
 
 
 @asset_library_router.post("/actor-wardrobe-presets/{preset_id}/generate-image")
@@ -1460,22 +1536,57 @@ async def generate_wardrobe_image(preset_id: str, body: GenerateWardrobeImageReq
     wardrobe_desc = wp.description or wp.label
     appearance = actor.base_appearance_prompt or ""
     extra = body.additional_prompt or ""
-    user_prompt = f"Wearing: {wardrobe_desc}"
+    style_label = (body.style or "").replace("_", " ").strip() or "photorealistic"
+    is_stylized = style_label.lower() not in ("photorealistic", "cinematic")
+    subject_label, trait_examples = _detect_subject_type(appearance or actor.description or "")
+
+    if is_stylized and appearance:
+        appearance = _strip_photorealistic_cues(appearance)
+
+    user_prompt = f"{wardrobe_desc}"
     if appearance:
         user_prompt = f"{appearance}. {user_prompt}"
     if extra:
         user_prompt = f"{user_prompt}. {extra}"
 
-    wrapped_prompt = (
-        "Generate a SINGLE photorealistic image of the SAME person shown in the "
-        "reference photo above. This is the most important requirement — the generated "
-        "person MUST have the same face, head shape, skin tone, hair (or lack thereof), "
-        "and distinguishing features as the reference photo. Do NOT change the person's "
-        "identity. Use the text description below only for pose, setting, and clothing "
-        "guidance — NOT to override the person's physical appearance from the reference.\n"
-        "Do NOT create a grid, collage, or multiple panels. Output exactly one image.\n\n"
-        f"{user_prompt}"
-    )
+    from vidpipe.pipeline.keyframes import COMFYUI_IMAGE_MODELS as _COMFYUI_SET
+    _is_comfyui = image_model in _COMFYUI_SET
+
+    if is_stylized and _is_comfyui:
+        # ComfyUI is text-only — mirror the scene pipeline pattern:
+        # every prompt literally starts with "A {style} rendering of..."
+        wrapped_prompt = (
+            f"A {style_label} rendering of a {subject_label}. "
+            f"{user_prompt}. "
+            f"STYLE CUES: Rendering technique details specific to {style_label} "
+            f"(e.g., line weight, color fills, shading approach, texture). "
+            f"COLOR PALETTE: Dominant colors that reinforce the {style_label} aesthetic. "
+            "Do NOT create a grid, collage, or multiple panels. Output exactly one image."
+        )
+    elif is_stylized:
+        # Gemini path — reference photo will be attached separately
+        wrapped_prompt = (
+            f"A {style_label} rendering of the {subject_label} shown in the reference photo. "
+            f"{user_prompt}. "
+            f"STYLE CUES: Rendering technique details specific to {style_label} "
+            f"(e.g., line weight, color fills, shading approach, texture). "
+            f"COLOR PALETTE: Dominant colors that reinforce the {style_label} aesthetic. "
+            "Do NOT create a grid, collage, or multiple panels. Output exactly one image."
+        )
+    elif _is_comfyui:
+        wrapped_prompt = (
+            f"A {style_label} image of a {subject_label}. "
+            "Do NOT create a grid, collage, or multiple panels. Output exactly one image.\n\n"
+            f"{user_prompt}"
+        )
+    else:
+        wrapped_prompt = (
+            f"Generate a SINGLE {style_label} image of the SAME {subject_label} shown in the "
+            f"reference photo above. The generated {subject_label} MUST have the same "
+            f"{trait_examples} as the reference photo. "
+            "Do NOT create a grid, collage, or multiple panels. Output exactly one image.\n\n"
+            f"{user_prompt}"
+        )
 
     try:
         if image_model in COMFYUI_IMAGE_MODELS:
@@ -1499,9 +1610,19 @@ async def generate_wardrobe_image(preset_id: str, body: GenerateWardrobeImageReq
             from vidpipe.services.vertex_client import get_vertex_client, location_for_model
             from vidpipe.pipeline.keyframes import _generate_image_from_text
             client = get_vertex_client(location=location_for_model(image_model))
+            style_identity_instruction = None
+            if is_stylized:
+                style_identity_instruction = (
+                    f"The following reference photo shows the {subject_label}'s identity. "
+                    f"IMPORTANT: Do NOT reproduce the photographic style of the reference. "
+                    f"Instead, render the {subject_label} entirely in {style_label} style. "
+                    f"Extract the {subject_label}'s key visual traits ({trait_examples}) from the reference and "
+                    f"translate them into {style_label} style art.\n\n"
+                )
             image_bytes = await _generate_image_from_text(
                 client, wrapped_prompt, "1:1", image_model,
                 reference_images=[ref_bytes],
+                identity_instruction=style_identity_instruction,
             )
 
         if not image_bytes:

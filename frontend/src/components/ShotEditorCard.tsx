@@ -89,6 +89,13 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
+function formatKeyframeSource(source?: string | null): string | null {
+  if (!source) return null;
+  if (source === "inherited") return "Inherited";
+  if (source === "generated") return "Generated";
+  return source;
+}
+
 function EditableField({
   label,
   value,
@@ -253,6 +260,11 @@ export function ShotEditorCard({
   onTagSelect,
 }: ShotEditorCardProps) {
   const idx = shot.shot_index;
+  const actualShotLabel = `Shot ${idx + 1}`;
+  const orderLabel =
+    displayIndex != null && displayIndex !== idx + 1
+      ? `Position ${displayIndex}`
+      : null;
 
   const tagExtensions: Extension[] = useMemo(() => {
     if (!boundAssets?.length) return [];
@@ -545,8 +557,13 @@ export function ShotEditorCard({
             </svg>
           )}
           <span className={clsx("text-xs font-medium flex-shrink-0", isNewShot ? "text-emerald-400" : "text-gray-400")}>
-            Shot {displayIndex ?? (idx + 1)}{isNewShot ? " — New" : ""}
+            {actualShotLabel}{isNewShot ? " — New" : ""}
           </span>
+          {orderLabel && (
+            <span className="rounded-full border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-500">
+              {orderLabel}
+            </span>
+          )}
           {expanded === false && (
             <>
               <span className="text-xs text-gray-500 truncate min-w-0">
@@ -641,9 +658,16 @@ export function ShotEditorCard({
         {/* Start keyframe */}
         <div className="relative flex-1">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              Start KF
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                Start KF
+              </span>
+              {formatKeyframeSource(shot.start_keyframe_source) && (
+                <span className="rounded bg-gray-800 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-gray-400">
+                  {formatKeyframeSource(shot.start_keyframe_source)}
+                </span>
+              )}
+            </div>
             <StalenessBadge staleness={shot.start_keyframe_staleness} />
           </div>
           <div className="relative mt-0.5">
@@ -730,9 +754,16 @@ export function ShotEditorCard({
         {/* End keyframe */}
         <div className="relative flex-1">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              End KF
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                End KF
+              </span>
+              {formatKeyframeSource(shot.end_keyframe_source) && (
+                <span className="rounded bg-gray-800 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-gray-400">
+                  {formatKeyframeSource(shot.end_keyframe_source)}
+                </span>
+              )}
+            </div>
             <StalenessBadge staleness={shot.end_keyframe_staleness} />
           </div>
           <div className="relative mt-0.5">

@@ -15,6 +15,7 @@ import re
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,9 +54,41 @@ class ResolvedAssetRef:
     display_name: str
     text_description: str  # Actor.base_appearance_prompt / LibraryProp.appearance_prompt / LibrarySet.reverse_prompt
     reference_image_urls: list[str] = field(default_factory=list)  # From ActorRef / LibraryPropRef / LibrarySetRef
+    face_reference_image_urls: list[str] = field(default_factory=list)  # HUMAN character face/identity refs
+    wardrobe_reference_image_urls: list[str] = field(default_factory=list)  # Character look / clothing refs
     lora_url: str | None = None  # Phase 25: S3 path to trained .safetensors
     wardrobe_override: dict | None = None  # From CastBinding.wardrobe_override
     lighting_notes: str | None = None  # From SetBinding.lighting_override or LibrarySet.lighting_notes
+    identity_type: str | None = None  # CHARACTER policy: HUMAN/ANIMAL/CREATURE/OBJECT
+
+
+def _dedupe_urls(urls: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for url in urls:
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        ordered.append(url)
+    return ordered
+
+
+def _interleave_urls(primary_urls: list[str], secondary_urls: list[str]) -> list[str]:
+    """Interleave two URL lists while preserving order and uniqueness."""
+    primary = _dedupe_urls(primary_urls)
+    secondary = _dedupe_urls(secondary_urls)
+    merged: list[str] = []
+    max_len = max(len(primary), len(secondary))
+    for idx in range(max_len):
+        if idx < len(primary):
+            merged.append(primary[idx])
+        if idx < len(secondary):
+            merged.append(secondary[idx])
+    return _dedupe_urls(merged)
+
+
+def _is_human_identity_type(identity_type: str | None) -> bool:
+    return (identity_type or "HUMAN").upper() == "HUMAN"
 
 
 def has_tags(text: str) -> bool:
@@ -81,6 +114,110 @@ class ResolvedPrompt:
     character_refs: list = field(default_factory=list)  # [{actor_id, ref_urls}]
     set_context: list = field(default_factory=list)  # [{set_id, lighting, style}]
     unresolved_tags: list = field(default_factory=list)  # tags that didn't match
+
+
+def _shared_prefix_token_count(a: str, b: str) -> int:
+    a_tokens = a.upper().split("_")
+    b_tokens = b.upper().split("_")
+    count = 0
+    for left, right in zip(a_tokens, b_tokens):
+        if left != right:
+            break
+        count += 1
+    return count
+
+
+def _compact_tag(tag: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (tag or "").upper())
+
+
+def _find_character_tag_alias(
+    tag_name: str,
+    candidate_tags: list[str],
+) -> str | None:
+    """Return a conservative Production Bible character-tag alias, if any.
+
+    This is intentionally narrow: it only accepts a remap when there is a
+    single clearly-better character tag candidate with a strong string match
+    and a shared token prefix. That keeps typo recovery safe while avoiding
+    surprising cross-character remaps.
+    """
+    normalized = (tag_name or "").upper()
+    if not normalized:
+        return None
+
+    compact_normalized = _compact_tag(normalized)
+    scores: list[tuple[float, int, str]] = []
+    for candidate in candidate_tags:
+        compact_candidate = _compact_tag(candidate)
+        if not compact_candidate:
+            continue
+        ratio = SequenceMatcher(None, compact_normalized, compact_candidate).ratio()
+        prefix_tokens = _shared_prefix_token_count(normalized, candidate)
+        if prefix_tokens <= 0:
+            continue
+        scores.append((ratio, prefix_tokens, candidate))
+
+    if not scores:
+        return None
+
+    scores.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    best_ratio, best_prefix_tokens, best_candidate = scores[0]
+    second_ratio = scores[1][0] if len(scores) > 1 else 0.0
+    min_prefix_tokens = 2 if len(normalized.split("_")) >= 2 else 1
+
+    if best_prefix_tokens < min_prefix_tokens:
+        return None
+    if best_ratio < 0.90:
+        return None
+    if second_ratio >= best_ratio - 0.03:
+        return None
+    return best_candidate
+
+
+async def canonicalize_character_tags(
+    tags: list[str] | None,
+    production_bible_id: uuid.UUID,
+    session: AsyncSession,
+) -> dict[str, str]:
+    """Map user-visible character tags to canonical Production Bible tags.
+
+    Exact matches are preserved. Minor typos are remapped only when there is a
+    single strong CastLook / CastBinding candidate in the current bible.
+    Returns a mapping from normalized input tag -> canonical tag.
+    """
+    normalized_tags = {
+        tag.upper()
+        for raw in tags or []
+        if (tag := raw.strip().lstrip("@"))
+    }
+    if not normalized_tags:
+        return {}
+
+    cast_result = await session.execute(
+        select(CastBinding.tag).where(
+            CastBinding.production_bible_id == production_bible_id
+        )
+    )
+    cast_tags = [tag.upper() for tag in cast_result.scalars().all() if tag]
+
+    look_result = await session.execute(
+        select(CastLook.tag)
+        .join(CastBinding)
+        .where(CastBinding.production_bible_id == production_bible_id)
+    )
+    look_tags = [tag.upper() for tag in look_result.scalars().all() if tag]
+
+    candidate_tags = list(dict.fromkeys(look_tags + cast_tags))
+    candidate_tag_set = set(candidate_tags)
+    canonical: dict[str, str] = {}
+    for tag in normalized_tags:
+        if tag in candidate_tag_set:
+            canonical[tag] = tag
+            continue
+        alias = _find_character_tag_alias(tag, candidate_tags)
+        canonical[tag] = alias or tag
+    return canonical
 
 
 async def resolve_tags(
@@ -155,13 +292,15 @@ async def resolve_tags(
             resolved_text = resolved_text.replace(f"@{tag_name}", "", 1)
             continue
 
-        replacement, resolved_type = await _resolve_at_tag_cross_type(
+        replacement, resolved_type, canonical_tag = await _resolve_at_tag_cross_type(
             tag_name, production_bible_id, session, character_refs, set_context
         )
 
         if replacement is not None:
             resolved_text = resolved_text.replace(f"@{tag_name}", replacement, 1)
             resolved_tag_names.add(upper_tag)
+            if canonical_tag:
+                resolved_tag_names.add(canonical_tag)
         else:
             unresolved_tags.append(f"@{tag_name}")
             # Leave @tag as-is in text for unresolved tags
@@ -184,19 +323,33 @@ async def _resolve_at_tag_cross_type(
     session: AsyncSession,
     character_refs: list[dict],
     set_context: list[dict],
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     """Cross-type lookup for @tag: CastLook -> CastBinding -> PropBinding -> SetBinding.
 
-    Returns (replacement_text, asset_type) or (None, None).
+    Returns (replacement_text, asset_type, canonical_tag) or (None, None, None).
     Case-insensitive matching via func.upper() on the tag field.
     """
     upper_tag = tag_name.upper()
+    canonical_tag: str | None = None
+
+    if "@" in upper_tag:
+        upper_tag = upper_tag.lstrip("@")
+
+    character_aliases = await canonicalize_character_tags([upper_tag], bible_id, session)
+    canonical_tag = character_aliases.get(upper_tag)
+    lookup_tag = canonical_tag or upper_tag
+    if canonical_tag and canonical_tag != upper_tag:
+        logger.info(
+            "Canonicalized character tag @%s -> @%s during prompt resolution",
+            upper_tag,
+            canonical_tag,
+        )
 
     # 0. CastLook first (wardrobe-specific character look)
     look_result = await session.execute(
         select(CastLook).join(CastBinding).where(
             CastBinding.production_bible_id == bible_id,
-            func.upper(CastLook.tag) == upper_tag,
+            func.upper(CastLook.tag) == lookup_tag,
         )
     )
     cast_look = look_result.scalars().first()
@@ -211,7 +364,7 @@ async def _resolve_at_tag_cross_type(
                 wardrobe_desc = (wp.description or wp.label) if wp else ""
                 text = f"{appearance}; wearing: {wardrobe_desc}" if appearance else f"wearing: {wardrobe_desc}"
                 replacement = f"{binding.character_name} ({text})"
-                return replacement, "CHARACTER"
+                return replacement, "CHARACTER", lookup_tag
 
     match_count = 0
 
@@ -219,7 +372,7 @@ async def _resolve_at_tag_cross_type(
     result = await session.execute(
         select(CastBinding).where(
             CastBinding.production_bible_id == bible_id,
-            func.upper(CastBinding.tag) == upper_tag,
+            func.upper(CastBinding.tag) == lookup_tag,
         )
     )
     cast_binding = result.scalars().first()
@@ -262,21 +415,21 @@ async def _resolve_at_tag_cross_type(
         replacement = await _resolve_char_tag(
             cast_binding.tag, bible_id, session, character_refs
         )
-        return replacement, "CHARACTER"
+        return replacement, "CHARACTER", lookup_tag
 
     if prop_binding:
         replacement = await _resolve_prop_tag(
             prop_binding.tag, bible_id, session
         )
-        return replacement, "PROP"
+        return replacement, "PROP", None
 
     if set_binding:
         replacement = await _resolve_set_tag(
             set_binding.tag, bible_id, session, set_context
         )
-        return replacement, "SET"
+        return replacement, "SET", None
 
-    return None, None
+    return None, None, None
 
 
 async def resolve_tags_with_assets(
@@ -359,7 +512,9 @@ async def resolve_tags_with_assets(
         )
         actors_by_id = {a.id: a for a in actor_result.scalars().all()}
         ref_result = await session.execute(
-            select(ActorRef).where(ActorRef.actor_id.in_(actor_ids))
+            select(ActorRef)
+            .where(ActorRef.actor_id.in_(actor_ids))
+            .order_by(ActorRef.is_primary.desc(), ActorRef.created_at.asc(), ActorRef.id.asc())
         )
         for r in ref_result.scalars().all():
             actor_refs_by_actor_id[r.actor_id].append(r)
@@ -374,7 +529,9 @@ async def resolve_tags_with_assets(
         )
         props_by_id = {p.id: p for p in prop_entity_result.scalars().all()}
         prop_ref_result = await session.execute(
-            select(LibraryPropRef).where(LibraryPropRef.library_prop_id.in_(prop_ids))
+            select(LibraryPropRef)
+            .where(LibraryPropRef.library_prop_id.in_(prop_ids))
+            .order_by(LibraryPropRef.is_primary.desc(), LibraryPropRef.created_at.asc(), LibraryPropRef.id.asc())
         )
         for r in prop_ref_result.scalars().all():
             prop_refs_by_prop_id[r.library_prop_id].append(r)
@@ -389,7 +546,9 @@ async def resolve_tags_with_assets(
         )
         sets_by_id = {s.id: s for s in set_entity_result.scalars().all()}
         set_ref_result = await session.execute(
-            select(LibrarySetRef).where(LibrarySetRef.library_set_id.in_(set_ids))
+            select(LibrarySetRef)
+            .where(LibrarySetRef.library_set_id.in_(set_ids))
+            .order_by(LibrarySetRef.is_primary.desc(), LibrarySetRef.created_at.asc(), LibrarySetRef.id.asc())
         )
         for r in set_ref_result.scalars().all():
             set_refs_by_set_id[r.library_set_id].append(r)
@@ -451,6 +610,19 @@ async def resolve_tags_with_assets(
     # Priority: CastLook -> CastBinding -> PropBinding -> SetBinding
     for tag_name in at_matches:
         upper_tag = tag_name.upper()
+        lookup_tag = upper_tag
+        if upper_tag not in looks_by_tag and upper_tag not in cast_by_tag:
+            alias = _find_character_tag_alias(
+                upper_tag,
+                list(dict.fromkeys(list(looks_by_tag.keys()) + list(cast_by_tag.keys()))),
+            )
+            if alias:
+                lookup_tag = alias
+                logger.info(
+                    "Canonicalized character tag @%s -> @%s during asset resolution",
+                    upper_tag,
+                    alias,
+                )
 
         if upper_tag in resolved_tag_names:
             resolved_text = resolved_text.replace(f"@{tag_name}", "", 1)
@@ -459,8 +631,8 @@ async def resolve_tags_with_assets(
         resolved = False
 
         # Check CastLook tags first (wardrobe-specific looks)
-        if upper_tag in looks_by_tag:
-            look = looks_by_tag[upper_tag]
+        if lookup_tag in looks_by_tag:
+            look = looks_by_tag[lookup_tag]
             # Find the parent CastBinding
             parent_binding = None
             for cb in cast_bindings:
@@ -469,11 +641,17 @@ async def resolve_tags_with_assets(
                     break
             if parent_binding:
                 replacement, asset_ref = _build_look_resolution(
-                    look, parent_binding, actors_by_id, wardrobe_presets_by_id, character_refs
+                    look,
+                    parent_binding,
+                    actors_by_id,
+                    wardrobe_presets_by_id,
+                    actor_refs_by_actor_id,
+                    character_refs,
                 )
                 if replacement is not None:
                     resolved_text = resolved_text.replace(f"@{tag_name}", replacement, 1)
                     resolved_tag_names.add(upper_tag)
+                    resolved_tag_names.add(lookup_tag)
                     if asset_ref:
                         asset_refs.append(asset_ref)
                     resolved = True
@@ -481,7 +659,7 @@ async def resolve_tags_with_assets(
         # Cross-type lookup: CastBinding -> PropBinding -> SetBinding
         if not resolved:
             match_types = []
-            if upper_tag in cast_by_tag:
+            if lookup_tag in cast_by_tag:
                 match_types.append("CHAR")
             if upper_tag in prop_by_tag:
                 match_types.append("PROP")
@@ -494,13 +672,18 @@ async def resolve_tags_with_assets(
                     tag_name, len(match_types), match_types,
                 )
 
-        if not resolved and upper_tag in cast_by_tag:
-            binding = cast_by_tag[upper_tag]
+        if not resolved and lookup_tag in cast_by_tag:
+            binding = cast_by_tag[lookup_tag]
             # Check if this binding has a default look override
             default_lk = default_look_by_binding.get(binding.id)
             if default_lk:
                 replacement, asset_ref = _build_look_resolution(
-                    default_lk, binding, actors_by_id, wardrobe_presets_by_id, character_refs
+                    default_lk,
+                    binding,
+                    actors_by_id,
+                    wardrobe_presets_by_id,
+                    actor_refs_by_actor_id,
+                    character_refs,
                 )
             else:
                 replacement, asset_ref = _build_char_resolution(
@@ -509,6 +692,7 @@ async def resolve_tags_with_assets(
             if replacement is not None:
                 resolved_text = resolved_text.replace(f"@{tag_name}", replacement, 1)
                 resolved_tag_names.add(upper_tag)
+                resolved_tag_names.add(lookup_tag)
                 if asset_ref:
                     asset_refs.append(asset_ref)
                 resolved = True
@@ -583,9 +767,12 @@ def _build_char_resolution(
         display_name=binding.character_name,
         text_description=actor.base_appearance_prompt or "",
         reference_image_urls=ref_urls,
+        face_reference_image_urls=ref_urls,
+        wardrobe_reference_image_urls=[],
         lora_url=getattr(actor, 'lora_url', None),
         wardrobe_override=binding.wardrobe_override,
         lighting_notes=None,
+        identity_type=(binding.identity_type or "HUMAN").upper(),
     )
     return replacement, asset_ref
 
@@ -595,6 +782,7 @@ def _build_look_resolution(
     binding: CastBinding,
     actors_by_id: dict[uuid.UUID, Actor],
     wardrobe_presets_by_id: dict[uuid.UUID, ActorWardrobePreset],
+    actor_refs_by_actor_id: dict[uuid.UUID, list[ActorRef]],
     character_refs: list[dict],
 ) -> tuple[str | None, ResolvedAssetRef | None]:
     """Build replacement text and ResolvedAssetRef for a CastLook (wardrobe-specific tag)."""
@@ -609,8 +797,17 @@ def _build_look_resolution(
         # Fall back to base actor resolution
         return binding.character_name, None
 
-    # Use wardrobe preset's reference_images for visual conditioning
-    ref_urls = list(preset.reference_images or [])
+    # HUMAN look tags need both wardrobe refs and base actor refs so the model
+    # keeps the same face while still following the look-specific clothing.
+    look_ref_urls = list(preset.reference_images or [])
+    actor_ref_urls = [
+        ref.image_url
+        for ref in actor_refs_by_actor_id.get(binding.actor_id, [])
+    ]
+    if _is_human_identity_type(binding.identity_type):
+        ref_urls = _interleave_urls(look_ref_urls, actor_ref_urls)
+    else:
+        ref_urls = _dedupe_urls(look_ref_urls)
     if ref_urls:
         character_refs.append({"actor_id": str(actor.id), "ref_urls": ref_urls})
 
@@ -626,9 +823,12 @@ def _build_look_resolution(
         display_name=binding.character_name,
         text_description=text_description,
         reference_image_urls=ref_urls,
+        face_reference_image_urls=_dedupe_urls(actor_ref_urls) if _is_human_identity_type(binding.identity_type) else [],
+        wardrobe_reference_image_urls=_dedupe_urls(look_ref_urls),
         lora_url=getattr(actor, 'lora_url', None),
         wardrobe_override={"wardrobe_description": wardrobe_desc},
         lighting_notes=None,
+        identity_type=(binding.identity_type or "HUMAN").upper(),
     )
     return replacement, asset_ref
 

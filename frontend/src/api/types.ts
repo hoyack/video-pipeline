@@ -85,6 +85,14 @@ export interface ShotDetail {
   transition_notes?: string | null;
   start_keyframe_url?: string | null;
   end_keyframe_url?: string | null;
+  start_keyframe_source?: string | null;
+  end_keyframe_source?: string | null;
+  start_verification_status?: string | null;
+  start_verification_attempts?: number | null;
+  start_verification_summary?: string | null;
+  end_verification_status?: string | null;
+  end_verification_attempts?: number | null;
+  end_verification_summary?: string | null;
   clip_url?: string | null;
   selected_references?: ShotReference[];
   // PipeSVN staleness
@@ -575,6 +583,7 @@ export interface CreateDraftSceneRequest {
   quality_mode?: boolean;
   candidate_count?: number;
   vision_model?: string | null;
+  dynamic_shot_count?: boolean;
 }
 
 /** Response from POST /api/scenes */
@@ -1043,6 +1052,7 @@ export interface CastBinding {
   character_description: string | null;
   character_arc: string | null;
   role: "LEAD" | "SUPPORTING" | "EXTRA" | "NARRATOR";
+  identity_type: "HUMAN" | "ANIMAL" | "CREATURE" | "OBJECT";
   wardrobe_override: Record<string, unknown>[] | null;
   voice_profile_id: string | null;
   behavioral_notes: string | null;
@@ -1140,6 +1150,7 @@ export interface BoundAssetSummary {
   tag: string;
   name: string;
   type: "CHARACTER" | "SET" | "PROP";
+  identity_type?: "HUMAN" | "ANIMAL" | "CREATURE" | "OBJECT" | null;
   primary_thumbnail_url: string | null;
   description: string | null;
 }

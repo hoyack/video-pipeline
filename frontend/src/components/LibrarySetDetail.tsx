@@ -211,11 +211,11 @@ function OverviewTab({
       };
       await updateLibrarySet(libSet.id, {
         name: name.trim() || libSet.name,
-        description: description.trim() || null,
-        reverse_prompt: reversePrompt.trim() || null,
-        lighting_notes: lightingNotes.trim() || null,
-        prompt_tags: parseTags(promptTags),
-        style_tags: parseTags(styleTags),
+        description: description.trim() || undefined,
+        reverse_prompt: reversePrompt.trim() || undefined,
+        lighting_notes: lightingNotes.trim() || undefined,
+        prompt_tags: parseTags(promptTags) ?? undefined,
+        style_tags: parseTags(styleTags) ?? undefined,
       });
       onRefresh();
     } catch (err: unknown) {

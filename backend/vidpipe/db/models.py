@@ -657,6 +657,11 @@ class CastBinding(Base):
     character_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     character_arc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(String(30))  # LEAD/SUPPORTING/EXTRA/NARRATOR
+    identity_type: Mapped[str] = mapped_column(
+        String(20),
+        default="HUMAN",
+        server_default=text("'HUMAN'"),
+    )  # HUMAN/ANIMAL/CREATURE/OBJECT
     wardrobe_override: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     voice_profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("actor_voice_profiles.id"), nullable=True
@@ -969,6 +974,9 @@ class Keyframe(Base):
     file_path: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str] = mapped_column(String(20))
     source: Mapped[str] = mapped_column(String(20))  # 'generated' or 'inherited'
+    verification_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    verification_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    verification_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

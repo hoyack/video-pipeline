@@ -1386,8 +1386,8 @@ export function deleteActorVoiceProfile(id: string): Promise<void> {
 }
 
 /** POST /api/asset-library/actor-voice-profiles/{id}/test — generate TTS sample */
-export function testActorVoiceProfile(id: string, text?: string): Promise<ActorVoiceProfile> {
-  return request<ActorVoiceProfile>(`/api/asset-library/actor-voice-profiles/${id}/test`, {
+export function testActorVoiceProfile(id: string, text?: string): Promise<ActorVoiceProfileResponse> {
+  return request<ActorVoiceProfileResponse>(`/api/asset-library/actor-voice-profiles/${id}/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(text ? { text } : {}),
@@ -1429,6 +1429,7 @@ export function generateWardrobeImage(
   referenceImageId: string,
   imageModel?: string,
   additionalPrompt?: string,
+  style?: string,
 ): Promise<ActorWardrobePresetResponse> {
   return request<ActorWardrobePresetResponse>(`/api/asset-library/actor-wardrobe-presets/${presetId}/generate-image`, {
     method: "POST",
@@ -1437,6 +1438,7 @@ export function generateWardrobeImage(
       reference_image_id: referenceImageId,
       image_model: imageModel || undefined,
       additional_prompt: additionalPrompt || undefined,
+      style: style || undefined,
     }),
   });
 }
@@ -1633,6 +1635,7 @@ export function generateActorImage(
   prompt: string,
   imageModel?: string,
   referenceImageId?: string,
+  style?: string,
 ): Promise<{ id: string; actor_id: string; image_url: string; label: string | null; is_primary: boolean; created_at: string }> {
   return request(`/api/asset-library/actors/${actorId}/generate-image`, {
     method: "POST",
@@ -1641,6 +1644,7 @@ export function generateActorImage(
       prompt,
       image_model: imageModel || undefined,
       reference_image_id: referenceImageId || undefined,
+      style: style || undefined,
     }),
   });
 }
@@ -1770,6 +1774,7 @@ export function createCastBinding(
     tag: string;
     character_name: string;
     role: string;
+    identity_type?: "HUMAN" | "ANIMAL" | "CREATURE" | "OBJECT";
     character_description?: string;
     character_arc?: string;
     wardrobe_override?: Record<string, unknown>;
@@ -1794,6 +1799,7 @@ export function updateCastBinding(
     character_description: string;
     character_arc: string;
     role: string;
+    identity_type: "HUMAN" | "ANIMAL" | "CREATURE" | "OBJECT";
     wardrobe_override: Record<string, unknown>;
     voice_profile_id: string;
     behavioral_notes: string;

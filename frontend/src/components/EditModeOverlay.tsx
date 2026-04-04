@@ -10,9 +10,11 @@ import {
   TEXT_MODELS,
   IMAGE_MODELS,
   VIDEO_MODELS,
+  TERMINAL_STATUSES,
   estimatePartialCost,
 } from "../lib/constants.ts";
 import { SortableShotCard } from "./SortableShotCard.tsx";
+import { ShotEditorCard } from "./ShotEditorCard.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -1315,6 +1317,13 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   }));
 
   const allShots = [...detail.shots, ...syntheticShots];
+  const hasActiveGeneration = detail.shots.some((shot) => Boolean(shot.generation_status));
+  const canReorderShots = !hasActiveGeneration && TERMINAL_STATUSES.has(detail.status);
+  const canonicalShotOrder = useMemo(
+    () => [...allShots].sort((a, b) => a.shot_index - b.shot_index).map((shot) => shot.shot_index),
+    [allShots],
+  );
+  const renderShotOrder = canReorderShots ? shotOrder : canonicalShotOrder;
 
   // Keep shotOrder in sync when allShots changes (refresh, add/remove shots)
   useEffect(() => {
@@ -1344,6 +1353,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   );
 
   function handleDragEnd(event: DragEndEvent) {
+    if (!canReorderShots) return;
     const { active, over } = event;
     if (over && active.id !== over.id) {
       setShotOrder(prev => {
@@ -1676,45 +1686,81 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                     {expandedShots.size > 0 ? "Collapse All" : "Expand All"}
                   </button>
                 </div>
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={shotOrder} strategy={verticalListSortingStrategy}>
-                    <div className="grid gap-3">
-                      {shotOrder.map((shotIdx, position) => {
-                        const shot = shotsByIndex.get(shotIdx);
-                        if (!shot) return null;
-                        return (
-                          <SortableShotCard
-                            id={shotIdx}
-                            key={shotIdx}
-                            shot={shot}
-                            displayIndex={position + 1}
-                            edits={shotEdits[shot.shot_index] || {}}
-                            onChange={handleShotChange}
-                            removed={removedShots.has(shot.shot_index)}
-                            onRemove={handleRemoveShot}
-                            onRestore={handleRestoreShot}
-                            canRemove={activeShots.length + syntheticCount > 1}
-                            sceneId={detail.scene_id}
-                            onAssetChanged={handleAssetChanged}
-                            onRegenStarted={handleRegenStarted}
-                            textModel={textModel}
-                            videoModel={videoModel}
-                            imageModel={imageModel}
-                            allShotEdits={shotEdits}
-                            prompt={prompt}
-                            onGenerateShot={handleGenerateShot}
-                            isGeneratingAssets={generatingShotIndices.has(shot.shot_index)}
-                            wsConnected={wsConnected}
-                            expanded={expandedShots.has(shot.shot_index)}
-                            onToggleExpand={() => toggleShot(shot.shot_index)}
-                            boundAssets={boundAssets}
-                            onTagSelect={setSelectedTag}
-                          />
-                        );
-                      })}
-                    </div>
-                  </SortableContext>
-                </DndContext>
+                {canReorderShots ? (
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={renderShotOrder} strategy={verticalListSortingStrategy}>
+                      <div className="grid gap-3">
+                        {renderShotOrder.map((shotIdx, position) => {
+                          const shot = shotsByIndex.get(shotIdx);
+                          if (!shot) return null;
+                          return (
+                            <SortableShotCard
+                              id={shotIdx}
+                              key={shotIdx}
+                              shot={shot}
+                              displayIndex={position + 1}
+                              edits={shotEdits[shot.shot_index] || {}}
+                              onChange={handleShotChange}
+                              removed={removedShots.has(shot.shot_index)}
+                              onRemove={handleRemoveShot}
+                              onRestore={handleRestoreShot}
+                              canRemove={activeShots.length + syntheticCount > 1}
+                              sceneId={detail.scene_id}
+                              onAssetChanged={handleAssetChanged}
+                              onRegenStarted={handleRegenStarted}
+                              textModel={textModel}
+                              videoModel={videoModel}
+                              imageModel={imageModel}
+                              allShotEdits={shotEdits}
+                              prompt={prompt}
+                              onGenerateShot={handleGenerateShot}
+                              isGeneratingAssets={generatingShotIndices.has(shot.shot_index)}
+                              wsConnected={wsConnected}
+                              expanded={expandedShots.has(shot.shot_index)}
+                              onToggleExpand={() => toggleShot(shot.shot_index)}
+                              boundAssets={boundAssets}
+                              onTagSelect={setSelectedTag}
+                            />
+                          );
+                        })}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                ) : (
+                  <div className="grid gap-3">
+                    {renderShotOrder.map((shotIdx) => {
+                      const shot = shotsByIndex.get(shotIdx);
+                      if (!shot) return null;
+                      return (
+                        <ShotEditorCard
+                          key={shotIdx}
+                          shot={shot}
+                          edits={shotEdits[shot.shot_index] || {}}
+                          onChange={handleShotChange}
+                          removed={removedShots.has(shot.shot_index)}
+                          onRemove={handleRemoveShot}
+                          onRestore={handleRestoreShot}
+                          canRemove={activeShots.length + syntheticCount > 1}
+                          sceneId={detail.scene_id}
+                          onAssetChanged={handleAssetChanged}
+                          onRegenStarted={handleRegenStarted}
+                          textModel={textModel}
+                          videoModel={videoModel}
+                          imageModel={imageModel}
+                          allShotEdits={shotEdits}
+                          prompt={prompt}
+                          onGenerateShot={handleGenerateShot}
+                          isGeneratingAssets={generatingShotIndices.has(shot.shot_index)}
+                          wsConnected={wsConnected}
+                          expanded={expandedShots.has(shot.shot_index)}
+                          onToggleExpand={() => toggleShot(shot.shot_index)}
+                          boundAssets={boundAssets}
+                          onTagSelect={setSelectedTag}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

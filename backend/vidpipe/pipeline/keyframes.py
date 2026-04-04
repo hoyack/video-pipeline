@@ -10,7 +10,9 @@ This module implements KEYF-01 through KEYF-06 requirements:
 """
 
 import asyncio
+import io
 import logging
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -19,6 +21,7 @@ from google.genai.errors import ClientError, ServerError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import (
+    RetryError,
     retry,
     stop_after_attempt,
     wait_exponential,
@@ -28,9 +31,12 @@ from tenacity import (
 )
 
 from vidpipe.config import settings
-from vidpipe.db.models import Scene, Shot, Keyframe
+from vidpipe.db.models import Asset, Scene, Shot, Keyframe
+from vidpipe.schemas.llm_vision import CharacterKeyframeVerificationOutput
+from vidpipe.services.event_bus import emit_task_log
 from vidpipe.services.file_manager import FileManager
-from vidpipe.services.llm import LLMAdapter
+from vidpipe.services.json_compat import normalize_json_list
+from vidpipe.services.llm import LLMAdapter, get_adapter
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 
 logger = logging.getLogger(__name__)
@@ -51,6 +57,7 @@ def _detect_image_mime(data: bytes) -> str:
 # ComfyUI image models (routed to ComfyUI instead of Vertex AI)
 # ---------------------------------------------------------------------------
 COMFYUI_IMAGE_MODELS = {"qwen-fast", "qwen-image-edit", "flux-dev", "flux-dev-lora", "flux-dev-redux", "flux-dev-full"}
+_NANO_BANANA_MAX_REFERENCE_IMAGES = 13
 
 # ---------------------------------------------------------------------------
 # Identity emphasis escalation prefixes for face verification retry
@@ -77,7 +84,8 @@ _IDENTITY_EMPHASIS_PREFIXES = [
 
 
 def _build_identity_instruction(
-    text_description: str | None = None,
+    text_description: str | list[str] | None = None,
+    identity_types: list[str] | None = None,
     emphasis_level: int = 0,
 ) -> str:
     """Build feature-anchored identity instruction for Gemini.
@@ -87,32 +95,82 @@ def _build_identity_instruction(
     over generic "same person" instructions.
 
     Args:
-        text_description: Actor.base_appearance_prompt facial features text.
+        text_description: Actor/base look facial features text. Can be a single
+            description or multiple per-character descriptions.
         emphasis_level: 0=standard, 1=escalated, 2=maximum.
 
     Returns:
         Identity instruction string to prepend before reference images.
     """
+    identity_types = [
+        (identity_type or "HUMAN").upper()
+        for identity_type in (identity_types or [])
+        if identity_type
+    ]
+    has_non_human = any(identity_type != "HUMAN" for identity_type in identity_types)
+
+    descriptions: list[str] = []
+    if isinstance(text_description, list):
+        descriptions = [d.strip() for d in text_description if d and d.strip()]
+    elif text_description:
+        descriptions = [text_description.strip()]
+
+    descriptions = descriptions[:4]
     features = ""
-    if text_description:
-        # Truncate very long descriptions to keep prompt focused
-        desc = text_description[:300].strip()
-        features = f" This person's key features: {desc}"
+    subject_label = "person"
+    same_subject = "SAME PERSON"
+    if descriptions:
+        if len(descriptions) == 1:
+            desc = descriptions[0][:300]
+            features = f" This person's key features: {desc}"
+        else:
+            joined = " ".join(
+                f"Character {idx + 1}: {desc[:180]}."
+                for idx, desc in enumerate(descriptions)
+            )
+            features = f" Key identity features by character: {joined}"
+            subject_label = "characters"
+            same_subject = "SAME CHARACTERS"
+
+    if has_non_human:
+        if emphasis_level <= 0:
+            return (
+                "The following reference photo(s) show the exact recurring character(s) or subject(s) "
+                "that must appear in the generated image."
+                + features
+                + " Match each subject precisely. For humans, preserve facial identity and proportions. "
+                "For non-human characters, preserve species, markings, silhouette, texture, and other "
+                "distinctive visual traits.\n\n"
+            )
+        if emphasis_level == 1:
+            return (
+                "CRITICAL IDENTITY REQUIREMENT: Match the exact recurring subjects in the reference "
+                "photo(s)."
+                + features
+                + " For humans, preserve the same face and proportions. For non-human characters, "
+                "preserve the same species, markings, fur/skin texture, silhouette, and signature traits.\n\n"
+            )
+        return (
+            "ABSOLUTE PRIORITY — SUBJECT IDENTITY: Match the reference photo(s) with photographic accuracy."
+            + features
+            + " Keep the same recurring human faces, and keep the same recurring non-human species, "
+            "markings, silhouette, and distinguishing visual traits even if other composition details must give way.\n\n"
+        )
 
     if emphasis_level <= 0:
         return (
-            "The following reference photo(s) show the EXACT person who must appear "
+            f"The following reference photo(s) show the EXACT {subject_label} who must appear "
             "in the generated image." + features + " "
             "Match their face structure, skin tone, and distinguishing features precisely. "
-            "The generated character MUST be recognizable as the SAME PERSON.\n\n"
+            f"The generated character(s) MUST be recognizable as the {same_subject}.\n\n"
         )
     elif emphasis_level == 1:
         return (
-            "CRITICAL IDENTITY REQUIREMENT: The character's face must EXACTLY match "
+            "CRITICAL IDENTITY REQUIREMENT: The character face(s) must EXACTLY match "
             "the reference photo(s)." + features + " "
             "Pay extreme attention to facial bone structure, eye shape and spacing, "
             "nose bridge, jawline contour, and skin tone. "
-            "The face must be the SAME PERSON, not merely similar.\n\n"
+            f"The face(s) must be the {same_subject}, not merely similar.\n\n"
         )
     else:  # Level 2+
         return (
@@ -133,6 +191,1264 @@ def _is_retriable(exc: BaseException) -> bool:
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return True
     return False
+
+
+def _is_nano_banana_model(image_model: str) -> bool:
+    return image_model.startswith("gemini-") and "image" in image_model
+
+
+def _normalize_reference_tag(tag: str | None) -> str | None:
+    if not tag:
+        return None
+    clean = tag.strip().lstrip("@")
+    if not clean:
+        return None
+    return clean.upper()
+
+
+def _ordered_unique_tags(tags: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for tag in tags or []:
+        normalized = _normalize_reference_tag(tag)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
+    return ordered
+
+
+def _is_human_identity_type(identity_type: str | None) -> bool:
+    return (identity_type or "HUMAN").upper() == "HUMAN"
+
+
+@dataclass
+class _ReferenceCandidate:
+    tag: str
+    image_url: str
+    image_bytes: bytes
+    asset_type: str
+    source: str
+    asset: Asset | None = None
+    text_description: str | None = None
+    identity_type: str | None = None
+    reference_kind: str = "supplemental"
+
+
+@dataclass
+class _CharacterVerificationTarget:
+    tag: str
+    identity_type: str
+    expected_position: str | None = None
+    face_candidates: list[_ReferenceCandidate] = field(default_factory=list)
+    wardrobe_candidates: list[_ReferenceCandidate] = field(default_factory=list)
+    fallback_candidates: list[_ReferenceCandidate] = field(default_factory=list)
+
+
+@dataclass
+class _CharacterCropSelection:
+    tag: str
+    image_bytes: bytes
+    bbox: list[float] | None
+    used_full_frame: bool = False
+
+
+@dataclass
+class _CharacterCropPlan:
+    selections: dict[str, _CharacterCropSelection] = field(default_factory=dict)
+    detected_face_count: int = 0
+    detected_person_count: int = 0
+    detected_object_count: int = 0
+
+
+@dataclass
+class _FrameVerificationResult:
+    passed: bool
+    attempts: int
+    summary: str
+    detail: str
+    status: str = "passed"
+
+
+@dataclass
+class _CharacterVisionVerificationResult:
+    tag: str
+    passed: bool
+    character_visible: bool
+    identity_match: bool
+    wardrobe_match: bool
+    identity_score: float
+    wardrobe_score: float
+    issues: list[str] = field(default_factory=list)
+    used_full_frame: bool = False
+
+
+@dataclass
+class _VisionVerificationReport:
+    passed: bool
+    detail: str
+    results: list[_CharacterVisionVerificationResult] = field(default_factory=list)
+
+
+@dataclass
+class _HumanFaceVerificationResult:
+    tag: str
+    passed: bool
+    advisory: bool
+    similarity: float
+    detail: str
+
+
+@dataclass
+class _KeyframeVerificationReport:
+    passed: bool
+    detail: str
+    verification_mode: str
+    face_results: list[_HumanFaceVerificationResult] = field(default_factory=list)
+    vision_report: _VisionVerificationReport | None = None
+
+
+@dataclass
+class _GeneratedKeyframeAttempt:
+    attempt_number: int
+    retry_level: int
+    keyframe_bytes: bytes
+    verification_report: _KeyframeVerificationReport
+
+
+@dataclass
+class _NanoBananaReferenceContext:
+    ref_image_bytes_list: list[bytes] = field(default_factory=list)
+    final_reference_tags: list[str] = field(default_factory=list)
+    selected_ref_urls: list[str] = field(default_factory=list)
+    character_ref_urls: list[str] = field(default_factory=list)
+    placed_char_assets: list[Asset] = field(default_factory=list)
+    character_text_descriptions: list[str] = field(default_factory=list)
+    mandatory_character_tags: list[str] = field(default_factory=list)
+    optional_reference_tags: list[str] = field(default_factory=list)
+    trimmed_reference_counts: dict[str, int] = field(default_factory=dict)
+    canonical_tag_remaps: dict[str, str] = field(default_factory=dict)
+    identity_types_by_tag: dict[str, str] = field(default_factory=dict)
+    selected_candidates: list[_ReferenceCandidate] = field(default_factory=list)
+
+
+def _dedupe_reference_candidates(
+    candidates: list[_ReferenceCandidate],
+) -> list[_ReferenceCandidate]:
+    seen_urls: set[str] = set()
+    deduped: list[_ReferenceCandidate] = []
+    for candidate in candidates:
+        if candidate.image_url in seen_urls:
+            continue
+        seen_urls.add(candidate.image_url)
+        deduped.append(candidate)
+    return deduped
+
+
+def _crop_image_bytes(
+    image_bytes: bytes,
+    bbox: list[float] | None,
+    *,
+    padding: float = 0.12,
+) -> bytes:
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if not bbox:
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        return out.getvalue()
+
+    x1, y1, x2, y2 = bbox
+    pad_x = (x2 - x1) * padding
+    pad_y = (y2 - y1) * padding
+    crop = image.crop((
+        max(0, int(x1 - pad_x)),
+        max(0, int(y1 - pad_y)),
+        min(image.width, int(x2 + pad_x)),
+        min(image.height, int(y2 + pad_y)),
+    ))
+    out = io.BytesIO()
+    crop.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _build_character_verification_targets(
+    *,
+    shot_manifest_json: dict | None,
+    selected_candidates: list[_ReferenceCandidate],
+    identity_types_by_tag: dict[str, str],
+) -> list[_CharacterVerificationTarget]:
+    positions_by_tag: dict[str, str | None] = {}
+    for placement in (shot_manifest_json or {}).get("placements", []):
+        tag = _normalize_reference_tag(placement.get("asset_tag"))
+        if tag and tag not in positions_by_tag:
+            positions_by_tag[tag] = placement.get("position")
+
+    targets: dict[str, _CharacterVerificationTarget] = {}
+    for candidate in selected_candidates:
+        if candidate.asset_type != "CHARACTER":
+            continue
+        target = targets.setdefault(
+            candidate.tag,
+            _CharacterVerificationTarget(
+                tag=candidate.tag,
+                identity_type=identity_types_by_tag.get(candidate.tag, candidate.identity_type or "HUMAN"),
+                expected_position=positions_by_tag.get(candidate.tag),
+            ),
+        )
+        if candidate.reference_kind == "face":
+            target.face_candidates.append(candidate)
+        elif candidate.reference_kind == "wardrobe":
+            target.wardrobe_candidates.append(candidate)
+        else:
+            target.fallback_candidates.append(candidate)
+
+    return list(targets.values())
+
+
+def _build_retry_reference_candidates(
+    candidates: list[_ReferenceCandidate],
+    *,
+    mandatory_tags: list[str],
+    retry_level: int,
+) -> list[_ReferenceCandidate]:
+    if retry_level <= 0:
+        return list(candidates)
+
+    mandatory_tag_set = set(mandatory_tags)
+    mandatory_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.asset_type == "CHARACTER" and candidate.tag in mandatory_tag_set
+    ]
+    if retry_level == 1:
+        return mandatory_candidates or list(candidates)
+
+    grouped: dict[str, list[_ReferenceCandidate]] = {}
+    for candidate in mandatory_candidates:
+        grouped.setdefault(candidate.tag, []).append(candidate)
+
+    packed: list[_ReferenceCandidate] = []
+    for tag in mandatory_tags:
+        group = grouped.get(tag, [])
+        if not group:
+            continue
+        face_candidate = next((c for c in group if c.reference_kind == "face"), None)
+        wardrobe_candidate = next((c for c in group if c.reference_kind == "wardrobe"), None)
+        if face_candidate:
+            packed.append(face_candidate)
+        if wardrobe_candidate and wardrobe_candidate is not face_candidate:
+            packed.append(wardrobe_candidate)
+        if not packed or packed[-1].tag != tag:
+            for candidate in group:
+                if candidate not in packed:
+                    packed.append(candidate)
+                if len([c for c in packed if c.tag == tag]) >= 2:
+                    break
+    return packed or mandatory_candidates or list(candidates)
+
+
+def _retry_mode_label(retry_level: int) -> str:
+    if retry_level <= 0:
+        return "full_reference_pack"
+    if retry_level == 1:
+        return "character_only_pack"
+    return "minimal_cast_pack"
+
+
+def _best_effort_metrics(
+    report: _KeyframeVerificationReport,
+) -> tuple[int, int, float, float, float, int]:
+    vision_results = report.vision_report.results if report.vision_report else []
+    visible_count = sum(1 for result in vision_results if result.character_visible)
+    passed_count = sum(1 for result in vision_results if result.passed)
+    identity_total = sum(result.identity_score for result in vision_results)
+    wardrobe_total = sum(result.wardrobe_score for result in vision_results)
+    face_similarity_total = sum(result.similarity for result in report.face_results)
+    issue_count = sum(len(result.issues) for result in vision_results)
+    issue_count += sum(
+        1 for result in report.face_results
+        if not result.passed and not result.advisory
+    )
+    return (
+        visible_count,
+        passed_count,
+        identity_total,
+        wardrobe_total,
+        face_similarity_total,
+        issue_count,
+    )
+
+
+def _best_effort_sort_key(attempt: _GeneratedKeyframeAttempt) -> tuple[float, ...]:
+    report = attempt.verification_report
+    (
+        visible_count,
+        passed_count,
+        identity_total,
+        wardrobe_total,
+        face_similarity_total,
+        issue_count,
+    ) = _best_effort_metrics(report)
+    return (
+        1.0 if report.passed else 0.0,
+        float(visible_count),
+        float(passed_count),
+        identity_total,
+        wardrobe_total,
+        face_similarity_total,
+        float(-issue_count),
+        float(-attempt.attempt_number),
+    )
+
+
+def _select_best_effort_attempt(
+    attempts: list[_GeneratedKeyframeAttempt],
+) -> _GeneratedKeyframeAttempt | None:
+    if not attempts:
+        return None
+    return max(attempts, key=_best_effort_sort_key)
+
+
+def _build_best_effort_detail(
+    *,
+    position: str,
+    attempts: list[_GeneratedKeyframeAttempt],
+    selected_attempt: _GeneratedKeyframeAttempt,
+    transport_detail: str | None = None,
+) -> str:
+    report = selected_attempt.verification_report
+    target_count = len(report.vision_report.results if report.vision_report else [])
+    (
+        visible_count,
+        passed_count,
+        identity_total,
+        wardrobe_total,
+        face_similarity_total,
+        issue_count,
+    ) = _best_effort_metrics(report)
+    detail = (
+        "best_effort_fallback accepted after full verification miss. "
+        f"selected_attempt={selected_attempt.attempt_number}/{len(attempts)} "
+        f"position={position} retry_mode={_retry_mode_label(selected_attempt.retry_level)} "
+        f"verification_mode={report.verification_mode} "
+        f"crowded_best_effort={report.verification_mode == 'vision_primary_face_advisory'} "
+        f"visible_targets={visible_count}/{target_count} "
+        f"passed_targets={passed_count}/{target_count} "
+        f"identity_total={identity_total:.1f} "
+        f"wardrobe_total={wardrobe_total:.1f} "
+        f"face_similarity_total={face_similarity_total:.3f} "
+        f"issue_count={issue_count} || {report.detail}"
+    )
+    if transport_detail:
+        detail += f" || transport_exhausted={transport_detail}"
+    return detail
+
+
+def _build_best_effort_fallback_result(
+    *,
+    position: str,
+    attempts: list[_GeneratedKeyframeAttempt],
+    transport_detail: str | None = None,
+) -> tuple[_GeneratedKeyframeAttempt, _FrameVerificationResult] | None:
+    selected_attempt = _select_best_effort_attempt(attempts)
+    if selected_attempt is None:
+        return None
+    return (
+        selected_attempt,
+        _FrameVerificationResult(
+            passed=True,
+            attempts=len(attempts),
+            summary="accepted_with_warnings",
+            detail=_build_best_effort_detail(
+                position=position,
+                attempts=attempts,
+                selected_attempt=selected_attempt,
+                transport_detail=transport_detail,
+            ),
+            status="accepted_with_warnings",
+        ),
+    )
+
+
+def _describe_retry_error(exc: RetryError) -> str:
+    last_exc = exc.last_attempt.exception() if exc.last_attempt else None
+    if last_exc is None:
+        return "transport_retries_exhausted"
+    code = getattr(last_exc, "code", None)
+    if code is not None:
+        return f"{type(last_exc).__name__}(code={code}): {last_exc}"
+    return f"{type(last_exc).__name__}: {last_exc}"
+
+
+_VISIBILITY_LIMITED_ISSUE_SNIPPETS = (
+    "seen from behind",
+    "face and head are not visible",
+    "face is not visible",
+    "no visible facial features",
+    "identity cannot be verified",
+    "obscured by",
+    "silhouette",
+    "low light",
+    "backlit",
+)
+
+
+def _issues_indicate_visibility_limited_identity(
+    issues: list[str] | None,
+) -> bool:
+    text = " ".join(issue.lower() for issue in (issues or []))
+    return any(snippet in text for snippet in _VISIBILITY_LIMITED_ISSUE_SNIPPETS)
+
+
+def _passes_partial_visibility_human_check(
+    *,
+    target: _CharacterVerificationTarget,
+    crop: _CharacterCropSelection,
+    result: CharacterKeyframeVerificationOutput,
+) -> bool:
+    if not _is_human_identity_type(target.identity_type):
+        return False
+    if not crop.used_full_frame:
+        return False
+    if not result.character_visible:
+        return False
+    if result.wardrobe_score < 6.0:
+        return False
+    return _issues_indicate_visibility_limited_identity(result.issues)
+
+
+def _pack_mandatory_reference_candidates(
+    grouped_candidates: list[tuple[str, list[_ReferenceCandidate]]],
+    *,
+    max_reference_images: int,
+) -> tuple[list[_ReferenceCandidate], dict[str, int]]:
+    if max_reference_images <= 0:
+        trimmed = {
+            tag: len(candidates)
+            for tag, candidates in grouped_candidates
+            if candidates
+        }
+        return [], trimmed
+
+    queues = [
+        [tag, list(candidates)]
+        for tag, candidates in grouped_candidates
+        if candidates
+    ]
+    selected: list[_ReferenceCandidate] = []
+
+    for _, queue in queues:
+        if len(selected) >= max_reference_images:
+            break
+        selected.append(queue.pop(0))
+
+    while len(selected) < max_reference_images:
+        progressed = False
+        for _, queue in queues:
+            if not queue:
+                continue
+            selected.append(queue.pop(0))
+            progressed = True
+            if len(selected) >= max_reference_images:
+                break
+        if not progressed:
+            break
+
+    trimmed = {
+        tag: len(queue)
+        for tag, queue in queues
+        if queue
+    }
+    return selected, trimmed
+
+
+async def _assemble_nano_banana_reference_context(
+    session: AsyncSession,
+    *,
+    production_bible_id,
+    scene_prompt: str | None,
+    shot: Shot,
+    shot_manifest_json: dict | None,
+    selected_reference_tags: list[str] | None,
+    all_assets: list[Asset],
+    file_mgr: FileManager,
+    max_reference_images: int = _NANO_BANANA_MAX_REFERENCE_IMAGES,
+) -> _NanoBananaReferenceContext:
+    from vidpipe.services.reference_selection import resolve_asset_image_bytes
+    from vidpipe.services.tag_resolver import (
+        canonicalize_character_tags,
+        resolve_tags_with_assets,
+    )
+
+    context = _NanoBananaReferenceContext()
+
+    asset_map = {
+        normalized: asset
+        for asset in all_assets
+        if (normalized := _normalize_reference_tag(asset.manifest_tag))
+    }
+
+    placement_tags = _ordered_unique_tags([
+        placement.get("asset_tag")
+        for placement in (shot_manifest_json or {}).get("placements", [])
+        if placement.get("asset_tag")
+    ])
+    shot_character_tags = _ordered_unique_tags(
+        normalize_json_list(shot.characters_present)
+    )
+    optional_tags = _ordered_unique_tags(selected_reference_tags)
+
+    character_aliases = await canonicalize_character_tags(
+        _ordered_unique_tags(placement_tags + shot_character_tags + optional_tags),
+        production_bible_id,
+        session,
+    )
+
+    def _canonicalize_tag_list(tags: list[str]) -> list[str]:
+        canonicalized: list[str] = []
+        for tag in tags:
+            canonical = character_aliases.get(tag, tag)
+            if canonical != tag:
+                context.canonical_tag_remaps[tag] = canonical
+            canonicalized.append(canonical)
+        return _ordered_unique_tags(canonicalized)
+
+    placement_tags = _canonicalize_tag_list(placement_tags)
+    shot_character_tags = _canonicalize_tag_list(shot_character_tags)
+    optional_tags = _canonicalize_tag_list(optional_tags)
+    shot_specific_tags = _ordered_unique_tags(shot_character_tags + placement_tags)
+
+    resolved_binding_refs: dict[str, object] = {}
+
+    async def _merge_resolved_tags(tags: list[str]) -> None:
+        if not tags:
+            return
+        resolved = await resolve_tags_with_assets(
+            " ".join(f"@{tag}" for tag in tags),
+            production_bible_id,
+            session,
+        )
+        for asset_ref in resolved.asset_refs:
+            normalized = _normalize_reference_tag(asset_ref.tag)
+            if normalized and normalized not in resolved_binding_refs:
+                resolved_binding_refs[normalized] = asset_ref
+
+    await _merge_resolved_tags(_ordered_unique_tags(shot_specific_tags + optional_tags))
+
+    fallback_resolved = None
+    if not shot_specific_tags and scene_prompt:
+        fallback_resolved = await resolve_tags_with_assets(
+            scene_prompt,
+            production_bible_id,
+            session,
+        )
+        for asset_ref in fallback_resolved.asset_refs:
+            normalized = _normalize_reference_tag(asset_ref.tag)
+            if normalized and normalized not in resolved_binding_refs:
+                resolved_binding_refs[normalized] = asset_ref
+
+    for tag in shot_specific_tags:
+        asset = asset_map.get(tag)
+        if asset and asset.asset_type == "CHARACTER":
+            context.mandatory_character_tags.append(tag)
+            resolved = resolved_binding_refs.get(tag)
+            if resolved and getattr(resolved, "identity_type", None):
+                context.identity_types_by_tag[tag] = resolved.identity_type
+            continue
+        resolved = resolved_binding_refs.get(tag)
+        if resolved and resolved.asset_type == "CHARACTER":
+            context.mandatory_character_tags.append(tag)
+            context.identity_types_by_tag[tag] = (
+                getattr(resolved, "identity_type", None) or "HUMAN"
+            )
+
+    if not context.mandatory_character_tags and fallback_resolved is not None:
+        for asset_ref in fallback_resolved.asset_refs:
+            normalized = _normalize_reference_tag(asset_ref.tag)
+            if normalized and asset_ref.asset_type == "CHARACTER":
+                context.mandatory_character_tags.append(normalized)
+                resolved_binding_refs.setdefault(normalized, asset_ref)
+                context.identity_types_by_tag[normalized] = (
+                    getattr(asset_ref, "identity_type", None) or "HUMAN"
+                )
+
+    context.mandatory_character_tags = _ordered_unique_tags(context.mandatory_character_tags)
+    context.optional_reference_tags = [
+        tag for tag in optional_tags if tag not in set(context.mandatory_character_tags)
+    ]
+    context.placed_char_assets = [
+        asset_map[tag]
+        for tag in _ordered_unique_tags(shot_character_tags + placement_tags)
+        if (
+            tag in asset_map
+            and asset_map[tag].asset_type == "CHARACTER"
+            and _is_human_identity_type(context.identity_types_by_tag.get(tag))
+        )
+    ]
+
+    seen_descriptions: set[str] = set()
+    grouped_candidates: list[tuple[str, list[_ReferenceCandidate]]] = []
+    for tag in context.mandatory_character_tags:
+        candidates: list[_ReferenceCandidate] = []
+        asset = asset_map.get(tag)
+        if asset and asset.asset_type == "CHARACTER":
+            ref_bytes = await resolve_asset_image_bytes(session, asset)
+            resolved = resolved_binding_refs.get(tag)
+            identity_type = (
+                getattr(resolved, "identity_type", None)
+                or context.identity_types_by_tag.get(tag)
+                or "HUMAN"
+            )
+            context.identity_types_by_tag.setdefault(tag, identity_type)
+            if ref_bytes and asset.reference_image_url:
+                candidates.append(_ReferenceCandidate(
+                    tag=tag,
+                    image_url=asset.reference_image_url,
+                    image_bytes=ref_bytes,
+                    asset_type="CHARACTER",
+                    source="manifest_asset",
+                    asset=asset,
+                    text_description=asset.reverse_prompt or asset.visual_description,
+                    identity_type=identity_type,
+                    reference_kind="wardrobe",
+                ))
+
+        if not candidates:
+            resolved = resolved_binding_refs.get(tag)
+            if resolved and resolved.asset_type == "CHARACTER":
+                identity_type = getattr(resolved, "identity_type", None) or "HUMAN"
+                context.identity_types_by_tag.setdefault(tag, identity_type)
+                face_urls = list(getattr(resolved, "face_reference_image_urls", []) or [])
+                wardrobe_urls = list(getattr(resolved, "wardrobe_reference_image_urls", []) or [])
+                fallback_urls = list(resolved.reference_image_urls or [])
+
+                ordered_refs: list[tuple[str, str]] = []
+                if _is_human_identity_type(identity_type):
+                    ordered_refs.extend(("face", url) for url in face_urls)
+                ordered_refs.extend(("wardrobe", url) for url in wardrobe_urls)
+                if not ordered_refs:
+                    kind = "face" if _is_human_identity_type(identity_type) else "character"
+                    ordered_refs.extend((kind, url) for url in fallback_urls)
+
+                for reference_kind, url in ordered_refs:
+                    try:
+                        ref_bytes = await file_mgr.read_bytes(url)
+                    except Exception as exc:
+                        logger.warning("Failed to read CHARACTER reference %s for %s: %s", url, tag, exc)
+                        continue
+                    candidates.append(_ReferenceCandidate(
+                        tag=tag,
+                        image_url=url,
+                        image_bytes=ref_bytes,
+                        asset_type="CHARACTER",
+                        source="binding",
+                        text_description=resolved.text_description,
+                        identity_type=identity_type,
+                        reference_kind=reference_kind,
+                    ))
+
+        candidates = _dedupe_reference_candidates(candidates)
+        if candidates:
+            grouped_candidates.append((tag, candidates))
+            description = candidates[0].text_description
+            if description and description not in seen_descriptions:
+                seen_descriptions.add(description)
+                context.character_text_descriptions.append(description)
+
+    selected_candidates, context.trimmed_reference_counts = _pack_mandatory_reference_candidates(
+        grouped_candidates,
+        max_reference_images=max_reference_images,
+    )
+
+    remaining_slots = max_reference_images - len(selected_candidates)
+    if remaining_slots > 0:
+        optional_candidates: list[_ReferenceCandidate] = []
+        for tag in context.optional_reference_tags:
+            asset = asset_map.get(tag)
+            if asset and asset.reference_image_url:
+                ref_bytes = await resolve_asset_image_bytes(session, asset)
+                if ref_bytes:
+                    optional_candidates.append(_ReferenceCandidate(
+                        tag=tag,
+                        image_url=asset.reference_image_url,
+                        image_bytes=ref_bytes,
+                        asset_type=asset.asset_type,
+                        source="manifest_asset",
+                        asset=asset,
+                        text_description=asset.reverse_prompt or asset.visual_description,
+                        identity_type=context.identity_types_by_tag.get(tag),
+                        reference_kind="supplemental",
+                    ))
+                continue
+
+            resolved = resolved_binding_refs.get(tag)
+            if resolved and resolved.reference_image_urls:
+                url = resolved.reference_image_urls[0]
+                try:
+                    ref_bytes = await file_mgr.read_bytes(url)
+                except Exception as exc:
+                    logger.warning("Failed to read optional reference %s for %s: %s", url, tag, exc)
+                    continue
+                optional_candidates.append(_ReferenceCandidate(
+                    tag=tag,
+                    image_url=url,
+                    image_bytes=ref_bytes,
+                    asset_type=resolved.asset_type,
+                    source="binding",
+                    text_description=resolved.text_description,
+                    identity_type=getattr(resolved, "identity_type", None),
+                    reference_kind="supplemental",
+                ))
+
+        selected_candidates.extend(optional_candidates[:remaining_slots])
+
+    context.ref_image_bytes_list = [candidate.image_bytes for candidate in selected_candidates]
+    context.final_reference_tags = [candidate.tag for candidate in selected_candidates]
+    context.selected_ref_urls = [candidate.image_url for candidate in selected_candidates]
+    context.character_ref_urls = [
+        candidate.image_url
+        for candidate in selected_candidates
+        if candidate.asset_type == "CHARACTER"
+    ]
+    context.selected_candidates = selected_candidates
+    return context
+
+
+async def _apply_identity_policy_to_reference_candidates(
+    *,
+    selected_candidates: list[_ReferenceCandidate],
+    file_mgr: FileManager,
+) -> tuple[list[_ReferenceCandidate], dict[str, list], dict[str, object]]:
+    """Apply identity-specific filtering to selected reference candidates.
+
+    HUMAN refs go through face prequalification when no stored embeddings exist.
+    Non-human refs bypass face screening and are passed through unchanged.
+    """
+    human_face_candidates = [
+        candidate
+        for candidate in selected_candidates
+        if (
+            candidate.asset_type == "CHARACTER"
+            and _is_human_identity_type(candidate.identity_type)
+            and candidate.reference_kind == "face"
+        )
+    ]
+    passthrough_candidates = [
+        candidate
+        for candidate in selected_candidates
+        if candidate not in human_face_candidates
+    ]
+
+    policy_report = {
+        "human_face_tags": _ordered_unique_tags([
+            candidate.tag for candidate in human_face_candidates
+        ]),
+        "human_wardrobe_tags": _ordered_unique_tags([
+            candidate.tag
+            for candidate in passthrough_candidates
+            if (
+                candidate.asset_type == "CHARACTER"
+                and _is_human_identity_type(candidate.identity_type)
+                and candidate.reference_kind == "wardrobe"
+            )
+        ]),
+        "passthrough_tags": _ordered_unique_tags([candidate.tag for candidate in passthrough_candidates]),
+        "qualified_face_urls": 0,
+        "dropped_face_urls": [],
+    }
+
+    if not human_face_candidates:
+        return list(selected_candidates), {}, policy_report
+
+    from vidpipe.services.ref_prequalification import prequalify_refs
+
+    human_face_urls: list[str] = []
+    seen_urls: set[str] = set()
+    for candidate in human_face_candidates:
+        if candidate.image_url in seen_urls:
+            continue
+        seen_urls.add(candidate.image_url)
+        human_face_urls.append(candidate.image_url)
+
+    qualified = await prequalify_refs(human_face_urls, file_mgr)
+    qualified_by_url = {entry.image_url: entry for entry in qualified}
+    policy_report["qualified_face_urls"] = len(qualified)
+    policy_report["dropped_face_urls"] = [
+        url for url in human_face_urls if url not in qualified_by_url
+    ]
+
+    filtered_candidates: list[_ReferenceCandidate] = []
+    prequalified_embeddings_by_tag: dict[str, list] = {}
+    for candidate in selected_candidates:
+        if candidate not in human_face_candidates:
+            filtered_candidates.append(candidate)
+            continue
+
+        qualified_ref = qualified_by_url.get(candidate.image_url)
+        if not qualified_ref:
+            continue
+
+        filtered_candidates.append(
+            _ReferenceCandidate(
+                tag=candidate.tag,
+                image_url=candidate.image_url,
+                image_bytes=qualified_ref.face_crop_bytes,
+                asset_type=candidate.asset_type,
+                source=candidate.source,
+                asset=candidate.asset,
+                text_description=candidate.text_description,
+                identity_type=candidate.identity_type,
+                reference_kind=candidate.reference_kind,
+            )
+        )
+        prequalified_embeddings_by_tag.setdefault(candidate.tag, []).append(
+            qualified_ref.face_embedding
+        )
+
+    return filtered_candidates, prequalified_embeddings_by_tag, policy_report
+
+
+def _candidate_sort_key(candidate: _ReferenceCandidate) -> tuple[int, str]:
+    priority = {
+        "face": 0,
+        "wardrobe": 1,
+        "character": 2,
+        "supplemental": 3,
+    }.get(candidate.reference_kind, 4)
+    return (priority, candidate.image_url)
+
+
+def _select_character_candidate_boxes(
+    keyframe_bytes: bytes,
+    targets: list[_CharacterVerificationTarget],
+) -> _CharacterCropPlan:
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(keyframe_bytes)).convert("RGB")
+    image_width = max(1, image.width)
+    try:
+        from vidpipe.services.cv_detection import CVDetectionService
+
+        detector = CVDetectionService()
+        detections = detector.detect_objects_and_faces_from_bytes(keyframe_bytes, confidence_threshold=0.35)
+    except Exception as exc:
+        logger.warning("Character crop detection failed, falling back to full frame: %s", exc)
+        detections = {"objects": [], "faces": []}
+
+    objects = list(detections.get("objects", []))
+    persons = [obj for obj in objects if obj.get("class") == "person"]
+    non_persons = [obj for obj in objects if obj.get("class") != "person"]
+    plan = _CharacterCropPlan(
+        detected_face_count=len(detections.get("faces", [])),
+        detected_person_count=len(persons),
+        detected_object_count=len(objects),
+    )
+    used_ids: set[tuple[str, int]] = set()
+
+    def _rank_candidates(position: str | None, pool: list[dict], pool_name: str) -> list[tuple[tuple[str, int], dict]]:
+        if not pool:
+            return []
+        ranked: list[tuple[float, tuple[str, int], dict]] = []
+        for index, obj in enumerate(pool):
+            candidate_id = (pool_name, index)
+            if candidate_id in used_ids:
+                continue
+            x1, y1, x2, y2 = obj["bbox"]
+            cx = (x1 + x2) / 2
+            area = max(1.0, (x2 - x1) * (y2 - y1))
+            if position == "left":
+                score = cx
+            elif position == "right":
+                score = -cx
+            elif position == "center":
+                score = abs((cx / image_width) - 0.5)
+            elif position == "background":
+                score = area
+            else:
+                score = -area
+            ranked.append((score, candidate_id, obj))
+        ranked.sort(key=lambda item: item[0])
+        return [(candidate_id, obj) for _, candidate_id, obj in ranked]
+
+    for target in targets:
+        if _is_human_identity_type(target.identity_type):
+            pool = persons
+            pool_name = "person"
+        else:
+            pool = non_persons or objects
+            pool_name = "object"
+        ranked = _rank_candidates((target.expected_position or "").lower(), pool, pool_name)
+        if ranked:
+            candidate_id, obj = ranked[0]
+            used_ids.add(candidate_id)
+            crop_bytes = _crop_image_bytes(keyframe_bytes, obj["bbox"])
+            plan.selections[target.tag] = _CharacterCropSelection(
+                tag=target.tag,
+                image_bytes=crop_bytes,
+                bbox=obj["bbox"],
+                used_full_frame=False,
+            )
+            continue
+
+        plan.selections[target.tag] = _CharacterCropSelection(
+            tag=target.tag,
+            image_bytes=keyframe_bytes,
+            bbox=None,
+            used_full_frame=True,
+        )
+
+    return plan
+
+
+def _compose_verification_board(
+    subject_bytes: bytes,
+    references: list[tuple[str, bytes]],
+) -> bytes:
+    from PIL import Image, ImageDraw
+
+    def _fit_image(image_bytes: bytes, size: tuple[int, int]) -> Image.Image:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img.thumbnail(size)
+        canvas = Image.new("RGB", size, (24, 24, 24))
+        x = (size[0] - img.width) // 2
+        y = (size[1] - img.height) // 2
+        canvas.paste(img, (x, y))
+        return canvas
+
+    subject_size = (640, 640)
+    ref_size = (320, 320)
+    refs = references[:4]
+    board_width = 32 + subject_size[0] + 24 + (ref_size[0] * 2) + 24
+    board_height = 32 + max(subject_size[1], ref_size[1] * 2 + 40) + 32
+    board = Image.new("RGB", (board_width, board_height), (10, 10, 14))
+    draw = ImageDraw.Draw(board)
+
+    subject = _fit_image(subject_bytes, subject_size)
+    board.paste(subject, (16, 40))
+    draw.text((16, 12), "GENERATED CROP", fill=(240, 240, 240))
+
+    for idx, (label, ref_bytes) in enumerate(refs):
+        col = idx % 2
+        row = idx // 2
+        x = 16 + subject_size[0] + 24 + col * ref_size[0]
+        y = 40 + row * (ref_size[1] + 28)
+        board.paste(_fit_image(ref_bytes, ref_size), (x, y))
+        draw.text((x, y - 24), label[:28], fill=(220, 220, 220))
+
+    out = io.BytesIO()
+    board.save(out, format="PNG")
+    return out.getvalue()
+
+
+async def _verify_keyframe_characters_with_vision(
+    *,
+    scene: Scene,
+    shot: Shot,
+    shot_manifest_json: dict | None,
+    keyframe_bytes: bytes,
+    selected_candidates: list[_ReferenceCandidate],
+    identity_types_by_tag: dict[str, str],
+) -> _VisionVerificationReport:
+    targets = _build_character_verification_targets(
+        shot_manifest_json=shot_manifest_json,
+        selected_candidates=selected_candidates,
+        identity_types_by_tag=identity_types_by_tag,
+    )
+    if not targets:
+        return _VisionVerificationReport(passed=True, detail="no_character_targets")
+
+    try:
+        vision_model_id = scene.vision_model or scene.text_model or settings.models.storyboard_llm
+        vision_adapter = get_adapter(vision_model_id)
+    except Exception as exc:
+        logger.warning("Vision verifier unavailable (non-fatal): %s", exc)
+        return _VisionVerificationReport(
+            passed=True,
+            detail=f"vision_adapter_unavailable: {exc}",
+        )
+
+    crop_plan = _select_character_candidate_boxes(keyframe_bytes, targets)
+    detail_lines: list[str] = []
+    overall_pass = True
+    results: list[_CharacterVisionVerificationResult] = []
+
+    for target in targets:
+        crop = crop_plan.selections[target.tag]
+        references: list[tuple[str, bytes]] = []
+        for candidate in sorted(target.face_candidates, key=_candidate_sort_key)[:2]:
+            references.append((f"FACE REF @{target.tag}", candidate.image_bytes))
+        for candidate in sorted(target.wardrobe_candidates, key=_candidate_sort_key)[:2]:
+            references.append((f"WARDROBE REF @{target.tag}", candidate.image_bytes))
+        if not references:
+            for candidate in sorted(target.fallback_candidates, key=_candidate_sort_key)[:2]:
+                references.append((f"REFERENCE @{target.tag}", candidate.image_bytes))
+        if not references:
+            detail_lines.append(f"@{target.tag}: skipped (no refs)")
+            continue
+
+        board_bytes = _compose_verification_board(crop.image_bytes, references)
+        expected_position = target.expected_position or "unspecified"
+        prompt = (
+            f"Verify a generated keyframe crop for @{target.tag}. "
+            f"Expected position: {expected_position}. "
+            f"Identity type: {target.identity_type}. "
+            f"Judge only this character's identity/species/markings and wardrobe/look fidelity. "
+            f"Ignore camera angle, pose, lighting, and composition changes unless they hide the character completely. "
+            f"The left panel is the generated crop. The right panels are reference images."
+        )
+
+        try:
+            result = await vision_adapter.analyze_image(
+                board_bytes,
+                prompt,
+                CharacterKeyframeVerificationOutput,
+                mime_type="image/png",
+                temperature=0.1,
+                max_retries=2,
+            )
+        except Exception as exc:
+            logger.warning("Vision verification skipped for %s (non-fatal): %s", target.tag, exc)
+            detail_lines.append(f"@{target.tag}: verification_error={exc}")
+            continue
+
+        partial_visibility_pass = _passes_partial_visibility_human_check(
+            target=target,
+            crop=crop,
+            result=result,
+        )
+        char_pass = bool(
+            result.passed
+            and result.character_visible
+            and result.identity_match
+            and result.wardrobe_match
+        )
+        if not char_pass and partial_visibility_pass:
+            char_pass = True
+        overall_pass = overall_pass and char_pass
+        issues = ", ".join(result.issues or []) or "none"
+        results.append(_CharacterVisionVerificationResult(
+            tag=target.tag,
+            passed=char_pass,
+            character_visible=result.character_visible,
+            identity_match=result.identity_match,
+            wardrobe_match=result.wardrobe_match,
+            identity_score=result.identity_score,
+            wardrobe_score=result.wardrobe_score,
+            issues=list(result.issues or []),
+            used_full_frame=crop.used_full_frame,
+        ))
+        detail_lines.append(
+            f"@{target.tag}: passed={char_pass} visible={result.character_visible} "
+            f"identity={result.identity_score:.1f}/10 wardrobe={result.wardrobe_score:.1f}/10 "
+            f"full_frame_fallback={crop.used_full_frame} "
+            f"partial_visibility_pass={partial_visibility_pass} issues={issues}"
+        )
+
+    return _VisionVerificationReport(
+        passed=overall_pass,
+        detail=" | ".join(detail_lines) if detail_lines else "no_verification_details",
+        results=results,
+    )
+
+
+def _collect_reference_face_embeddings_by_tag(
+    *,
+    placed_char_assets: list,
+    prequalified_ref_embeddings_by_tag: dict[str, list] | None,
+) -> dict[str, list]:
+    embeddings_by_tag: dict[str, list] = {
+        tag: list(embeddings)
+        for tag, embeddings in (prequalified_ref_embeddings_by_tag or {}).items()
+    }
+    for asset in placed_char_assets:
+        if getattr(asset, "face_embedding", None) is None:
+            continue
+        tag = _normalize_reference_tag(getattr(asset, "manifest_tag", None))
+        if not tag:
+            continue
+        embeddings_by_tag.setdefault(tag, []).append(
+            np.frombuffer(asset.face_embedding, dtype=np.float32).copy()
+        )
+    return embeddings_by_tag
+
+
+async def _verify_target_face(
+    crop_bytes: bytes,
+    ref_embeddings: list,
+    threshold: float | None = None,
+) -> tuple[bool, float, str]:
+    if threshold is None:
+        threshold = settings.cv_analysis.keyframe_face_match_threshold
+
+    if not ref_embeddings:
+        return True, 0.0, "no_target_embeddings"
+
+    try:
+        from vidpipe.services.face_matching import FaceMatchingService
+
+        face_matcher = FaceMatchingService()
+        gen_embedding = await asyncio.to_thread(
+            face_matcher.generate_embedding_from_bytes, crop_bytes
+        )
+        best_similarity = max(
+            FaceMatchingService.cosine_similarity(gen_embedding, ref_emb)
+            for ref_emb in ref_embeddings
+        )
+        passed = best_similarity >= threshold
+        detail = (
+            f"best_sim={best_similarity:.3f} threshold={threshold:.3f} "
+            f"refs_checked={len(ref_embeddings)}"
+        )
+        return passed, best_similarity, detail
+    except ValueError:
+        return True, 0.0, "no_target_face_detected"
+    except Exception as e:
+        logger.warning("Face verification error (non-fatal): %s", e)
+        return True, 0.0, f"verification_error: {e}"
+
+
+def _build_retry_correction_prompt(report: _KeyframeVerificationReport) -> str:
+    lines: list[str] = []
+
+    if report.vision_report:
+        for result in report.vision_report.results:
+            if not result.character_visible:
+                lines.append(
+                    f"Keep @{result.tag} clearly visible in frame; do not crop or obscure this subject."
+                )
+            if not result.identity_match:
+                lines.append(
+                    f"IDENTITY LOCK for @{result.tag}: preserve the exact same recurring subject identity."
+                )
+            if not result.wardrobe_match:
+                lines.append(
+                    f"WARDROBE LOCK for @{result.tag}: match the wardrobe reference exactly. "
+                    "Do not invent or borrow jackets, coats, backpacks, accessories, colors, textures, or garments "
+                    "from any appearance reference. The wardrobe reference is authoritative."
+                )
+            for issue in result.issues[:2]:
+                lines.append(f"For @{result.tag}, correct this mismatch: {issue}")
+
+    for face_result in report.face_results:
+        if face_result.advisory or face_result.passed:
+            continue
+        lines.append(
+            f"FACE LOCK for @{face_result.tag}: preserve the exact same human face and facial structure as the face reference."
+        )
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        if line in seen:
+            continue
+        seen.add(line)
+        deduped.append(line)
+    if not deduped:
+        return ""
+    return "RETRY CORRECTION REQUIREMENTS:\n- " + "\n- ".join(deduped)
+
+
+async def _verify_generated_keyframe(
+    *,
+    scene: Scene,
+    shot: Shot,
+    position: str,
+    keyframe_bytes: bytes,
+    shot_manifest_json: dict | None,
+    selected_candidates: list[_ReferenceCandidate],
+    identity_types_by_tag: dict[str, str],
+    placed_char_assets: list,
+    prequalified_ref_embeddings_by_tag: dict[str, list] | None,
+) -> _KeyframeVerificationReport:
+    checks: list[str] = []
+    targets = _build_character_verification_targets(
+        shot_manifest_json=shot_manifest_json,
+        selected_candidates=selected_candidates,
+        identity_types_by_tag=identity_types_by_tag,
+    )
+    crop_plan = _select_character_candidate_boxes(keyframe_bytes, targets)
+    vision_report = await _verify_keyframe_characters_with_vision(
+        scene=scene,
+        shot=shot,
+        shot_manifest_json=shot_manifest_json,
+        keyframe_bytes=keyframe_bytes,
+        selected_candidates=selected_candidates,
+        identity_types_by_tag=identity_types_by_tag,
+    )
+
+    human_targets = [
+        target for target in targets
+        if _is_human_identity_type(target.identity_type)
+    ]
+    crowded = bool(
+        len(human_targets) > 1
+        or crop_plan.detected_face_count > 1
+        or crop_plan.detected_person_count > 1
+        or any(
+            crop_plan.selections.get(
+                target.tag,
+                _CharacterCropSelection(target.tag, keyframe_bytes, None, True),
+            ).used_full_frame
+            for target in human_targets
+        )
+    )
+    verification_mode = (
+        "vision_primary_face_advisory" if crowded else "strict_face_and_vision"
+    )
+
+    reference_face_embeddings_by_tag = _collect_reference_face_embeddings_by_tag(
+        placed_char_assets=placed_char_assets,
+        prequalified_ref_embeddings_by_tag=prequalified_ref_embeddings_by_tag,
+    )
+    face_results: list[_HumanFaceVerificationResult] = []
+    face_gate_pass = True
+
+    for target in human_targets:
+        crop = crop_plan.selections.get(
+            target.tag,
+            _CharacterCropSelection(target.tag, keyframe_bytes, None, True),
+        )
+        face_pass, sim, face_detail = await _verify_target_face(
+            crop.image_bytes,
+            reference_face_embeddings_by_tag.get(target.tag, []),
+        )
+        advisory = crowded or crop.used_full_frame
+        if not advisory:
+            face_gate_pass = face_gate_pass and face_pass
+        face_results.append(_HumanFaceVerificationResult(
+            tag=target.tag,
+            passed=face_pass,
+            advisory=advisory,
+            similarity=sim,
+            detail=face_detail,
+        ))
+
+    if face_results:
+        checks.append(
+            f"face_check mode={verification_mode} detected_faces={crop_plan.detected_face_count} "
+            f"detected_persons={crop_plan.detected_person_count} "
+            + " | ".join(
+                (
+                    f"@{result.tag}: passed={result.passed} advisory={result.advisory} "
+                    f"sim={result.similarity:.3f} {result.detail}"
+                )
+                for result in face_results
+            )
+        )
+
+    checks.append(f"vision_check={vision_report.passed} {vision_report.detail}")
+    overall_pass = bool(vision_report.passed and face_gate_pass)
+
+    detail = " || ".join(checks) if checks else "no_checks"
+    logger.info("Shot %s %s verification: %s", shot.shot_index, position, detail)
+    return _KeyframeVerificationReport(
+        passed=overall_pass,
+        detail=detail,
+        verification_mode=verification_mode,
+        face_results=face_results,
+        vision_report=vision_report,
+    )
 
 
 @retry(
@@ -749,13 +2065,15 @@ async def generate_keyframes(
             # Phase 10: Adaptive Prompt Rewriting for manifest scenes
             # Also resolves asset reference images for multimodal keyframe generation
             rewritten_start_prompt = None
-            selected_ref_assets: list = []
             ref_image_bytes_list: list[bytes] = []
-            placed_char_assets: list = []  # CHARACTER assets placed in shot (for face verification)
+            character_text_descriptions: list[str] = []
+            placed_char_assets: list = []  # Legacy CHARACTER assets used for face verification
+            ref_context = _NanoBananaReferenceContext()
+            shot_manifest_row = None
+            all_assets: list[Asset] = []
             if scene.production_bible_id:
                 try:
                     from vidpipe.services.prompt_rewriter import PromptRewriterService
-                    from vidpipe.services.reference_selection import resolve_asset_image_bytes
                     from vidpipe.db.models import ShotManifest as ShotManifestModel
 
                     # Load shot manifest
@@ -795,239 +2113,196 @@ async def generate_keyframes(
                         )
 
                         rewritten_start_prompt = result.rewritten_prompt
+                        selected_reference_tags = list(result.selected_reference_tags or [])
+                        if scene.production_bible_id and selected_reference_tags:
+                            from vidpipe.services.tag_resolver import canonicalize_character_tags
+
+                            selected_tag_aliases = await canonicalize_character_tags(
+                                selected_reference_tags,
+                                scene.production_bible_id,
+                                session,
+                            )
+                            normalized_selected_tags: list[str] = []
+                            for tag in selected_reference_tags:
+                                normalized = _normalize_reference_tag(tag) or tag
+                                normalized_selected_tags.append(
+                                    selected_tag_aliases.get(normalized, normalized)
+                                )
+                            selected_reference_tags = _ordered_unique_tags(normalized_selected_tags)
 
                         # Persist rewritten prompt and selected reference tags
                         shot_manifest_row.rewritten_keyframe_prompt = result.rewritten_prompt
-                        shot_manifest_row.selected_reference_tags = result.selected_reference_tags
+                        shot_manifest_row.selected_reference_tags = selected_reference_tags
                         await session.commit()
 
                         logger.info(
                             f"Shot {shot.shot_index}: keyframe prompt rewritten "
-                            f"(refs: {result.selected_reference_tags})"
+                            f"(refs: {selected_reference_tags})"
                         )
 
-                        # Post-LLM enforcement: ensure placed CHARACTER assets are in refs
-                        asset_map = {a.manifest_tag: a for a in all_assets}
-                        asset_map_by_id = {str(a.id): a for a in all_assets}
-                        placed_char_tags = {
-                            p["asset_tag"]
-                            for p in shot_manifest_row.manifest_json.get("placements", [])
-                            if "asset_tag" in p
-                            and asset_map.get(p["asset_tag"])
-                            and asset_map[p["asset_tag"]].asset_type == "CHARACTER"
-                            and asset_map[p["asset_tag"]].reference_image_url
-                        }
+                    if not is_comfyui and _is_nano_banana_model(image_model):
+                        selected_tags = (
+                            list(shot_manifest_row.selected_reference_tags or [])
+                            if shot_manifest_row and shot_manifest_row.selected_reference_tags
+                            else []
+                        )
+                        ref_context = await _assemble_nano_banana_reference_context(
+                            session,
+                            production_bible_id=scene.production_bible_id,
+                            scene_prompt=scene.prompt,
+                            shot=shot,
+                            shot_manifest_json=shot_manifest_row.manifest_json if shot_manifest_row else None,
+                            selected_reference_tags=selected_tags,
+                            all_assets=all_assets,
+                            file_mgr=file_mgr,
+                        )
 
-                        # Fix 4: Fallback — if shot has placements but none resolved
-                        # to manifest characters, use ALL manifest CHARACTER assets
-                        # with reference images. This guarantees reference images reach
-                        # the image adapter even when storyboard tags were wrong.
-                        if not placed_char_tags and scene.production_bible_id:
-                            placed_char_tags = {
-                                a.manifest_tag
-                                for a in all_assets
-                                if a.asset_type == "CHARACTER" and a.reference_image_url
-                            }
-                            if placed_char_tags:
-                                logger.warning(
-                                    f"Shot {shot.shot_index}: no placed chars resolved "
-                                    f"from shot manifest, falling back to all manifest "
-                                    f"CHARACTER assets: {placed_char_tags}"
-                                )
-                        current_tags = list(result.selected_reference_tags or [])
-                        missing_chars = placed_char_tags - set(current_tags)
-                        if missing_chars:
-                            enforced = list(missing_chars) + current_tags
-                            result.selected_reference_tags = enforced[:3]
+                        ref_image_bytes_list = ref_context.ref_image_bytes_list
+                        character_text_descriptions = ref_context.character_text_descriptions
+                        placed_char_assets = ref_context.placed_char_assets
+
+                        if all_assets and placed_char_assets:
+                            asset_map_by_id = {str(asset.id): asset for asset in all_assets}
+                            for asset in placed_char_assets:
+                                if asset.face_embedding is None and asset.source_asset_id:
+                                    parent = asset_map_by_id.get(str(asset.source_asset_id))
+                                    if parent and parent.face_embedding:
+                                        asset.face_embedding = parent.face_embedding
+                                        logger.info(
+                                            "Shot %s: borrowed face embedding from parent %s for %s",
+                                            shot.shot_index,
+                                            parent.manifest_tag,
+                                            asset.manifest_tag,
+                                        )
+
+                        if ref_image_bytes_list:
                             logger.info(
-                                f"Shot {shot.shot_index}: enforced placed CHARACTER refs "
-                                f"{missing_chars} → {result.selected_reference_tags}"
+                                "Shot %s: resolved %s Nano Banana reference image(s) across tags %s",
+                                shot.shot_index,
+                                len(ref_image_bytes_list),
+                                ref_context.final_reference_tags,
                             )
-
-                        # Update with enforced tags
-                        shot_manifest_row.selected_reference_tags = result.selected_reference_tags
-                        await session.commit()
-
-                        # Collect placed CHARACTER assets for face verification
-                        placed_char_assets = [
-                            asset_map[tag]
-                            for tag in placed_char_tags
-                            if tag in asset_map
-                        ]
-
-                        # Fallback: if a placed CHARACTER has no face_embedding,
-                        # try to borrow from its source (parent) asset
-                        for asset in placed_char_assets:
-                            if asset.face_embedding is None and asset.source_asset_id:
-                                parent = asset_map_by_id.get(str(asset.source_asset_id))
-                                if parent and parent.face_embedding:
-                                    asset.face_embedding = parent.face_embedding
-                                    logger.info(
-                                        f"Shot {shot.shot_index}: borrowed face embedding "
-                                        f"from parent {parent.manifest_tag} for {asset.manifest_tag}"
-                                    )
-
-                        # Resolve selected reference tags → asset image bytes
-                        if result.selected_reference_tags:
-                            for tag in result.selected_reference_tags:
-                                asset = asset_map.get(tag)
-                                if asset:
-                                    ref_bytes = await resolve_asset_image_bytes(session, asset)
-                                    if ref_bytes:
-                                        ref_image_bytes_list.append(ref_bytes)
-                                        selected_ref_assets.append(asset)
-                            if ref_image_bytes_list:
-                                logger.info(
-                                    f"Shot {shot.shot_index}: resolved "
-                                    f"{len(ref_image_bytes_list)} reference image(s) "
-                                    f"for keyframe generation"
+                            identity_details = {
+                                tag: ref_context.identity_types_by_tag.get(tag, "HUMAN")
+                                for tag in _ordered_unique_tags(ref_context.final_reference_tags)
+                                if tag in ref_context.identity_types_by_tag
+                            }
+                            detail_lines = [
+                                f"Mandatory character tags: {ref_context.mandatory_character_tags or ['none']}",
+                                f"Optional extra tags: {ref_context.optional_reference_tags or ['none']}",
+                                f"Final reference order: {ref_context.final_reference_tags}",
+                            ]
+                            if identity_details:
+                                detail_lines.append(f"Identity policies: {identity_details}")
+                            if ref_context.trimmed_reference_counts:
+                                detail_lines.append(
+                                    f"Trimmed refs by tag: {ref_context.trimmed_reference_counts}"
                                 )
+                            if ref_context.canonical_tag_remaps:
+                                detail_lines.append(
+                                    f"Canonical tag remaps: {ref_context.canonical_tag_remaps}"
+                                )
+                            emit_task_log(
+                                scene.id,
+                                summary=(
+                                    f"Shot {shot.shot_index + 1}: resolved {len(ref_image_bytes_list)} "
+                                    "Nano Banana reference image(s)"
+                                ),
+                                detail="\n".join(detail_lines),
+                                phase="keyframes",
+                                shot_index=shot.shot_index,
+                                kind="keyframe.references",
+                                source="nano_banana_resolver",
+                            )
                 except Exception as e:
                     logger.warning(
                         f"Shot {shot.shot_index}: keyframe rewriter failed (non-fatal): {e}"
                     )
-                    rewritten_start_prompt = None  # Fall back to original
-                    ref_image_bytes_list = []  # Reset on failure
-
-            # ── CastBinding fallback ────────────────────────────────────
-            # When the Production Bible has CastBindings (new flow) but no
-            # legacy Assets, load reference images via the tag resolver.
-            # This bridges the gap where load_manifest_assets() returns []
-            # but ActorRefs exist with images.
-            _cast_char_text_description: str | None = None
-            _cast_resolved = None  # Tag resolver result (used by prequalification)
-            if not ref_image_bytes_list and scene.production_bible_id and not is_comfyui:
-                try:
-                    from vidpipe.services.tag_resolver import resolve_tags_with_assets
-
-                    # Shot-aware: extract CHARACTER tags from this shot's manifest placements
-                    # instead of resolving ALL @tags from scene.prompt for every shot
-                    shot_char_tags: set[str] = set()
-                    if shot_manifest_row and shot_manifest_row.manifest_json:
-                        for p in shot_manifest_row.manifest_json.get("placements", []):
-                            tag = p.get("asset_tag")
-                            if tag:
-                                clean_tag = tag.lstrip("@")
-                                if clean_tag and clean_tag not in asset_map:
-                                    shot_char_tags.add(clean_tag)
-
-                    if shot_char_tags:
-                        # Resolve only THIS shot's CastBinding tags
-                        tag_prompt = " ".join(f"@{t}" for t in shot_char_tags)
-                    elif hasattr(shot, 'characters_present') and shot.characters_present is not None:
-                        # Screenwriter agent populated characters_present —
-                        # use it as authoritative source (empty = scenery shot)
-                        if shot.characters_present:
-                            tag_prompt = " ".join(f"@{t.lstrip('@')}" for t in shot.characters_present)
-                        else:
-                            tag_prompt = ""  # Scenery shot: no character refs
-                    elif scene.prompt:
-                        # Fallback: no manifest AND no agent data — use scene.prompt
-                        # (pre-agent backward compat)
-                        tag_prompt = scene.prompt
-                    else:
-                        tag_prompt = ""
-
-                    _tag_source = "shot manifest" if shot_char_tags else "scene prompt"
-
-                    if tag_prompt:
-                        _cast_resolved = await resolve_tags_with_assets(
-                            tag_prompt, scene.production_bible_id, session,
-                        )
-                        for aref in _cast_resolved.asset_refs:
-                            if aref.asset_type == "CHARACTER" and aref.reference_image_urls:
-                                _cast_char_text_description = aref.text_description
-                                for ref_url in aref.reference_image_urls:
-                                    try:
-                                        ref_data = await file_mgr.read_bytes(ref_url)
-                                        ref_image_bytes_list.append(ref_data)
-                                    except Exception:
-                                        pass
-
-                    # Fallback: if shot manifest tags yielded no CHARACTER refs
-                    # (e.g. LLM typo in tag), retry with scene.prompt which has
-                    # the original user-authored tags
-                    if not ref_image_bytes_list and shot_char_tags and scene.prompt:
-                        logger.warning(
-                            f"Shot {shot.shot_index}: shot manifest tags yielded no "
-                            f"CHARACTER refs, falling back to scene.prompt"
-                        )
-                        _cast_resolved = await resolve_tags_with_assets(
-                            scene.prompt, scene.production_bible_id, session,
-                        )
-                        _tag_source = "scene prompt (fallback)"
-                        for aref in _cast_resolved.asset_refs:
-                            if aref.asset_type == "CHARACTER" and aref.reference_image_urls:
-                                _cast_char_text_description = aref.text_description
-                                for ref_url in aref.reference_image_urls:
-                                    try:
-                                        ref_data = await file_mgr.read_bytes(ref_url)
-                                        ref_image_bytes_list.append(ref_data)
-                                    except Exception:
-                                        pass
-
-                    if ref_image_bytes_list:
-                        logger.info(
-                            f"Shot {shot.shot_index}: CastBinding resolved "
-                            f"{len(ref_image_bytes_list)} ref(s) from "
-                            f"{_tag_source}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Shot {shot.shot_index}: CastBinding ref resolution failed "
-                        f"(non-fatal): {e}"
-                    )
+                    rewritten_start_prompt = None
+                    ref_image_bytes_list = []
+                    character_text_descriptions = []
+                    placed_char_assets = []
 
             # Face verification retry config (max 3 retries = 4 total attempts)
             # Level 0: standard, Level 1: escalated, Level 2+: iterative refinement
             _max_identity_retries = 3
 
-            # Collect prequalified ref embeddings for face verification
-            # (bridges CastBinding flow where Asset.face_embedding is absent)
-            _prequalified_ref_embeddings: list = []
+            # Collect prequalified human face embeddings by character tag.
+            # Appearance refs become face crops; wardrobe refs remain full-body refs.
+            _prequalified_ref_embeddings_by_tag: dict[str, list] = {}
 
-            # Extract character appearance description for identity prompt anchoring
-            # Prefer legacy Asset.reverse_prompt, fall back to CastBinding text
-            _char_text_description: str | None = None
-            for ca in placed_char_assets:
-                if getattr(ca, "reverse_prompt", None):
-                    _char_text_description = ca.reverse_prompt
-                    break
-            if not _char_text_description:
-                _char_text_description = _cast_char_text_description
+            # Extract character appearance descriptions for identity prompt anchoring
+            _char_text_description: str | list[str] | None = None
+            if character_text_descriptions:
+                _char_text_description = character_text_descriptions
+            else:
+                for ca in placed_char_assets:
+                    if getattr(ca, "reverse_prompt", None):
+                        _char_text_description = ca.reverse_prompt
+                        break
 
-            if ref_image_bytes_list and not any(
-                getattr(a, "face_embedding", None) for a in placed_char_assets
-            ):
-                # No legacy Asset embeddings — prequalify refs on-the-fly
+            _reference_identity_types = [
+                candidate.identity_type or "HUMAN"
+                for candidate in getattr(ref_context, "selected_candidates", [])
+                if candidate.asset_type == "CHARACTER"
+            ] if ref_image_bytes_list else []
+
+            if ref_image_bytes_list:
+                # HUMAN face refs are converted to face crops; non-human and wardrobe refs pass through.
                 try:
-                    from vidpipe.services.ref_prequalification import (
-                        prequalify_refs, QualifiedRef,
+                    filtered_candidates, _prequalified_ref_embeddings_by_tag, policy_report = (
+                        await _apply_identity_policy_to_reference_candidates(
+                            selected_candidates=getattr(ref_context, "selected_candidates", []),
+                            file_mgr=file_mgr,
+                        )
                     )
-                    _ref_urls = [
-                        u for a in selected_ref_assets
-                        for u in ([a.reference_image_url] if getattr(a, "reference_image_url", None) else [])
+                    ref_image_bytes_list = [candidate.image_bytes for candidate in filtered_candidates]
+                    ref_context.selected_candidates = list(filtered_candidates)
+                    _reference_identity_types = [
+                        candidate.identity_type or "HUMAN"
+                        for candidate in filtered_candidates
+                        if candidate.asset_type == "CHARACTER"
                     ]
-                    # If no selected_ref_assets (CastBinding path), prequalify
-                    # directly from ref_image_bytes_list via the resolved URLs
-                    if not _ref_urls and _cast_resolved and _cast_resolved.asset_refs:
-                        _ref_urls = [
-                            url for aref in _cast_resolved.asset_refs
-                            if aref.asset_type == "CHARACTER"
-                            for url in aref.reference_image_urls
+                    if (
+                        policy_report["human_face_tags"]
+                        or policy_report["human_wardrobe_tags"]
+                        or policy_report["passthrough_tags"]
+                    ):
+                        detail_lines = [
+                            f"HUMAN face tags prequalified: {policy_report['human_face_tags'] or ['none']}",
+                            f"HUMAN wardrobe tags preserved: {policy_report['human_wardrobe_tags'] or ['none']}",
+                            f"Non-human passthrough tags: {policy_report['passthrough_tags'] or ['none']}",
+                            f"Qualified HUMAN face refs: {policy_report['qualified_face_urls']}",
                         ]
-                    if _ref_urls:
-                        _qualified = await prequalify_refs(_ref_urls, file_mgr)
-                        _prequalified_ref_embeddings = [q.face_embedding for q in _qualified]
-                        # Use only qualified ref bytes for generation
-                        if _qualified:
-                            ref_image_bytes_list = [q.image_bytes for q in _qualified]
-                            logger.info(
-                                f"Shot {shot.shot_index}: prequalified "
-                                f"{len(_qualified)} / {len(_ref_urls)} refs"
+                        if policy_report["dropped_face_urls"]:
+                            detail_lines.append(
+                                f"Dropped HUMAN face refs without detectable face: {policy_report['dropped_face_urls']}"
                             )
+                        emit_task_log(
+                            scene.id,
+                            summary=(
+                                f"Shot {shot.shot_index + 1}: applied identity policy to "
+                                f"{len(getattr(ref_context, 'selected_candidates', []))} reference image(s)"
+                            ),
+                            detail="\n".join(detail_lines),
+                            phase="keyframes",
+                            shot_index=shot.shot_index,
+                            kind="keyframe.identity_policy",
+                            source="identity_policy",
+                        )
+                    logger.info(
+                        "Shot %s: identity policy kept %s ref(s); human_faces=%s human_wardrobe=%s passthrough=%s",
+                        shot.shot_index,
+                        len(ref_image_bytes_list),
+                        policy_report["human_face_tags"],
+                        policy_report["human_wardrobe_tags"],
+                        policy_report["passthrough_tags"],
+                    )
                 except Exception as e:
                     logger.warning(f"Ref prequalification failed (non-fatal): {e}")
+
+            selected_reference_candidates = list(getattr(ref_context, "selected_candidates", []))
+            shot_manifest_json = shot_manifest_row.manifest_json if shot_manifest_row else None
 
             # ---- START FRAME: Generate or inherit (skip if existing) ----
             if existing_start_kf:
@@ -1046,115 +2321,240 @@ async def generate_keyframes(
                 else:
                     enriched_prompt = f"{style_prefix}{character_prefix}{shot.start_frame_prompt}"
 
-                # Face verification retry loop with best-so-far tracking
                 start_frame_bytes = None
-                best_frame_bytes: bytes | None = None
-                best_similarity: float = -1.0
+                previous_attempt_bytes: bytes | None = None
+                start_retry_guidance = ""
+                start_attempts: list[_GeneratedKeyframeAttempt] = []
+                start_verification = _FrameVerificationResult(
+                    passed=True,
+                    attempts=0,
+                    summary="no_verification_needed",
+                    detail="no_verification_needed",
+                    status="passed",
+                )
                 for identity_level in range(_max_identity_retries + 1):
+                    attempt_candidates = _build_retry_reference_candidates(
+                        selected_reference_candidates,
+                        mandatory_tags=ref_context.mandatory_character_tags,
+                        retry_level=identity_level,
+                    )
+                    attempt_ref_image_bytes = [candidate.image_bytes for candidate in attempt_candidates]
+                    attempt_identity_types = [
+                        candidate.identity_type or "HUMAN"
+                        for candidate in attempt_candidates
+                        if candidate.asset_type == "CHARACTER"
+                    ]
                     # Build identity instruction with feature anchoring
                     identity_instr = _build_identity_instruction(
-                        _char_text_description, emphasis_level=identity_level,
-                    ) if ref_image_bytes_list else None
+                        _char_text_description,
+                        identity_types=attempt_identity_types or _reference_identity_types,
+                        emphasis_level=identity_level,
+                    ) if attempt_ref_image_bytes else None
 
                     prompt_with_emphasis = (
                         _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                         + enriched_prompt
                     )
-                    if is_comfyui and image_model.startswith("flux-"):
-                        # Flux model: use binding-based reference resolution
-                        flux_lora = None
-                        flux_ref_filenames: list[str] = []
-                        flux_ref_strengths: list[float] = []
-                        if scene.production_bible_id:
-                            try:
-                                from vidpipe.services.tag_resolver import resolve_tags_with_assets
-                                resolved = await resolve_tags_with_assets(
-                                    prompt_with_emphasis, scene.production_bible_id, session,
-                                )
-                                # Categorize by asset_type
-                                for aref in resolved.asset_refs:
-                                    if aref.asset_type == "CHARACTER" and aref.lora_url and not flux_lora:
-                                        flux_lora = aref.lora_url
-                                    elif aref.reference_image_urls:
-                                        # CHARACTER without LoRA, PROP, SET -> reference image
-                                        ref_url = aref.reference_image_urls[0]
-                                        ref_data = await file_mgr.read_bytes(ref_url)
-                                        uploaded_name = await comfy_client.upload_image(
-                                            ref_data, f"flux_ref_{aref.tag}.png"
-                                        )
-                                        flux_ref_filenames.append(uploaded_name)
-                                        flux_ref_strengths.append(0.65)
-                                if flux_lora or flux_ref_filenames:
-                                    logger.info(
-                                        f"Shot {shot.shot_index} start: Flux bindings resolved "
-                                        f"lora={flux_lora is not None}, refs={len(flux_ref_filenames)}"
+                    if start_retry_guidance:
+                        prompt_with_emphasis = f"{start_retry_guidance}\n\n{prompt_with_emphasis}"
+                    try:
+                        if is_comfyui and image_model.startswith("flux-"):
+                            # Flux model: use binding-based reference resolution
+                            flux_lora = None
+                            flux_ref_filenames: list[str] = []
+                            flux_ref_strengths: list[float] = []
+                            if scene.production_bible_id:
+                                try:
+                                    from vidpipe.services.tag_resolver import resolve_tags_with_assets
+                                    resolved = await resolve_tags_with_assets(
+                                        prompt_with_emphasis, scene.production_bible_id, session,
                                     )
-                            except Exception as e:
-                                logger.warning(
-                                    f"Shot {shot.shot_index}: Flux binding resolution failed "
-                                    f"(non-fatal): {e}"
-                                )
-                                flux_lora = None
-                                flux_ref_filenames = []
-                                flux_ref_strengths = []
-                        from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
-                        fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
-                        start_frame_bytes = await _generate_image_comfyui_flux(
-                            comfy_client, prompt_with_emphasis, seed=scene.seed,
-                            width=fw, height=fh,
-                            lora_filename=flux_lora,
-                            reference_image_filenames=flux_ref_filenames or None,
-                            reference_strengths=flux_ref_strengths or None,
+                                    # Categorize by asset_type
+                                    for aref in resolved.asset_refs:
+                                        if aref.asset_type == "CHARACTER" and aref.lora_url and not flux_lora:
+                                            flux_lora = aref.lora_url
+                                        elif aref.reference_image_urls:
+                                            # CHARACTER without LoRA, PROP, SET -> reference image
+                                            ref_url = aref.reference_image_urls[0]
+                                            ref_data = await file_mgr.read_bytes(ref_url)
+                                            uploaded_name = await comfy_client.upload_image(
+                                                ref_data, f"flux_ref_{aref.tag}.png"
+                                            )
+                                            flux_ref_filenames.append(uploaded_name)
+                                            flux_ref_strengths.append(0.65)
+                                    if flux_lora or flux_ref_filenames:
+                                        logger.info(
+                                            f"Shot {shot.shot_index} start: Flux bindings resolved "
+                                            f"lora={flux_lora is not None}, refs={len(flux_ref_filenames)}"
+                                        )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Shot {shot.shot_index}: Flux binding resolution failed "
+                                        f"(non-fatal): {e}"
+                                    )
+                                    flux_lora = None
+                                    flux_ref_filenames = []
+                                    flux_ref_strengths = []
+                            from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
+                            fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
+                            start_frame_bytes = await _generate_image_comfyui_flux(
+                                comfy_client, prompt_with_emphasis, seed=scene.seed,
+                                width=fw, height=fh,
+                                lora_filename=flux_lora,
+                                reference_image_filenames=flux_ref_filenames or None,
+                                reference_strengths=flux_ref_strengths or None,
+                            )
+                        elif is_comfyui:
+                            # qwen-image-edit needs an input image; for shot 0 start
+                            # there's none, so fall back to qwen-fast txt2img
+                            start_frame_bytes = await _generate_image_comfyui(
+                                comfy_client, prompt_with_emphasis, seed=scene.seed,
+                            )
+                        elif identity_level >= 2 and previous_attempt_bytes is not None:
+                            start_frame_bytes = await _generate_image_conditioned(
+                                image_client, previous_attempt_bytes, prompt_with_emphasis,
+                                scene.aspect_ratio, image_model,
+                                reference_images=attempt_ref_image_bytes or None,
+                                identity_instruction=identity_instr,
+                            )
+                        else:
+                            start_frame_bytes = await _generate_image_from_text(
+                                image_client, prompt_with_emphasis, scene.aspect_ratio, image_model,
+                                seed=scene.seed,
+                                reference_images=attempt_ref_image_bytes or None,
+                                identity_instruction=identity_instr,
+                            )
+                    except RetryError as exc:
+                        transport_detail = _describe_retry_error(exc)
+                        emit_task_log(
+                            scene.id,
+                            summary=f"Shot {shot.shot_index + 1}: start keyframe transport retries exhausted",
+                            detail=transport_detail,
+                            phase="keyframes",
+                            shot_index=shot.shot_index,
+                            level="warning",
+                            kind="keyframe.transport_retry_exhausted",
+                            source="image_generator",
                         )
-                    elif is_comfyui:
-                        # qwen-image-edit needs an input image; for shot 0 start
-                        # there's none, so fall back to qwen-fast txt2img
-                        start_frame_bytes = await _generate_image_comfyui(
-                            comfy_client, prompt_with_emphasis, seed=scene.seed,
+                        fallback = _build_best_effort_fallback_result(
+                            position="start",
+                            attempts=start_attempts,
+                            transport_detail=transport_detail,
                         )
-                    elif identity_level >= 2 and best_frame_bytes is not None:
-                        # Level 2+: iterative refinement — feed best attempt as
-                        # conditioning frame alongside original refs
-                        start_frame_bytes = await _generate_image_conditioned(
-                            image_client, best_frame_bytes, prompt_with_emphasis,
-                            scene.aspect_ratio, image_model,
-                            reference_images=ref_image_bytes_list or None,
-                            identity_instruction=identity_instr,
-                        )
-                    else:
-                        start_frame_bytes = await _generate_image_from_text(
-                            image_client, prompt_with_emphasis, scene.aspect_ratio, image_model,
-                            seed=scene.seed,
-                            reference_images=ref_image_bytes_list or None,
-                            identity_instruction=identity_instr,
-                        )
-                    # Verify face match if placed chars exist and not final attempt
-                    if placed_char_assets and identity_level < _max_identity_retries:
-                        passed, sim, detail = await _verify_keyframe_faces(
-                            start_frame_bytes, placed_char_assets,
-                            ref_embeddings=_prequalified_ref_embeddings or None,
-                        )
-                        # Track best attempt
-                        if sim > best_similarity:
-                            best_similarity = sim
-                            best_frame_bytes = start_frame_bytes
-                        if passed:
-                            logger.info(
-                                f"Shot {shot.shot_index} start: face verification passed "
-                                f"(level={identity_level}, {detail})"
+                        if fallback is not None:
+                            selected_attempt, start_verification = fallback
+                            start_frame_bytes = selected_attempt.keyframe_bytes
+                            emit_task_log(
+                                scene.id,
+                                summary=(
+                                    f"Shot {shot.shot_index + 1}: start keyframe accepted with warnings "
+                                    "after transport exhaustion"
+                                ),
+                                detail=start_verification.detail,
+                                phase="keyframes",
+                                shot_index=shot.shot_index,
+                                level="warning",
+                                kind="keyframe.best_effort_fallback",
+                                source="vision_verifier",
                             )
                             break
-                        else:
-                            logger.warning(
-                                f"Shot {shot.shot_index} start: face verification failed "
-                                f"(level={identity_level}, {detail}), retrying"
+                        raise RuntimeError(
+                            f"Shot {shot.shot_index} start keyframe generation exhausted transport retries: "
+                            f"{transport_detail}"
+                        ) from exc
+                    should_verify = bool(
+                        attempt_candidates
+                        and (
+                            _prequalified_ref_embeddings_by_tag
+                            or attempt_identity_types
+                            or ref_context.identity_types_by_tag
+                        )
+                    )
+                    if should_verify:
+                        verification_report = await _verify_generated_keyframe(
+                            scene=scene,
+                            shot=shot,
+                            position="start",
+                            keyframe_bytes=start_frame_bytes,
+                            shot_manifest_json=shot_manifest_json,
+                            selected_candidates=attempt_candidates,
+                            identity_types_by_tag=ref_context.identity_types_by_tag,
+                            placed_char_assets=placed_char_assets,
+                            prequalified_ref_embeddings_by_tag=_prequalified_ref_embeddings_by_tag or None,
+                        )
+                        start_attempts.append(_GeneratedKeyframeAttempt(
+                            attempt_number=identity_level + 1,
+                            retry_level=identity_level,
+                            keyframe_bytes=start_frame_bytes,
+                            verification_report=verification_report,
+                        ))
+                        start_verification = _FrameVerificationResult(
+                            passed=verification_report.passed,
+                            attempts=identity_level + 1,
+                            summary=(
+                                "verification_passed"
+                                if verification_report.passed
+                                else "verification_failed"
+                            ),
+                            detail=verification_report.detail,
+                            status="passed" if verification_report.passed else "failed",
+                        )
+                        emit_task_log(
+                            scene.id,
+                            summary=(
+                                f"Shot {shot.shot_index + 1}: start keyframe verification "
+                                f"{'passed' if verification_report.passed else 'failed'} on attempt {identity_level + 1}"
+                            ),
+                            detail=(
+                                f"Retry mode: {_retry_mode_label(identity_level)}\n"
+                                f"Verification mode: {verification_report.verification_mode}\n"
+                                f"{verification_report.detail}"
+                            ),
+                            phase="keyframes",
+                            shot_index=shot.shot_index,
+                            level="success" if verification_report.passed else "info",
+                            kind="keyframe.verification",
+                            source="vision_verifier",
+                        )
+                        if verification_report.passed:
+                            break
+                        start_retry_guidance = _build_retry_correction_prompt(verification_report)
+                        previous_attempt_bytes = start_frame_bytes
+                        if identity_level >= _max_identity_retries:
+                            fallback = _build_best_effort_fallback_result(
+                                position="start",
+                                attempts=start_attempts,
                             )
-                            continue
-                    else:
-                        break  # No verification needed or final attempt
-                # Use best attempt if we tracked one and it's better
-                if best_frame_bytes is not None and best_similarity > 0:
-                    start_frame_bytes = best_frame_bytes
+                            if fallback is None:
+                                raise RuntimeError(
+                                    f"Shot {shot.shot_index} start keyframe failed verification after "
+                                    f"{identity_level + 1} attempts: {verification_report.detail}"
+                                )
+                            selected_attempt, start_verification = fallback
+                            start_frame_bytes = selected_attempt.keyframe_bytes
+                            emit_task_log(
+                                scene.id,
+                                summary=(
+                                    f"Shot {shot.shot_index + 1}: start keyframe accepted with warnings "
+                                    "using best-effort fallback"
+                                ),
+                                detail=start_verification.detail,
+                                phase="keyframes",
+                                shot_index=shot.shot_index,
+                                level="warning",
+                                kind="keyframe.best_effort_fallback",
+                                source="vision_verifier",
+                            )
+                            break
+                        continue
+                    start_verification = _FrameVerificationResult(
+                        passed=True,
+                        attempts=identity_level + 1,
+                        summary="verification_skipped",
+                        detail="verification_skipped",
+                        status="passed",
+                    )
+                    break
                 start_source = "generated"
 
                 # Save start keyframe
@@ -1170,12 +2570,30 @@ async def generate_keyframes(
                     mime_type="image/png",
                     source=start_source,
                     prompt_used=shot.start_frame_prompt,
+                    verification_status=start_verification.status,
+                    verification_attempts=start_verification.attempts,
+                    verification_summary=start_verification.detail,
                 )
                 session.add(start_keyframe)
             else:
                 # Shot N: Inherit from previous shot's end frame (KEYF-03)
                 start_frame_bytes = previous_end_frame_bytes
                 start_source = "inherited"
+                emit_task_log(
+                    scene.id,
+                    summary=(
+                        f"Shot {shot.shot_index + 1}: reusing shot {shot.shot_index} end "
+                        "keyframe as the inherited start frame"
+                    ),
+                    detail=(
+                        "No new start keyframe generation request was sent. "
+                        "This start frame is byte-identical to the previous shot's end frame."
+                    ),
+                    phase="keyframes",
+                    shot_index=shot.shot_index,
+                    kind="keyframe.inherited_start",
+                    source="continuity_chain",
+                )
 
                 # Save start keyframe
                 start_stored_path = await file_mgr.save_keyframe_async(
@@ -1190,6 +2608,9 @@ async def generate_keyframes(
                     mime_type="image/png",
                     source=start_source,
                     prompt_used=shot.start_frame_prompt,
+                    verification_status="inherited",
+                    verification_attempts=0,
+                    verification_summary="Inherited from previous shot end keyframe.",
                 )
                 session.add(start_keyframe)
 
@@ -1229,86 +2650,212 @@ async def generate_keyframes(
                     f"{character_prefix}"
                 )
 
-                # Face verification retry loop for end frame with best-so-far tracking
                 end_frame_bytes = None
-                best_end_bytes: bytes | None = None
-                best_end_sim: float = -1.0
+                previous_end_attempt_bytes: bytes | None = None
+                end_retry_guidance = ""
+                end_attempts: list[_GeneratedKeyframeAttempt] = []
+                end_verification = _FrameVerificationResult(
+                    passed=True,
+                    attempts=0,
+                    summary="no_verification_needed",
+                    detail="no_verification_needed",
+                    status="passed",
+                )
                 for identity_level in range(_max_identity_retries + 1):
+                    attempt_candidates = _build_retry_reference_candidates(
+                        selected_reference_candidates,
+                        mandatory_tags=ref_context.mandatory_character_tags,
+                        retry_level=identity_level,
+                    )
+                    attempt_ref_image_bytes = [candidate.image_bytes for candidate in attempt_candidates]
+                    attempt_identity_types = [
+                        candidate.identity_type or "HUMAN"
+                        for candidate in attempt_candidates
+                        if candidate.asset_type == "CHARACTER"
+                    ]
                     # Build identity instruction with feature anchoring
                     end_identity_instr = _build_identity_instruction(
-                        _char_text_description, emphasis_level=identity_level,
-                    ) if ref_image_bytes_list else None
+                        _char_text_description,
+                        identity_types=attempt_identity_types or _reference_identity_types,
+                        emphasis_level=identity_level,
+                    ) if attempt_ref_image_bytes else None
 
                     prompt_with_emphasis = (
                         _IDENTITY_EMPHASIS_PREFIXES[min(identity_level, len(_IDENTITY_EMPHASIS_PREFIXES) - 1)]
                         + conditioning_prompt
                     )
-                    if is_comfyui and image_model.startswith("flux-"):
-                        # Flux model: text-only (no image conditioning), offset seed
-                        # Reuse binding-resolved LoRA/refs if available from start frame
-                        from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR
-                        efw, efh = _FR.get(scene.aspect_ratio, (1024, 1024))
-                        end_frame_bytes = await _generate_image_comfyui_flux(
-                            comfy_client, prompt_with_emphasis,
-                            seed=scene.seed + shot.shot_index + 1000,
-                            width=efw, height=efh,
-                        )
-                    elif is_comfyui:
-                        if image_model == "qwen-image-edit":
-                            # Use image-edit workflow with start frame as input
-                            end_frame_bytes = await _generate_image_comfyui_edit(
+                    if end_retry_guidance:
+                        prompt_with_emphasis = f"{end_retry_guidance}\n\n{prompt_with_emphasis}"
+                    try:
+                        if is_comfyui and image_model.startswith("flux-"):
+                            # Flux model: text-only (no image conditioning), offset seed
+                            # Reuse binding-resolved LoRA/refs if available from start frame
+                            from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR
+                            efw, efh = _FR.get(scene.aspect_ratio, (1024, 1024))
+                            end_frame_bytes = await _generate_image_comfyui_flux(
                                 comfy_client, prompt_with_emphasis,
-                                input_image_bytes=start_frame_bytes,
                                 seed=scene.seed + shot.shot_index + 1000,
+                                width=efw, height=efh,
+                            )
+                        elif is_comfyui:
+                            if image_model == "qwen-image-edit":
+                                # Use image-edit workflow with start frame as input
+                                end_frame_bytes = await _generate_image_comfyui_edit(
+                                    comfy_client, prompt_with_emphasis,
+                                    input_image_bytes=start_frame_bytes,
+                                    seed=scene.seed + shot.shot_index + 1000,
+                                )
+                            else:
+                                # ComfyUI text-only: no image conditioning, use offset seed
+                                end_frame_bytes = await _generate_image_comfyui(
+                                    comfy_client, prompt_with_emphasis,
+                                    seed=scene.seed + shot.shot_index + 1000,
+                                )
+                        elif identity_level >= 2 and previous_end_attempt_bytes is not None:
+                            end_frame_bytes = await _generate_image_conditioned(
+                                image_client, previous_end_attempt_bytes, prompt_with_emphasis,
+                                scene.aspect_ratio, image_model,
+                                reference_images=attempt_ref_image_bytes or None,
+                                identity_instruction=end_identity_instr,
                             )
                         else:
-                            # ComfyUI text-only: no image conditioning, use offset seed
-                            end_frame_bytes = await _generate_image_comfyui(
-                                comfy_client, prompt_with_emphasis,
-                                seed=scene.seed + shot.shot_index + 1000,
+                            end_frame_bytes = await _generate_image_conditioned(
+                                image_client, start_frame_bytes, prompt_with_emphasis,
+                                scene.aspect_ratio, image_model,
+                                reference_images=attempt_ref_image_bytes or None,
+                                identity_instruction=end_identity_instr,
                             )
-                    elif identity_level >= 2 and best_end_bytes is not None:
-                        # Level 2+: iterative refinement — feed best end attempt
-                        # as conditioning alongside original refs
-                        end_frame_bytes = await _generate_image_conditioned(
-                            image_client, best_end_bytes, prompt_with_emphasis,
-                            scene.aspect_ratio, image_model,
-                            reference_images=ref_image_bytes_list or None,
-                            identity_instruction=end_identity_instr,
+                    except RetryError as exc:
+                        transport_detail = _describe_retry_error(exc)
+                        emit_task_log(
+                            scene.id,
+                            summary=f"Shot {shot.shot_index + 1}: end keyframe transport retries exhausted",
+                            detail=transport_detail,
+                            phase="keyframes",
+                            shot_index=shot.shot_index,
+                            level="warning",
+                            kind="keyframe.transport_retry_exhausted",
+                            source="image_generator",
                         )
-                    else:
-                        end_frame_bytes = await _generate_image_conditioned(
-                            image_client, start_frame_bytes, prompt_with_emphasis,
-                            scene.aspect_ratio, image_model,
-                            reference_images=ref_image_bytes_list or None,
-                            identity_instruction=end_identity_instr,
+                        fallback = _build_best_effort_fallback_result(
+                            position="end",
+                            attempts=end_attempts,
+                            transport_detail=transport_detail,
                         )
-                    if placed_char_assets and identity_level < _max_identity_retries:
-                        passed, sim, detail = await _verify_keyframe_faces(
-                            end_frame_bytes, placed_char_assets,
-                            ref_embeddings=_prequalified_ref_embeddings or None,
-                        )
-                        # Track best attempt
-                        if sim > best_end_sim:
-                            best_end_sim = sim
-                            best_end_bytes = end_frame_bytes
-                        if passed:
-                            logger.info(
-                                f"Shot {shot.shot_index} end: face verification passed "
-                                f"(level={identity_level}, {detail})"
+                        if fallback is not None:
+                            selected_attempt, end_verification = fallback
+                            end_frame_bytes = selected_attempt.keyframe_bytes
+                            emit_task_log(
+                                scene.id,
+                                summary=(
+                                    f"Shot {shot.shot_index + 1}: end keyframe accepted with warnings "
+                                    "after transport exhaustion"
+                                ),
+                                detail=end_verification.detail,
+                                phase="keyframes",
+                                shot_index=shot.shot_index,
+                                level="warning",
+                                kind="keyframe.best_effort_fallback",
+                                source="vision_verifier",
                             )
                             break
-                        else:
-                            logger.warning(
-                                f"Shot {shot.shot_index} end: face verification failed "
-                                f"(level={identity_level}, {detail}), retrying"
+                        raise RuntimeError(
+                            f"Shot {shot.shot_index} end keyframe generation exhausted transport retries: "
+                            f"{transport_detail}"
+                        ) from exc
+                    should_verify = bool(
+                        attempt_candidates
+                        and (
+                            _prequalified_ref_embeddings_by_tag
+                            or attempt_identity_types
+                            or ref_context.identity_types_by_tag
+                        )
+                    )
+                    if should_verify:
+                        verification_report = await _verify_generated_keyframe(
+                            scene=scene,
+                            shot=shot,
+                            position="end",
+                            keyframe_bytes=end_frame_bytes,
+                            shot_manifest_json=shot_manifest_json,
+                            selected_candidates=attempt_candidates,
+                            identity_types_by_tag=ref_context.identity_types_by_tag,
+                            placed_char_assets=placed_char_assets,
+                            prequalified_ref_embeddings_by_tag=_prequalified_ref_embeddings_by_tag or None,
+                        )
+                        end_attempts.append(_GeneratedKeyframeAttempt(
+                            attempt_number=identity_level + 1,
+                            retry_level=identity_level,
+                            keyframe_bytes=end_frame_bytes,
+                            verification_report=verification_report,
+                        ))
+                        end_verification = _FrameVerificationResult(
+                            passed=verification_report.passed,
+                            attempts=identity_level + 1,
+                            summary=(
+                                "verification_passed"
+                                if verification_report.passed
+                                else "verification_failed"
+                            ),
+                            detail=verification_report.detail,
+                            status="passed" if verification_report.passed else "failed",
+                        )
+                        emit_task_log(
+                            scene.id,
+                            summary=(
+                                f"Shot {shot.shot_index + 1}: end keyframe verification "
+                                f"{'passed' if verification_report.passed else 'failed'} on attempt {identity_level + 1}"
+                            ),
+                            detail=(
+                                f"Retry mode: {_retry_mode_label(identity_level)}\n"
+                                f"Verification mode: {verification_report.verification_mode}\n"
+                                f"{verification_report.detail}"
+                            ),
+                            phase="keyframes",
+                            shot_index=shot.shot_index,
+                            level="success" if verification_report.passed else "info",
+                            kind="keyframe.verification",
+                            source="vision_verifier",
+                        )
+                        if verification_report.passed:
+                            break
+                        end_retry_guidance = _build_retry_correction_prompt(verification_report)
+                        previous_end_attempt_bytes = end_frame_bytes
+                        if identity_level >= _max_identity_retries:
+                            fallback = _build_best_effort_fallback_result(
+                                position="end",
+                                attempts=end_attempts,
                             )
-                            continue
-                    else:
-                        break
-                # Use best attempt if we tracked one
-                if best_end_bytes is not None and best_end_sim > 0:
-                    end_frame_bytes = best_end_bytes
+                            if fallback is None:
+                                raise RuntimeError(
+                                    f"Shot {shot.shot_index} end keyframe failed verification after "
+                                    f"{identity_level + 1} attempts: {verification_report.detail}"
+                                )
+                            selected_attempt, end_verification = fallback
+                            end_frame_bytes = selected_attempt.keyframe_bytes
+                            emit_task_log(
+                                scene.id,
+                                summary=(
+                                    f"Shot {shot.shot_index + 1}: end keyframe accepted with warnings "
+                                    "using best-effort fallback"
+                                ),
+                                detail=end_verification.detail,
+                                phase="keyframes",
+                                shot_index=shot.shot_index,
+                                level="warning",
+                                kind="keyframe.best_effort_fallback",
+                                source="vision_verifier",
+                            )
+                            break
+                        continue
+                    end_verification = _FrameVerificationResult(
+                        passed=True,
+                        attempts=identity_level + 1,
+                        summary="verification_skipped",
+                        detail="verification_skipped",
+                        status="passed",
+                    )
+                    break
 
                 # Save end keyframe
                 end_stored_path = await file_mgr.save_keyframe_async(
@@ -1323,6 +2870,9 @@ async def generate_keyframes(
                     mime_type="image/png",
                     source="generated",
                     prompt_used=shot.end_frame_prompt,
+                    verification_status=end_verification.status,
+                    verification_attempts=end_verification.attempts,
+                    verification_summary=end_verification.detail,
                 )
                 session.add(end_keyframe)
 
@@ -1345,7 +2895,7 @@ async def generate_keyframes(
             # Rate limiting delay (KEYF-05)
             await asyncio.sleep(settings.pipeline.image_gen_delay)
 
-        except Exception as e:
+        except Exception:
             # On exception: set generation_status to "failed" (VGED-05)
             shot.generation_status = "failed"
             await session.commit()

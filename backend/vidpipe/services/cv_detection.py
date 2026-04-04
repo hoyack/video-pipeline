@@ -139,6 +139,40 @@ class CVDetectionService:
 
         return faces
 
+    def detect_objects_and_faces_from_bytes(
+        self, image_bytes: bytes, confidence_threshold: float = 0.5
+    ) -> Dict[str, List[dict]]:
+        """Run detection sweep on raw image bytes."""
+        self._load_models()
+
+        import io
+        import numpy as np
+
+        img_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(img_pil)
+
+        results = {"objects": [], "faces": []}
+        yolo_results = self._model.predict(
+            img_np, conf=confidence_threshold, device=self.device, verbose=False
+        )[0]
+
+        for box in yolo_results.boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            bbox = box.xyxy[0].cpu().numpy().tolist()
+            class_name = yolo_results.names[cls_id]
+            results["objects"].append(
+                {"class": class_name, "confidence": conf, "bbox": bbox}
+            )
+            if class_name == "person":
+                x1, y1, x2, y2 = bbox
+                face_height = (y2 - y1) * 0.4
+                results["faces"].append(
+                    {"class": "person", "confidence": conf, "bbox": [x1, y1, x2, y1 + face_height]}
+                )
+
+        return results
+
     def save_crop(
         self,
         image_path: str,

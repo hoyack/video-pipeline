@@ -16,12 +16,20 @@ interface CastingSectionProps {
 }
 
 const ROLES = ["LEAD", "SUPPORTING", "EXTRA", "NARRATOR"] as const;
+const IDENTITY_TYPES = ["HUMAN", "ANIMAL", "CREATURE", "OBJECT"] as const;
 
 const ROLE_COLORS: Record<string, string> = {
   LEAD: "bg-amber-900/50 text-amber-300",
   SUPPORTING: "bg-blue-900/50 text-blue-300",
   EXTRA: "bg-gray-700 text-gray-300",
   NARRATOR: "bg-purple-900/50 text-purple-300",
+};
+
+const IDENTITY_COLORS: Record<string, string> = {
+  HUMAN: "bg-emerald-900/40 text-emerald-300",
+  ANIMAL: "bg-orange-900/40 text-orange-300",
+  CREATURE: "bg-rose-900/40 text-rose-300",
+  OBJECT: "bg-slate-800 text-slate-300",
 };
 
 function generateTag(name: string): string {
@@ -47,6 +55,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
   } | null>(null);
   const [characterName, setCharacterName] = useState("");
   const [role, setRole] = useState<string>("LEAD");
+  const [identityType, setIdentityType] = useState<string>("HUMAN");
   const [tag, setTag] = useState("");
   const [characterDescription, setCharacterDescription] = useState("");
   const [characterArc, setCharacterArc] = useState("");
@@ -55,6 +64,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
   // Edit form state
   const [editCharacterName, setEditCharacterName] = useState("");
   const [editRole, setEditRole] = useState<string>("LEAD");
+  const [editIdentityType, setEditIdentityType] = useState<string>("HUMAN");
   const [editTag, setEditTag] = useState("");
   const [editBehavioralNotes, setEditBehavioralNotes] = useState("");
 
@@ -89,6 +99,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
     setCharacterName(asset.name);
     setTag(generateTag(asset.name));
     setRole("LEAD");
+    setIdentityType("HUMAN");
     setCharacterDescription("");
     setCharacterArc("");
     setBehavioralNotes("");
@@ -109,6 +120,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
         tag: tag.trim(),
         character_name: characterName.trim(),
         role,
+        identity_type: identityType as "HUMAN" | "ANIMAL" | "CREATURE" | "OBJECT",
         character_description: characterDescription.trim() || undefined,
         character_arc: characterArc.trim() || undefined,
         behavioral_notes: behavioralNotes.trim() || undefined,
@@ -127,6 +139,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
     setEditingId(binding.id);
     setEditCharacterName(binding.character_name);
     setEditRole(binding.role);
+    setEditIdentityType(binding.identity_type);
     setEditTag(binding.tag);
     setEditBehavioralNotes(binding.behavioral_notes || "");
   };
@@ -138,6 +151,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
       await updateCastBinding(editingId, {
         character_name: editCharacterName.trim(),
         role: editRole,
+        identity_type: editIdentityType as "HUMAN" | "ANIMAL" | "CREATURE" | "OBJECT",
         tag: editTag.trim(),
         behavioral_notes: editBehavioralNotes.trim() || undefined,
       });
@@ -243,7 +257,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
           <h4 className="text-sm font-medium text-white mb-3">
             Cast <span className="text-blue-400">{selectedActor.name}</span> as Character
           </h4>
-          <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="grid grid-cols-3 gap-3 mb-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Character Name</label>
               <input
@@ -273,6 +287,18 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
                 onChange={(e) => setTag(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
                 className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white font-mono outline-none focus:border-blue-500"
               />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Identity Type</label>
+              <select
+                value={identityType}
+                onChange={(e) => setIdentityType(e.target.value)}
+                className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500"
+              >
+                {IDENTITY_TYPES.map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </select>
             </div>
           </div>
           <div className="space-y-2 mb-3">
@@ -328,7 +354,7 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
           editingId === binding.id ? (
             /* Inline edit form */
             <div key={binding.id} className="rounded-lg border border-yellow-800 bg-gray-900/80 p-4">
-              <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="grid grid-cols-4 gap-3 mb-3">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Character Name</label>
                   <input
@@ -358,6 +384,18 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
                     onChange={(e) => setEditTag(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
                     className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white font-mono outline-none focus:border-blue-500"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Identity Type</label>
+                  <select
+                    value={editIdentityType}
+                    onChange={(e) => setEditIdentityType(e.target.value)}
+                    className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-white outline-none focus:border-blue-500"
+                  >
+                    {IDENTITY_TYPES.map((item) => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="mb-3">
@@ -411,6 +449,9 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
                     <span className="text-sm font-semibold text-white">{binding.character_name}</span>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ROLE_COLORS[binding.role] || "bg-gray-700 text-gray-300"}`}>
                       {binding.role}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${IDENTITY_COLORS[binding.identity_type] || "bg-gray-700 text-gray-300"}`}>
+                      {binding.identity_type}
                     </span>
                     <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs font-mono text-gray-300">
                       @{binding.tag}

@@ -234,6 +234,12 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE shots ADD COLUMN emotional_weight REAL",
         # Dynamic shot count: let screenwriter decide shot count vs user-fixed
         "ALTER TABLE scenes ADD COLUMN dynamic_shot_count BOOLEAN DEFAULT false",
+        # Cast binding identity handling for character grounding policy
+        "ALTER TABLE cast_bindings ADD COLUMN identity_type VARCHAR(20) DEFAULT 'HUMAN'",
+        # Keyframe verification metadata
+        "ALTER TABLE keyframes ADD COLUMN verification_status VARCHAR(64)",
+        "ALTER TABLE keyframes ADD COLUMN verification_attempts INTEGER DEFAULT 0",
+        "ALTER TABLE keyframes ADD COLUMN verification_summary TEXT",
     ]
     blob_type = "BLOB" if is_sqlite else "BYTEA"
 
@@ -256,6 +262,113 @@ async def _run_migrations(conn) -> None:
                 logger.warning("Migration rollback: %s — %s", sql[:60], e)
                 await conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
             # Column already exists (SQLite) or other safe-to-ignore error
+
+    if not is_sqlite:
+        await _promote_json_text_columns(conn)
+    await _backfill_cast_binding_identity_types(conn)
+    await _widen_keyframe_verification_status_column(conn)
+
+
+async def _backfill_cast_binding_identity_types(conn) -> None:
+    """Ensure legacy cast bindings have an explicit identity_type."""
+    savepoint = "cast_binding_identity_type_backfill"
+    try:
+        if not _is_sqlite():
+            await conn.execute(text(f"SAVEPOINT {savepoint}"))
+        await conn.execute(
+            text(
+                """
+                UPDATE cast_bindings
+                SET identity_type = 'HUMAN'
+                WHERE identity_type IS NULL
+                   OR TRIM(identity_type) = ''
+                """
+            )
+        )
+        if not _is_sqlite():
+            await conn.execute(text(f"RELEASE SAVEPOINT {savepoint}"))
+    except Exception as e:
+        logger.warning("Cast binding identity_type backfill rollback — %s", e)
+        if not _is_sqlite():
+            await conn.execute(text(f"ROLLBACK TO SAVEPOINT {savepoint}"))
+
+
+async def _widen_keyframe_verification_status_column(conn) -> None:
+    """Allow additive verification states longer than the legacy 20-char limit."""
+    if _is_sqlite():
+        return
+
+    savepoint = "keyframe_verification_status_widen"
+    try:
+        await conn.execute(text(f"SAVEPOINT {savepoint}"))
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE keyframes
+                ALTER COLUMN verification_status TYPE VARCHAR(64)
+                """
+            )
+        )
+        await conn.execute(text(f"RELEASE SAVEPOINT {savepoint}"))
+    except Exception as e:
+        logger.warning("Keyframe verification_status widen rollback — %s", e)
+        await conn.execute(text(f"ROLLBACK TO SAVEPOINT {savepoint}"))
+
+
+async def _promote_json_text_columns(conn) -> None:
+    """Convert legacy TEXT JSON columns to JSONB on PostgreSQL."""
+    conversions = [
+        ("scenes", "script_analysis"),
+        ("shots", "characters_present"),
+    ]
+
+    for table_name, column_name in conversions:
+        result = await conn.execute(
+            text(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = :table_name
+                  AND column_name = :column_name
+                """
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        )
+        data_type = result.scalar_one_or_none()
+        if data_type != "text":
+            continue
+
+        savepoint = f"json_fix_{table_name}_{column_name}"
+        try:
+            await conn.execute(text(f"SAVEPOINT {savepoint}"))
+            await conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE {table_name}
+                    ALTER COLUMN {column_name}
+                    TYPE JSONB
+                    USING CASE
+                        WHEN {column_name} IS NULL OR btrim({column_name}) = '' THEN NULL
+                        ELSE {column_name}::jsonb
+                    END
+                    """
+                )
+            )
+            await conn.execute(text(f"RELEASE SAVEPOINT {savepoint}"))
+            logger.info(
+                "Migrated %s.%s from TEXT to JSONB",
+                table_name,
+                column_name,
+            )
+        except Exception as e:
+            logger.warning(
+                "JSON column promotion rollback: %s.%s — %s",
+                table_name,
+                column_name,
+                e,
+            )
+            await conn.execute(text(f"ROLLBACK TO SAVEPOINT {savepoint}"))
 
 
 async def _enable_rls(conn) -> None:

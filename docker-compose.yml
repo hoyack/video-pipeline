@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    gpus: all
     env_file: .env
     environment:
       - VIDPIPE_STORAGE__DATABASE_URL=${VIDPIPE_STORAGE__DATABASE_URL}
@@ -11,6 +12,8 @@ services:
       - VIDPIPE_STORAGE__S3_ENDPOINT=http://supabase-kong:8000/storage/v1
       - VIDPIPE_STORAGE__S3_BUCKET=vidpipe-master
       - VIDPIPE_STORAGE__S3_SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./tmp:/app/tmp
       - ${GOOGLE_APPLICATION_CREDENTIALS:-./.gcp-credentials.json}:/app/credentials.json:ro

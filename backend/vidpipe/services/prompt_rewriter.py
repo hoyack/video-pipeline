@@ -46,8 +46,8 @@ RULES:
 5. Apply any continuity corrections from the previous shot's CV analysis
 6. Preserve the original prompt's narrative intent, but upgrade its visual specificity
 7. Keep under 400 words (Imagen sweet spot for keyframes)
-8. Select exactly 3 reference asset tags — explain why
-9. Assets marked ★ PLACED IN SHOT (MUST SELECT) MUST be included in your reference selection FIRST. Fill remaining slots with other relevant assets.
+8. Select up to 3 supplemental reference asset tags — explain why
+9. Visible character tags from the shot metadata are already treated as mandatory identity references on the Nano Banana path. Use selected_reference_tags for extra help such as environment, prop, or additional look detail when useful.
 
 WHAT NOT TO DO:
 - Do not re-invent character descriptions (use reverse_prompt verbatim)

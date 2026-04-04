@@ -9,7 +9,7 @@ Spec reference: Phase 22 - ALIB-02, ALIB-05, ALIB-07
 
 import logging
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -51,6 +51,7 @@ class CastBindingCreate(BaseModel):
     character_description: Optional[str] = None
     character_arc: Optional[str] = None
     role: str
+    identity_type: Literal["HUMAN", "ANIMAL", "CREATURE", "OBJECT"] = "HUMAN"
     wardrobe_override: Optional[dict] = None
     voice_profile_id: Optional[str] = None
     behavioral_notes: Optional[str] = None
@@ -63,6 +64,7 @@ class CastBindingUpdate(BaseModel):
     character_description: Optional[str] = None
     character_arc: Optional[str] = None
     role: Optional[str] = None
+    identity_type: Optional[Literal["HUMAN", "ANIMAL", "CREATURE", "OBJECT"]] = None
     wardrobe_override: Optional[dict] = None
     voice_profile_id: Optional[str] = None
     behavioral_notes: Optional[str] = None
@@ -158,6 +160,7 @@ def _cast_binding_to_dict(
         "character_description": binding.character_description,
         "character_arc": binding.character_arc,
         "role": binding.role,
+        "identity_type": binding.identity_type,
         "wardrobe_override": binding.wardrobe_override,
         "voice_profile_id": str(binding.voice_profile_id) if binding.voice_profile_id else None,
         "behavioral_notes": binding.behavioral_notes,
@@ -341,6 +344,7 @@ async def create_cast_binding(bible_id: str, body: CastBindingCreate):
             character_description=body.character_description,
             character_arc=body.character_arc,
             role=body.role,
+            identity_type=body.identity_type,
             wardrobe_override=body.wardrobe_override,
             voice_profile_id=uuid.UUID(body.voice_profile_id) if body.voice_profile_id else None,
             behavioral_notes=body.behavioral_notes,
@@ -437,6 +441,8 @@ async def update_cast_binding(binding_id: str, body: CastBindingUpdate):
             binding.character_arc = body.character_arc
         if body.role is not None:
             binding.role = body.role
+        if body.identity_type is not None:
+            binding.identity_type = body.identity_type
         if "wardrobe_override" in body.model_fields_set:
             binding.wardrobe_override = body.wardrobe_override
         if "voice_profile_id" in body.model_fields_set:
@@ -999,6 +1005,7 @@ async def get_bound_assets_summary(bible_id: str):
                         "tag": lk.tag,
                         "name": f"{cb.character_name} — {wp.label}" if cb and wp else lk.tag,
                         "type": "CHARACTER",
+                        "identity_type": cb.identity_type if cb else "HUMAN",
                         "primary_thumbnail_url": actor_primary_refs.get(cb.actor_id) if cb else None,
                         "description": _truncate(wp.description) if wp else None,
                     })
@@ -1009,6 +1016,7 @@ async def get_bound_assets_summary(bible_id: str):
                 "tag": cb.tag,
                 "name": cb.character_name,
                 "type": "CHARACTER",
+                "identity_type": cb.identity_type,
                 "primary_thumbnail_url": actor_primary_refs.get(cb.actor_id),
                 "description": _truncate(actor.base_appearance_prompt) if actor else None,
             })
@@ -1022,6 +1030,7 @@ async def get_bound_assets_summary(bible_id: str):
                 "tag": sb.tag,
                 "name": sb.production_name or (lib_set.name if lib_set else "Unknown"),
                 "type": "SET",
+                "identity_type": None,
                 "primary_thumbnail_url": set_primary_refs.get(sb.library_set_id),
                 "description": _truncate(lib_set.reverse_prompt) if lib_set else None,
             })
@@ -1032,6 +1041,7 @@ async def get_bound_assets_summary(bible_id: str):
                 "tag": pb.tag,
                 "name": pb.production_name or (lib_prop.name if lib_prop else "Unknown"),
                 "type": "PROP",
+                "identity_type": None,
                 "primary_thumbnail_url": prop_primary_refs.get(pb.library_prop_id),
                 "description": _truncate(lib_prop.appearance_prompt) if lib_prop else None,
             })

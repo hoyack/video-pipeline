@@ -103,8 +103,8 @@ export function SceneDetail({ sceneId, onViewProgress, onForked, onViewScene, on
         if (!cancelled) {
           setDetail(d);
           setError(null);
-          // Auto-enter edit mode for draft scenes
-          if (d.status === "draft") {
+          // Re-open edit mode when revisiting a draft or actively running scene.
+          if (d.status === "draft" || !TERMINAL_STATUSES.has(d.status)) {
             setEditing(true);
           }
         }
@@ -160,6 +160,7 @@ export function SceneDetail({ sceneId, onViewProgress, onForked, onViewScene, on
   const canContinue = detail.status === "staged" && detail.run_through != null;
   const canFork = isTerminal;
   const isRunning = !isTerminal;
+  const canEdit = true;
 
   const NEXT_STAGE: Record<string, { run_through: string | null; label: string }> = {
     storyboard: { run_through: "keyframes", label: "Continue to Keyframes" },
@@ -511,14 +512,16 @@ export function SceneDetail({ sceneId, onViewProgress, onForked, onViewScene, on
             </>
           )
         )}
+        {canEdit && (
+          <button
+            onClick={() => setEditing(true)}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+          >
+            Edit
+          </button>
+        )}
         {canFork && (
           <>
-            <button
-              onClick={() => setEditing(true)}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
-            >
-              Edit
-            </button>
             <button
               onClick={() => setForking(true)}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 transition-colors"

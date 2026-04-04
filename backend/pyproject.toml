@@ -34,6 +34,9 @@ dependencies = [
     "elevenlabs>=1.0",
     "replicate>=1.0.0",
     "opencv-python-headless>=4.8.0",
+    "ultralytics>=8.3.0",
+    "insightface>=0.7.3",
+    "onnxruntime-gpu>=1.18.0",
 ]
 
 [project.optional-dependencies]

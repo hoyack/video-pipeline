@@ -71,6 +71,13 @@ function EditableField({
   );
 }
 
+function formatKeyframeSource(source?: string | null): string | null {
+  if (!source) return null;
+  if (source === "inherited") return "Inherited";
+  if (source === "generated") return "Generated";
+  return source;
+}
+
 export function EditableShotCard({
   shot,
   edits,
@@ -151,9 +158,16 @@ export function EditableShotCard({
         <div className="mb-2 flex gap-2">
           {shot.start_keyframe_url && (
             <div className="relative flex-1 group">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                Start KF
-              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  Start KF
+                </span>
+                {formatKeyframeSource(shot.start_keyframe_source) && (
+                  <span className="rounded bg-gray-800 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-gray-400">
+                    {formatKeyframeSource(shot.start_keyframe_source)}
+                  </span>
+                )}
+              </div>
               <img
                 src={shot.start_keyframe_url}
                 alt={`Shot ${idx + 1} start`}
@@ -174,9 +188,16 @@ export function EditableShotCard({
           )}
           {shot.end_keyframe_url && (
             <div className="relative flex-1 group">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                End KF
-              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  End KF
+                </span>
+                {formatKeyframeSource(shot.end_keyframe_source) && (
+                  <span className="rounded bg-gray-800 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-gray-400">
+                    {formatKeyframeSource(shot.end_keyframe_source)}
+                  </span>
+                )}
+              </div>
               <img
                 src={shot.end_keyframe_url}
                 alt={`Shot ${idx + 1} end`}

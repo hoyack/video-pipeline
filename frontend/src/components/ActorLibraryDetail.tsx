@@ -29,7 +29,7 @@ import {
   trainActorLora,
   getActorLoraStatus,
 } from "../api/client.ts";
-import { IMAGE_MODELS, REFERENCE_IMAGE_MODELS } from "../lib/constants.ts";
+import { IMAGE_MODELS, REFERENCE_IMAGE_MODELS, STYLE_OPTIONS } from "../lib/constants.ts";
 
 interface ActorLibraryDetailProps {
   actorId: string;
@@ -429,7 +429,7 @@ function OverviewTab({
 
 function LoraStatusBadge({
   status,
-  trainedAt,
+  trainedAt: _trainedAt,
 }: {
   status: string | null;
   trainedAt: string | null;
@@ -497,6 +497,8 @@ function RefsTab({
   const [modelSettings, setModelSettings] = useState<EnabledModelsResponse | null>(null);
   const [selectedImageModel, setSelectedImageModel] = useState("");
   const [selectedRefId, setSelectedRefId] = useState<string | null>(null);
+  const [selectedStyle, setSelectedStyle] = useState("");
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   const supportsRefs = REFERENCE_IMAGE_MODELS.has(selectedImageModel);
 
@@ -540,9 +542,9 @@ function RefsTab({
     }
     setGenerating(true);
     try {
-      await generateActorImage(actor.id, prompt, selectedImageModel || undefined, selectedRefId ?? undefined);
+      await generateActorImage(actor.id, prompt, selectedImageModel || undefined, selectedRefId ?? undefined, selectedStyle || undefined);
       onRefresh();
-      setShowGenerate(false);
+      // Keep the panel open so the user can generate more images with the same settings.
     } catch (err: unknown) {
       onError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -666,6 +668,37 @@ function RefsTab({
             </div>
           </div>
 
+          <div>
+            <h5 className="text-xs font-medium text-purple-300 mb-2">Style (optional):</h5>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setSelectedStyle("")}
+                disabled={generating}
+                className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                  !selectedStyle
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-800 text-gray-400 hover:text-gray-200"
+                } disabled:opacity-50`}
+              >
+                Default
+              </button>
+              {STYLE_OPTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSelectedStyle(s)}
+                  disabled={generating}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                    selectedStyle === s
+                      ? "bg-purple-600 text-white"
+                      : "bg-gray-800 text-gray-400 hover:text-gray-200"
+                  } disabled:opacity-50`}
+                >
+                  {s.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {supportsRefs && actor.refs.length > 0 && (
             <p className="text-xs text-purple-300">
               {selectedRefId
@@ -701,16 +734,12 @@ function RefsTab({
             return (
               <div
                 key={ref.id}
-                className={`relative group rounded-lg overflow-hidden border-2 transition-colors ${
+                className={`relative group rounded-lg overflow-hidden border-2 transition-colors cursor-pointer ${
                   isSelected
                     ? "border-purple-500 ring-1 ring-purple-500/50"
                     : "border-gray-700"
-                } ${isSelectable ? "cursor-pointer" : ""}`}
-                onClick={() => {
-                  if (isSelectable) {
-                    setSelectedRefId(isSelected ? null : ref.id);
-                  }
-                }}
+                }`}
+                onClick={() => setLightboxUrl(ref.image_url)}
               >
                 <img
                   src={ref.image_url}
@@ -718,7 +747,10 @@ function RefsTab({
                   className="w-full aspect-square object-cover"
                 />
                 {isSelected && (
-                  <div className="absolute inset-0 bg-purple-500/20 flex items-center justify-center pointer-events-none">
+                  <div
+                    className="absolute inset-0 bg-purple-500/20 flex items-center justify-center cursor-pointer"
+                    onClick={(e) => { e.stopPropagation(); setSelectedRefId(null); }}
+                  >
                     <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center shadow-lg">
                       <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -727,6 +759,14 @@ function RefsTab({
                   </div>
                 )}
                 <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {isSelectable && !isSelected && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setSelectedRefId(ref.id); }}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-purple-800 text-purple-200 hover:bg-purple-700"
+                    >
+                      Use as ref
+                    </button>
+                  )}
                   {ref.is_primary && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-300">Primary</span>
                   )}
@@ -745,6 +785,21 @@ function RefsTab({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <img
+            src={lightboxUrl}
+            alt="Reference image"
+            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>
@@ -1080,6 +1135,7 @@ function WardrobeTab({
   const [genRefId, setGenRefId] = useState("");
   const [genModel, setGenModel] = useState("");
   const [genExtraPrompt, setGenExtraPrompt] = useState("");
+  const [genStyle, setGenStyle] = useState("");
   const [generating, setGenerating] = useState(false);
 
   // Image upload state
@@ -1142,10 +1198,9 @@ function WardrobeTab({
     if (!genRefId) return;
     setGenerating(true);
     try {
-      await generateWardrobeImage(presetId, genRefId, genModel || undefined, genExtraPrompt || undefined);
-      setGenPresetId(null);
-      setGenRefId("");
-      setGenModel("");
+      await generateWardrobeImage(presetId, genRefId, genModel || undefined, genExtraPrompt || undefined, genStyle || undefined);
+      // Keep the panel open so the user can generate more images with the same settings.
+      // Only clear the extra prompt — style, model, and ref persist.
       setGenExtraPrompt("");
       onRefresh();
     } catch (err: unknown) {
@@ -1366,6 +1421,36 @@ function WardrobeTab({
                         placeholder="Additional pose/setting details..."
                       />
                     </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Style (optional)</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          onClick={() => setGenStyle("")}
+                          disabled={generating}
+                          className={`px-2 py-1 text-[11px] font-medium rounded-full transition-colors ${
+                            !genStyle
+                              ? "bg-purple-600 text-white"
+                              : "bg-gray-800 text-gray-400 hover:text-gray-200"
+                          } disabled:opacity-50`}
+                        >
+                          Default
+                        </button>
+                        {STYLE_OPTIONS.map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => setGenStyle(s)}
+                            disabled={generating}
+                            className={`px-2 py-1 text-[11px] font-medium rounded-full transition-colors ${
+                              genStyle === s
+                                ? "bg-purple-600 text-white"
+                                : "bg-gray-800 text-gray-400 hover:text-gray-200"
+                            } disabled:opacity-50`}
+                          >
+                            {s.replace(/_/g, " ")}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="flex gap-1 justify-end">
                       <button
                         onClick={() => setGenPresetId(null)}
@@ -1404,6 +1489,7 @@ function WardrobeTab({
                         setGenRefId(actor.refs.find((r) => r.is_primary)?.id || actor.refs[0]?.id || "");
                         setGenModel("");
                         setGenExtraPrompt("");
+                        setGenStyle("");
                       }}
                       disabled={actor.refs.length === 0}
                       className="text-xs px-2 py-1 rounded bg-purple-900/50 text-purple-300 hover:bg-purple-800/50 disabled:opacity-30"

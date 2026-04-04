@@ -727,15 +727,25 @@ async def _generate_manifest_storyboard_parallel(
         assignment.shot_index: assignment
         for assignment in screenwriter_breakdown.shots
     }
-    target_indices = (
-        [shot.shot_index for shot in empty_shots]
-        if existing_shots
-        else [assignment.shot_index for assignment in screenwriter_breakdown.shots]
-    )
+    existing_by_index = {shot.shot_index: shot for shot in existing_shots}
+    if existing_shots:
+        target_indices = sorted({
+            *[shot.shot_index for shot in empty_shots],
+            *[
+                assignment.shot_index
+                for assignment in screenwriter_breakdown.shots
+                if assignment.shot_index not in existing_by_index
+            ],
+        })
+    else:
+        target_indices = [
+            assignment.shot_index for assignment in screenwriter_breakdown.shots
+        ]
     total_targets = len(target_indices)
 
     if is_dynamic and screenwriter_breakdown.shots:
         scene.target_shot_count = len(screenwriter_breakdown.shots)
+        scene.total_duration = scene.target_shot_count * (scene.target_clip_duration or 6)
         logger.info(
             "Scene %s: dynamic shot count → %d shots",
             scene.id, scene.target_shot_count,
@@ -750,7 +760,6 @@ async def _generate_manifest_storyboard_parallel(
     )
     character_models = _character_models_from_entries(character_entries)
 
-    existing_by_index = {shot.shot_index: shot for shot in existing_shots}
     shots_by_index = _existing_storyboard_shots_map(scene, existing_shots)
 
     for shot_row in existing_shots:
@@ -1310,6 +1319,11 @@ async def generate_storyboard(
             "- Break the script into 3-5 distinct visual shots",
             f"- Break the script into exactly {scene.target_shot_count} distinct visual shots",
         )
+    else:
+        system_prompt = system_prompt.replace(
+            "- Break the script into 3-5 distinct visual shots",
+            "- Break the script into the number of distinct visual shots needed to clearly cover every beat; do not collapse a multi-beat scene into a single continuous shot.",
+        )
 
     # Phase 18: Screenplay context enrichment (additive-only, SCRN-13/SCRN-14)
     screenplay_enrichment = ""
@@ -1364,12 +1378,17 @@ async def generate_storyboard(
         await session.commit()
 
     from vidpipe.services.event_bus import event_bus
+    start_message = (
+        "Starting storyboard generation with automatic shot count selection"
+        if is_dynamic
+        else f"Starting storyboard generation for {scene.target_shot_count} shot(s)"
+    )
     event_bus.emit(
         scene.id,
         "phase_started",
         phase="storyboard",
         total_shots=scene.target_shot_count,
-        message=f"Starting storyboard generation for {scene.target_shot_count} shot(s)",
+        message=start_message,
     )
 
     # ── Screenwriter Agent: Script Analysis + Shot Breakdown ──────────
@@ -1408,6 +1427,7 @@ async def generate_storyboard(
                 scene_prompt=scene.prompt,
                 analysis=analysis,
                 target_shot_count=scene.target_shot_count,
+                dynamic_shot_count=is_dynamic,
                 binding_registry_block=asset_registry_block,
                 existing_shot_context=filled_context_for_agent,
             )
@@ -1522,6 +1542,7 @@ async def generate_storyboard(
     # Dynamic shot count: sync target_shot_count to what the LLM actually produced
     if is_dynamic and storyboard.shots:
         scene.target_shot_count = len(storyboard.shots)
+        scene.total_duration = scene.target_shot_count * (scene.target_clip_duration or 6)
         logger.info(
             f"Scene {scene.id}: dynamic shot count → {scene.target_shot_count} shots"
         )

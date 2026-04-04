@@ -32,6 +32,13 @@ function PromptSection({ label, text, copyable }: { label: string; text: string;
   );
 }
 
+function formatKeyframeSource(source?: string | null): string | null {
+  if (!source) return null;
+  if (source === "inherited") return "Inherited";
+  if (source === "generated") return "Generated";
+  return source;
+}
+
 const GEN_STATUS_LABELS: Record<string, string> = {
   generating_text: "Generating text...",
   generating_start_kf: "Generating start keyframe...",
@@ -206,9 +213,16 @@ export function ShotCard({
             <div className="mt-2 flex gap-2">
               {shot.start_keyframe_url && (
                 <div className="flex-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                    Start Keyframe
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                      Start Keyframe
+                    </span>
+                    {formatKeyframeSource(shot.start_keyframe_source) && (
+                      <span className="rounded bg-gray-800 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-gray-400">
+                        {formatKeyframeSource(shot.start_keyframe_source)}
+                      </span>
+                    )}
+                  </div>
                   <img
                     src={shot.start_keyframe_url}
                     alt={`${shotLabel} start`}
@@ -223,9 +237,16 @@ export function ShotCard({
               )}
               {shot.end_keyframe_url && (
                 <div className="flex-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                    End Keyframe
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                      End Keyframe
+                    </span>
+                    {formatKeyframeSource(shot.end_keyframe_source) && (
+                      <span className="rounded bg-gray-800 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-gray-400">
+                        {formatKeyframeSource(shot.end_keyframe_source)}
+                      </span>
+                    )}
+                  </div>
                   <img
                     src={shot.end_keyframe_url}
                     alt={`${shotLabel} end`}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import clsx from "clsx";
 import { forkScene, fetchProductionBibleAssets, getEnabledModels } from "../api/client.ts";
+import { ScenePromptEditor } from "./ScenePromptEditor.tsx";
 import { useShowCost } from "../hooks/useShowCost.tsx";
 import type { SceneDetail } from "../api/types.ts";
 import type { ForkRequest, AssetResponse, ModifiedAsset, NewForkUpload, EnabledModelsResponse } from "../api/types.ts";
@@ -343,17 +344,12 @@ export function EditForkPanel({ detail, onForked, onCancel }: EditForkPanelProps
         <label htmlFor="fork-prompt" className="mb-1 block text-sm font-medium text-gray-300">
           Prompt
         </label>
-        <textarea
+        <ScenePromptEditor
           id="fork-prompt"
-          rows={3}
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          className={clsx(
-            "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1",
-            prompt !== detail.prompt
-              ? "border-amber-600 focus:ring-amber-500"
-              : "border-gray-700 focus:ring-blue-500",
-          )}
+          onChange={setPrompt}
+          isDirty={prompt !== detail.prompt}
+          productionBibleId={detail.production_bible_id}
         />
       </div>
 

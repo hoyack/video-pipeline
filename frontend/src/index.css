@@ -84,6 +84,58 @@ input[type="range"].dark-slider::-moz-range-thumb:hover {
 .markdown-preview th, .markdown-preview td { border: 1px solid #374151; padding: 0.4em 0.8em; text-align: left; }
 .markdown-preview th { background: #1f2937; font-weight: 600; color: #e5e7eb; }
 
+/* Tiptap scene prompt editor */
+.scene-prompt-editor .ProseMirror,
+.scene-prompt-editor .scene-prompt-prosemirror {
+  outline: none;
+  min-height: 4.5rem;
+  overflow-y: auto;
+  resize: vertical;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: #f3f4f6;
+}
+.scene-prompt-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #4b5563;
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+.scene-prompt-editor .ProseMirror h1 { font-size: 1.5em; font-weight: 700; color: #e5e7eb; margin: 0.8em 0 0.4em; line-height: 1.3; }
+.scene-prompt-editor .ProseMirror h2 { font-size: 1.25em; font-weight: 600; color: #e5e7eb; margin: 0.8em 0 0.4em; line-height: 1.3; }
+.scene-prompt-editor .ProseMirror h3 { font-size: 1.1em; font-weight: 600; color: #e5e7eb; margin: 0.6em 0 0.3em; line-height: 1.3; }
+.scene-prompt-editor .ProseMirror p { margin: 0.5em 0; }
+.scene-prompt-editor .ProseMirror strong { color: #e5e7eb; font-weight: 600; }
+.scene-prompt-editor .ProseMirror em { color: #c4b5fd; }
+.scene-prompt-editor .ProseMirror a { color: #818cf8; text-decoration: underline; }
+.scene-prompt-editor .ProseMirror ul, .scene-prompt-editor .ProseMirror ol { margin: 0.5em 0; padding-left: 1.5em; }
+.scene-prompt-editor .ProseMirror ul { list-style-type: disc; }
+.scene-prompt-editor .ProseMirror ol { list-style-type: decimal; }
+.scene-prompt-editor .ProseMirror li { margin: 0.2em 0; }
+.scene-prompt-editor .ProseMirror blockquote { border-left: 3px solid #4b5563; padding-left: 1em; margin: 0.5em 0; color: #9ca3af; font-style: italic; }
+.scene-prompt-editor .ProseMirror code { font-family: ui-monospace, SFMono-Regular, monospace; color: #a5b4fc; background: #1f2937; padding: 0.15em 0.35em; border-radius: 3px; font-size: 0.9em; }
+.scene-prompt-editor .ProseMirror pre { background: #111827; border: 1px solid #1f2937; border-radius: 6px; padding: 0.75em 1em; margin: 0.5em 0; overflow-x: auto; }
+.scene-prompt-editor .ProseMirror pre code { background: none; padding: 0; color: #d1d5db; font-size: 0.85em; }
+.scene-prompt-editor .ProseMirror hr { border: none; border-top: 1px solid #374151; margin: 1em 0; }
+.scene-prompt-editor .ProseMirror img { max-width: 100%; border-radius: 4px; margin: 0.5em 0; }
+
+/* Syntax highlighting tokens (Material Palenight) */
+.scene-prompt-editor .ProseMirror pre code .hljs-keyword { color: #c792ea; }
+.scene-prompt-editor .ProseMirror pre code .hljs-string { color: #c3e88d; }
+.scene-prompt-editor .ProseMirror pre code .hljs-number { color: #f78c6c; }
+.scene-prompt-editor .ProseMirror pre code .hljs-comment { color: #546e7a; font-style: italic; }
+.scene-prompt-editor .ProseMirror pre code .hljs-function { color: #82aaff; }
+.scene-prompt-editor .ProseMirror pre code .hljs-variable { color: #f07178; }
+.scene-prompt-editor .ProseMirror pre code .hljs-built_in { color: #ffcb6b; }
+.scene-prompt-editor .ProseMirror pre code .hljs-type { color: #ffcb6b; }
+.scene-prompt-editor .ProseMirror pre code .hljs-attr { color: #82aaff; }
+.scene-prompt-editor .ProseMirror pre code .hljs-title { color: #82aaff; }
+.scene-prompt-editor .ProseMirror pre code .hljs-params { color: #d1d5db; }
+.scene-prompt-editor .ProseMirror pre code .hljs-literal { color: #ff5370; }
+.scene-prompt-editor .ProseMirror pre code .hljs-meta { color: #ffcb6b; }
+
 /* CodeMirror search panel refinements */
 .cm-editor .cm-panels {
   font-family: ui-sans-serif, system-ui, sans-serif;

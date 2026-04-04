@@ -15,6 +15,8 @@ import {
 } from "../lib/constants.ts";
 import { SortableShotCard } from "./SortableShotCard.tsx";
 import { ShotEditorCard } from "./ShotEditorCard.tsx";
+import { ScenePromptEditor } from "./ScenePromptEditor.tsx";
+import { TiptapFullscreenModal } from "./TiptapFullscreenModal.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -1543,24 +1545,21 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                 </svg>
               </button>
             </div>
-            <textarea
+            <ScenePromptEditor
               id="edit-prompt"
-              rows={3}
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              className={clsx(
-                "w-full rounded-lg border bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-1",
-                prompt !== detail.prompt
-                  ? "border-amber-600 focus:ring-amber-500"
-                  : "border-gray-700 focus:ring-blue-500",
-              )}
+              onChange={setPrompt}
+              isDirty={prompt !== detail.prompt}
+              onExpand={() => setPromptEditorOpen(true)}
+              productionBibleId={manifestId}
             />
             {promptEditorOpen && (
-              <MarkdownEditorModal
+              <TiptapFullscreenModal
                 label="Scene Prompt"
                 value={prompt}
                 onChange={setPrompt}
                 onClose={() => setPromptEditorOpen(false)}
+                productionBibleId={manifestId}
               />
             )}
           </div>

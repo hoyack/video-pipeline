@@ -1174,7 +1174,10 @@ async def _verify_keyframe_characters_with_vision(
     results: list[_CharacterVisionVerificationResult] = []
 
     for target in targets:
-        crop = crop_plan.selections[target.tag]
+        crop = crop_plan.selections.get(
+            target.tag,
+            _CharacterCropSelection(target.tag, keyframe_bytes, None, True),
+        )
         references: list[tuple[str, bytes]] = []
         for candidate in sorted(target.face_candidates, key=_candidate_sort_key)[:2]:
             references.append((f"FACE REF @{target.tag}", candidate.image_bytes))

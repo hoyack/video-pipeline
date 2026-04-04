@@ -78,17 +78,22 @@ def _detect_subject_type(text: str) -> tuple[str, str]:
     return "person", "face shape, skin tone, hair (or lack thereof), build, and distinguishing features"
 
 
-_PHOTOREALISTIC_CUES = re.compile(
-    r"(?:against a |with |in a )?"
-    r"(?:neutral|soft|even|natural|studio|grey|gray|white|diffused|professional)"
-    r"[^.]*(?:background|lighting|light|backdrop|setting)[^.]*\.?\s*",
+_PHOTOREALISTIC_CUE_SENTENCES = re.compile(
+    r"[^.]*(?:studio background|studio backdrop|neutral (?:grey|gray|white) background"
+    r"|soft,? even lighting|diffused lighting|professional lighting"
+    r"|against a neutral background|even lighting)\b[^.]*\.?\s*",
     re.IGNORECASE,
 )
 
 
 def _strip_photorealistic_cues(text: str) -> str:
-    """Remove studio/lighting descriptions that anchor models to photorealism."""
-    return _PHOTOREALISTIC_CUES.sub("", text).strip()
+    """Remove full sentences containing studio/lighting descriptions.
+
+    Only strips sentences with specific multi-word photorealistic phrases
+    (e.g. 'studio background', 'soft, even lighting'). Single words like
+    'soft' or 'natural' are NOT matched to avoid destroying character descriptions.
+    """
+    return _PHOTOREALISTIC_CUE_SENTENCES.sub("", text).strip()
 
 
 asset_library_router = APIRouter(prefix="/api/asset-library", tags=["asset-library"])

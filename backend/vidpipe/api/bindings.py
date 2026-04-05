@@ -133,7 +133,11 @@ class SoundBindingUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _cast_look_to_dict(look: CastLook, wardrobe_label: Optional[str] = None) -> dict:
+def _cast_look_to_dict(
+    look: CastLook,
+    wardrobe_label: Optional[str] = None,
+    thumbnail_url: Optional[str] = None,
+) -> dict:
     return {
         "id": str(look.id),
         "cast_binding_id": str(look.cast_binding_id),
@@ -141,6 +145,7 @@ def _cast_look_to_dict(look: CastLook, wardrobe_label: Optional[str] = None) -> 
         "tag": look.tag,
         "is_default": look.is_default,
         "wardrobe_label": wardrobe_label,
+        "thumbnail_url": thumbnail_url,
         "created_at": look.created_at.isoformat(),
     }
 
@@ -282,12 +287,14 @@ async def list_cast_bindings(bible_id: str):
         actors_by_id = {a.id: a for a in actor_result.scalars().all()}
 
         ref_result = await session.execute(
-            select(ActorRef).where(
-                ActorRef.actor_id.in_(actor_ids),
-                ActorRef.is_primary == True,  # noqa: E712
-            )
+            select(ActorRef)
+            .where(ActorRef.actor_id.in_(actor_ids))
+            .order_by(ActorRef.is_primary.desc(), ActorRef.created_at)
         )
-        primary_refs = {r.actor_id: r.image_url for r in ref_result.scalars().all()}
+        primary_refs: dict = {}
+        for r in ref_result.scalars().all():
+            if r.actor_id not in primary_refs:
+                primary_refs[r.actor_id] = f"/api/asset-library/actor-refs/{r.id}/image"
 
         # Bulk fetch CastLooks + wardrobe preset labels
         binding_ids = [b.id for b in bindings]
@@ -302,11 +309,15 @@ async def list_cast_bindings(bible_id: str):
             wp_ids_needed.add(lk.wardrobe_preset_id)
 
         wp_labels: dict[uuid.UUID, str] = {}
+        wp_thumb_urls: dict[uuid.UUID, str] = {}
         if wp_ids_needed:
             wp_result = await session.execute(
                 select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids_needed)))
             )
-            wp_labels = {wp.id: wp.label for wp in wp_result.scalars().all()}
+            for wp in wp_result.scalars().all():
+                wp_labels[wp.id] = wp.label
+                if wp.reference_images and len(wp.reference_images) > 0:
+                    wp_thumb_urls[wp.id] = f"/api/asset-library/actor-wardrobe-presets/{wp.id}/images/0"
 
         return [
             _cast_binding_to_dict(
@@ -314,7 +325,11 @@ async def list_cast_bindings(bible_id: str):
                 actor_name=actors_by_id.get(b.actor_id, Actor(name="")).name if b.actor_id in actors_by_id else None,
                 primary_ref_url=primary_refs.get(b.actor_id),
                 looks=[
-                    _cast_look_to_dict(lk, wardrobe_label=wp_labels.get(lk.wardrobe_preset_id))
+                    _cast_look_to_dict(
+                        lk,
+                        wardrobe_label=wp_labels.get(lk.wardrobe_preset_id),
+                        thumbnail_url=wp_thumb_urls.get(lk.wardrobe_preset_id),
+                    )
                     for lk in looks_by_binding.get(b.id, [])
                 ],
             )
@@ -399,16 +414,27 @@ async def get_cast_binding(binding_id: str):
         looks = looks_result.scalars().all()
         wp_ids_for_looks = {lk.wardrobe_preset_id for lk in looks}
         wp_labels_for_looks: dict[uuid.UUID, str] = {}
+        wp_thumb_urls_for_looks: dict[uuid.UUID, str] = {}
         if wp_ids_for_looks:
             wpl_result = await session.execute(
                 select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids_for_looks)))
             )
-            wp_labels_for_looks = {wp.id: wp.label for wp in wpl_result.scalars().all()}
+            for wp in wpl_result.scalars().all():
+                wp_labels_for_looks[wp.id] = wp.label
+                if wp.reference_images and len(wp.reference_images) > 0:
+                    wp_thumb_urls_for_looks[wp.id] = f"/api/asset-library/actor-wardrobe-presets/{wp.id}/images/0"
 
         result = _cast_binding_to_dict(
             binding,
             actor_name=actor.name if actor else None,
-            looks=[_cast_look_to_dict(lk, wardrobe_label=wp_labels_for_looks.get(lk.wardrobe_preset_id)) for lk in looks],
+            looks=[
+                _cast_look_to_dict(
+                    lk,
+                    wardrobe_label=wp_labels_for_looks.get(lk.wardrobe_preset_id),
+                    thumbnail_url=wp_thumb_urls_for_looks.get(lk.wardrobe_preset_id),
+                )
+                for lk in looks
+            ],
         )
         result["actor_detail"] = {
             "refs": refs,
@@ -500,14 +526,22 @@ async def list_cast_looks(binding_id: str):
 
         wp_ids = {lk.wardrobe_preset_id for lk in looks}
         wp_labels: dict[uuid.UUID, str] = {}
+        wp_thumb_urls: dict[uuid.UUID, str] = {}
         if wp_ids:
             wp_result = await session.execute(
                 select(ActorWardrobePreset).where(ActorWardrobePreset.id.in_(list(wp_ids)))
             )
-            wp_labels = {wp.id: wp.label for wp in wp_result.scalars().all()}
+            for wp in wp_result.scalars().all():
+                wp_labels[wp.id] = wp.label
+                if wp.reference_images and len(wp.reference_images) > 0:
+                    wp_thumb_urls[wp.id] = f"/api/asset-library/actor-wardrobe-presets/{wp.id}/images/0"
 
         return [
-            _cast_look_to_dict(lk, wardrobe_label=wp_labels.get(lk.wardrobe_preset_id))
+            _cast_look_to_dict(
+                lk,
+                wardrobe_label=wp_labels.get(lk.wardrobe_preset_id),
+                thumbnail_url=wp_thumb_urls.get(lk.wardrobe_preset_id),
+            )
             for lk in looks
         ]
 
@@ -583,7 +617,8 @@ async def create_cast_look(binding_id: str, body: CastLookCreate):
         await session.commit()
         await session.refresh(look)
 
-        return _cast_look_to_dict(look, wardrobe_label=wp.label)
+        wp_thumb = f"/api/asset-library/actor-wardrobe-presets/{wp.id}/images/0" if wp.reference_images and len(wp.reference_images) > 0 else None
+        return _cast_look_to_dict(look, wardrobe_label=wp.label, thumbnail_url=wp_thumb)
 
 
 @bindings_router.put("/cast-looks/{look_id}")
@@ -646,7 +681,10 @@ async def update_cast_look(look_id: str, body: CastLookUpdate):
         await session.refresh(look)
 
         wp = await session.get(ActorWardrobePreset, look.wardrobe_preset_id)
-        return _cast_look_to_dict(look, wardrobe_label=wp.label if wp else None)
+        wp_thumb = None
+        if wp and wp.reference_images and len(wp.reference_images) > 0:
+            wp_thumb = f"/api/asset-library/actor-wardrobe-presets/{wp.id}/images/0"
+        return _cast_look_to_dict(look, wardrobe_label=wp.label if wp else None, thumbnail_url=wp_thumb)
 
 
 @bindings_router.delete("/cast-looks/{look_id}", status_code=204)
@@ -934,12 +972,13 @@ async def get_bound_assets_summary(bible_id: str):
             actors_by_id = {a.id: a for a in actor_result.scalars().all()}
 
             ref_result = await session.execute(
-                select(ActorRef).where(
-                    ActorRef.actor_id.in_(actor_ids),
-                    ActorRef.is_primary == True,  # noqa: E712
-                )
+                select(ActorRef)
+                .where(ActorRef.actor_id.in_(actor_ids))
+                .order_by(ActorRef.is_primary.desc(), ActorRef.created_at)
             )
-            actor_primary_refs = {r.actor_id: r.image_url for r in ref_result.scalars().all()}
+            for r in ref_result.scalars().all():
+                if r.actor_id not in actor_primary_refs:
+                    actor_primary_refs[r.actor_id] = f"/api/asset-library/actor-refs/{r.id}/image"
 
         sets_by_id: dict = {}
         set_primary_refs: dict = {}
@@ -1001,12 +1040,18 @@ async def get_bound_assets_summary(bible_id: str):
                 for lk in all_looks:
                     cb = binding_map.get(lk.cast_binding_id)
                     wp = wps_by_id.get(lk.wardrobe_preset_id)
+                    # Use wardrobe preset's first image if available, else fall back to actor primary ref
+                    wp_thumb = None
+                    if wp and wp.reference_images and len(wp.reference_images) > 0:
+                        wp_thumb = f"/api/asset-library/actor-wardrobe-presets/{wp.id}/images/0"
+                    elif cb:
+                        wp_thumb = actor_primary_refs.get(cb.actor_id)
                     cast_look_items.append({
                         "tag": lk.tag,
                         "name": f"{cb.character_name} — {wp.label}" if cb and wp else lk.tag,
                         "type": "CHARACTER",
                         "identity_type": cb.identity_type if cb else "HUMAN",
-                        "primary_thumbnail_url": actor_primary_refs.get(cb.actor_id) if cb else None,
+                        "primary_thumbnail_url": wp_thumb,
                         "description": _truncate(wp.description) if wp else None,
                     })
 

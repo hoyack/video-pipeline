@@ -491,6 +491,17 @@ export function CastingSection({ bibleId, onBindingsChange }: CastingSectionProp
                   <div className="space-y-1 mb-1">
                     {binding.looks.map((look) => (
                       <div key={look.id} className="flex items-center gap-2 text-xs">
+                        {look.thumbnail_url ? (
+                          <img
+                            src={look.thumbnail_url}
+                            alt={look.wardrobe_label || "Wardrobe"}
+                            className="w-7 h-7 rounded object-cover border border-gray-700 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-7 h-7 rounded bg-gray-800 border border-gray-700 shrink-0 flex items-center justify-center text-gray-600 text-[8px]">
+                            W
+                          </div>
+                        )}
                         <span className="font-mono text-purple-300 bg-purple-900/30 px-1.5 py-0.5 rounded">
                           @{look.tag}
                         </span>

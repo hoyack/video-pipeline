@@ -1039,6 +1039,7 @@ export interface CastLook {
   tag: string;
   is_default: boolean;
   wardrobe_label: string | null;
+  thumbnail_url: string | null;
   created_at: string;
 }
 

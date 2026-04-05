@@ -121,6 +121,27 @@ input[type="range"].dark-slider::-moz-range-thumb:hover {
 .scene-prompt-editor .ProseMirror hr { border: none; border-top: 1px solid #374151; margin: 1em 0; }
 .scene-prompt-editor .ProseMirror img { max-width: 100%; border-radius: 4px; margin: 0.5em 0; }
 
+/* Mini prompt editor (shot fields with @-mention) */
+.mini-prompt-editor .ProseMirror,
+.mini-prompt-editor .mini-prompt-prosemirror {
+  outline: none;
+  min-height: 2.5rem;
+  max-height: 8rem;
+  overflow-y: auto;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.625;
+  color: #d1d5db;
+}
+.mini-prompt-editor .ProseMirror p { margin: 0.15em 0; }
+.mini-prompt-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #4b5563;
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
 /* Syntax highlighting tokens (Material Palenight) */
 .scene-prompt-editor .ProseMirror pre code .hljs-keyword { color: #c792ea; }
 .scene-prompt-editor .ProseMirror pre code .hljs-string { color: #c3e88d; }

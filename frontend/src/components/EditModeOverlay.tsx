@@ -1755,6 +1755,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
                           onToggleExpand={() => toggleShot(shot.shot_index)}
                           boundAssets={boundAssets}
                           onTagSelect={setSelectedTag}
+                          productionBibleId={manifestId}
                         />
                       );
                     })}

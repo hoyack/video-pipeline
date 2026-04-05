@@ -13,6 +13,7 @@ import {
 import { usePolling } from "../hooks/usePolling.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
+import { ScenePromptEditor } from "./ScenePromptEditor.tsx";
 import {
   createAssetTagCompletion,
   createTagHoverPreview,
@@ -61,6 +62,8 @@ interface ShotEditorCardProps {
   boundAssets?: BoundAssetSummary[];
   /** Called when user hovers an @tag — updates the side preview panel */
   onTagSelect?: (tag: string | null) => void;
+  /** Production Bible ID for @-mention suggestions in rich editors */
+  productionBibleId?: string | null;
 }
 
 function StalenessBadge({ staleness }: { staleness: string | null | undefined }) {
@@ -110,6 +113,7 @@ function EditableField({
   contextValue,
   onContextChange,
   onOpenEditor,
+  productionBibleId,
 }: {
   label: string;
   value: string;
@@ -124,6 +128,7 @@ function EditableField({
   contextValue?: string;
   onContextChange?: (v: string) => void;
   onOpenEditor?: () => void;
+  productionBibleId?: string | null;
 }) {
   const isModified = value !== originalValue;
   return (
@@ -204,20 +209,13 @@ function EditableField({
           className="mt-0.5 w-full rounded border border-gray-700 bg-gray-950 px-2 py-0.5 text-[10px] text-gray-300 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
       )}
-      <div className="relative mt-0.5">
-        <textarea
-          rows={2}
+      <div className="relative mt-0.5" onClick={(e) => e.stopPropagation()}>
+        <ScenePromptEditor
           value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          className={clsx(
-            "w-full rounded border bg-gray-950 px-2 py-1 text-xs leading-relaxed text-gray-300 focus:outline-none focus:ring-1",
-            regenerating
-              ? "border-indigo-600/50 text-gray-500"
-              : isModified
-                ? "border-amber-600 focus:ring-amber-500"
-                : "border-gray-700 focus:ring-blue-500",
-          )}
+          onChange={onChange}
+          isDirty={isModified}
+          productionBibleId={productionBibleId}
+          placeholder={`Enter ${label.toLowerCase()}...`}
         />
         {regenerating && (
           <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-950/60">
@@ -258,6 +256,7 @@ export function ShotEditorCard({
   dragHandleAttributes,
   boundAssets,
   onTagSelect,
+  productionBibleId,
 }: ShotEditorCardProps) {
   const idx = shot.shot_index;
   const actualShotLabel = `Shot ${idx + 1}`;
@@ -962,6 +961,7 @@ export function ShotEditorCard({
         contextValue={textExtraContext["shot_description"] ?? ""}
         onContextChange={(v) => setTextExtraContext((prev) => ({ ...prev, shot_description: v }))}
         onOpenEditor={() => setEditorField("shot_description")}
+        productionBibleId={productionBibleId}
       />
       <EditableField
         label="Start Frame Prompt"
@@ -977,6 +977,7 @@ export function ShotEditorCard({
         contextValue={textExtraContext["start_frame_prompt"] ?? ""}
         onContextChange={(v) => setTextExtraContext((prev) => ({ ...prev, start_frame_prompt: v }))}
         onOpenEditor={() => setEditorField("start_frame_prompt")}
+        productionBibleId={productionBibleId}
       />
       <EditableField
         label="End Frame Prompt"
@@ -992,6 +993,7 @@ export function ShotEditorCard({
         contextValue={textExtraContext["end_frame_prompt"] ?? ""}
         onContextChange={(v) => setTextExtraContext((prev) => ({ ...prev, end_frame_prompt: v }))}
         onOpenEditor={() => setEditorField("end_frame_prompt")}
+        productionBibleId={productionBibleId}
       />
       <EditableField
         label="Motion Prompt"
@@ -1007,6 +1009,7 @@ export function ShotEditorCard({
         contextValue={textExtraContext["video_motion_prompt"] ?? ""}
         onContextChange={(v) => setTextExtraContext((prev) => ({ ...prev, video_motion_prompt: v }))}
         onOpenEditor={() => setEditorField("video_motion_prompt")}
+        productionBibleId={productionBibleId}
       />
       <EditableField
         label="Transition Notes"
@@ -1021,6 +1024,7 @@ export function ShotEditorCard({
         contextValue={textExtraContext["transition_notes"] ?? ""}
         onContextChange={(v) => setTextExtraContext((prev) => ({ ...prev, transition_notes: v }))}
         onOpenEditor={() => setEditorField("transition_notes")}
+        productionBibleId={productionBibleId}
       />
 
       {/* Prompt details (collapsible) */}

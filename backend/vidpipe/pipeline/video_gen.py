@@ -1040,9 +1040,18 @@ async def _generate_video_comfyui(
         logger.info("Shot %d: submitting to ComfyUI", shot.shot_index)
 
         # Load character reference images (if manifest scene)
+        # TODO: char_ref_bytes loaded but not yet wired into WAN 2.2 I2V workflow.
+        # See docs/camera-pan.md Action 3 for the plan to add ref image support.
         char_ref_bytes: list[bytes] = []
         if scene.production_bible_id:
             char_ref_bytes = await _load_char_ref_images(session, scene)
+
+        # WAN I2V has no reference images — prepend framing safety to motion prompt
+        video_prompt = (
+            "Keep the subject's face and full head visible in frame throughout the entire clip. "
+            "Maintain consistent character appearance and proportions. "
+            + video_prompt
+        )
 
         operation_id = await adapter.submit(
             video_prompt=video_prompt,

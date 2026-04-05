@@ -223,7 +223,9 @@ Each prompt MUST follow this exact structure:
 3. ACTION/POSE: What the character is doing, body position
 4. SETTING: Environment, background elements, including any visible text/signage/screens from key_details
 5. LIGHTING: Light source direction, quality, mood
-6. CAMERA: Shot type (wide/medium/close-up), angle, lens
+6. CAMERA: Shot type (wide/medium/close-up), angle, lens.
+   CRITICAL: The subject's framing must be compatible with the video_motion_prompt's camera movement.
+   If the motion calls for upward camera movement, frame the subject LOW in the composition.
 7. STYLE CUES: Rendering technique details specific to {style} (e.g., line weight, color fills, shading approach, texture)
 8. COLOR PALETTE: Dominant colors that reinforce the {style} aesthetic
 
@@ -233,6 +235,16 @@ The keyframe images already provide the visual context — the motion prompt con
 Focus on: camera movement (pan, dolly, track, crane), subject animation, environmental animation.
 Good example: "Slow dolly forward as the subject turns to face the camera, hair gently blowing in the breeze"
 Bad example: "A blonde woman in anime style turns around in a congressional hearing room" (re-describes visuals)
+
+FRAMING-MOTION SAFETY:
+Camera movement must be compatible with subject positioning in the start keyframe.
+- If camera PANS UP or TILTS UP: position the subject in the LOWER half of the start keyframe
+- If camera PANS DOWN or TILTS DOWN: position the subject in the UPPER half of the start keyframe
+- If camera DOLLIES IN: ensure subject face is clearly visible and centered in start keyframe
+- NEVER generate motion that would push the primary subject's head out of frame
+- PREFER subtle camera movements (slow dolly, gentle tracking) over dramatic pans/tilts
+  when the subject must remain recognizable throughout
+- When in doubt, use a STATIC or SLOW DOLLY camera — these preserve character identity best
 
 GOAL: Ensure all shots maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 
@@ -1152,7 +1164,9 @@ Each prompt MUST follow this exact structure:
 3. ACTION/POSE: What the character is doing, body position
 4. SETTING: Environment, background elements, including any visible text/signage/screens from key_details
 5. LIGHTING: Light source direction, quality, mood
-6. CAMERA: Shot type (wide/medium/close-up), angle, lens
+6. CAMERA: Shot type (wide/medium/close-up), angle, lens.
+   CRITICAL: The subject's framing must be compatible with the video_motion_prompt's camera movement.
+   If the motion calls for upward camera movement, frame the subject LOW in the composition.
 7. STYLE CUES: Rendering technique details specific to {style} (e.g., line weight, color fills, shading approach, texture)
 8. COLOR PALETTE: Dominant colors that reinforce the {style} aesthetic
 
@@ -1162,6 +1176,16 @@ The keyframe images already provide the visual context — the motion prompt con
 Focus on: camera movement (pan, dolly, track, crane), subject animation, environmental animation.
 Good example: "Slow dolly forward as the subject turns to face the camera, hair gently blowing in the breeze"
 Bad example: "A blonde woman in anime style turns around in a congressional hearing room" (re-describes visuals)
+
+FRAMING-MOTION SAFETY:
+Camera movement must be compatible with subject positioning in the start keyframe.
+- If camera PANS UP or TILTS UP: position the subject in the LOWER half of the start keyframe
+- If camera PANS DOWN or TILTS DOWN: position the subject in the UPPER half of the start keyframe
+- If camera DOLLIES IN: ensure subject face is clearly visible and centered in start keyframe
+- NEVER generate motion that would push the primary subject's head out of frame
+- PREFER subtle camera movements (slow dolly, gentle tracking) over dramatic pans/tilts
+  when the subject must remain recognizable throughout
+- When in doubt, use a STATIC or SLOW DOLLY camera — these preserve character identity best
 
 GOAL: Ensure all shots maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 

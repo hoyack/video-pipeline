@@ -37,7 +37,8 @@ WAN_I2V_NEGATIVE_PROMPT = (
     "JPEG artifacts, ugly, deformed, extra fingers, poorly drawn hands, "
     "poorly drawn face, mutated, disfigured, malformed limbs, fused fingers, "
     "motionless scene, cluttered background, three legs, crowded background, "
-    "walking backwards"
+    "walking backwards, head cut off, face out of frame, subject partially visible, "
+    "inconsistent face, cropped head, decapitated framing"
 )
 
 _VIDEO_OUTPUT_KEYS = ("videos", "video", "gifs", "images")
@@ -148,6 +149,7 @@ class ComfyUIVideoAdapter:
             start_frame_bytes: PNG bytes for the start keyframe.
             end_frame_bytes: PNG bytes for the end keyframe (None for I2V).
             char_ref_bytes: List of character reference image bytes (0-2).
+                TODO: Not yet wired into WAN 2.2 I2V workflow — see docs/camera-pan.md Action 3.
             aspect_ratio: "16:9" or "9:16".
             seed: Random seed for reproducibility.
             shot_index: Shot number (for filename prefixes).

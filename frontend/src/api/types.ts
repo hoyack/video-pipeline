@@ -844,6 +844,120 @@ export interface GeneratedSceneResult {
 }
 
 // ============================================================================
+// Phase 28: Voice script, TTS, mix, and lip-sync types
+// ============================================================================
+
+export interface VoiceLineResponse {
+  id: string;
+  voice_script_id: string;
+  production_id: string;
+  scene_number: number | null;
+  scene_id: string | null;
+  shot_number: number | null;
+  shot_id: string | null;
+  line_index: number;
+  line_type: "NARRATION" | "DIALOGUE" | string;
+  speaker_tag: string | null;
+  speaker_name: string | null;
+  cast_binding_id: string | null;
+  actor_voice_profile_id: string | null;
+  character_voice_profile_id: string | null;
+  voice_id: string | null;
+  adapter_type: string;
+  text: string;
+  delivery_notes: string | null;
+  timing_hint: string | null;
+  start_time_seconds: number | null;
+  end_time_seconds: number | null;
+  duration_seconds: number | null;
+  audio_path: string | null;
+  audio_url: string | null;
+  audio_mime_type: string;
+  generation_status: string;
+  lip_sync_mode: "AUTO" | "ALWAYS" | "NEVER" | string;
+  lip_sync_status: string | null;
+  provider_metadata: Record<string, unknown> | null;
+  error_message: string | null;
+  warnings: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VoiceLineUpdate {
+  scene_number?: number | null;
+  shot_number?: number | null;
+  line_type?: "NARRATION" | "DIALOGUE";
+  speaker_tag?: string | null;
+  speaker_name?: string | null;
+  cast_binding_id?: string | null;
+  actor_voice_profile_id?: string | null;
+  character_voice_profile_id?: string | null;
+  voice_id?: string | null;
+  adapter_type?: string | null;
+  text?: string | null;
+  delivery_notes?: string | null;
+  timing_hint?: string | null;
+  start_time_seconds?: number | null;
+  end_time_seconds?: number | null;
+  lip_sync_mode?: "AUTO" | "ALWAYS" | "NEVER";
+}
+
+export interface VoiceMixArtifactResponse {
+  id: string;
+  voice_script_id: string;
+  scene_id: string | null;
+  shot_id: string | null;
+  artifact_type: string;
+  audio_path: string | null;
+  audio_url: string | null;
+  video_path: string | null;
+  duration_seconds: number | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface LipSyncJobResponse {
+  id: string;
+  voice_line_id: string | null;
+  shot_id: string;
+  input_clip_id: string | null;
+  input_audio_path: string;
+  output_clip_path: string | null;
+  adapter_type: string;
+  status: string;
+  eligibility_reason: string | null;
+  metrics_json: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface VoiceScriptResponse {
+  id: string;
+  screenplay_id: string;
+  production_id: string;
+  status: string;
+  version: number;
+  script_model: string | null;
+  source_screenplay_updated_at: string | null;
+  voice_generation_status: string | null;
+  mix_status: string | null;
+  lip_sync_status: string | null;
+  error_message: string | null;
+  lines: VoiceLineResponse[];
+  mix_artifacts: VoiceMixArtifactResponse[];
+  lip_sync_jobs: LipSyncJobResponse[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VoiceScriptActionResponse {
+  voice_script: VoiceScriptResponse;
+  message: string;
+}
+
+// ============================================================================
 // Audio generation types (ElevenLabs adapter)
 // ============================================================================
 

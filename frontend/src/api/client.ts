@@ -55,6 +55,11 @@ import type {
   ScreenplayResponse,
   ScreenplayUpdate,
   GeneratedSceneResult,
+  LipSyncJobResponse,
+  VoiceLineResponse,
+  VoiceLineUpdate,
+  VoiceScriptActionResponse,
+  VoiceScriptResponse,
   VoiceInfo,
   ActorListItem,
   ActorDetail,
@@ -1251,6 +1256,88 @@ export function generateScenesFromScreenplay(
     `/api/productions/${productionId}/screenplay/generate-scenes${qs}`,
     { method: "POST" },
   );
+}
+
+// ============================================================================
+// Voice script API (Phase 28)
+// ============================================================================
+
+/** GET /api/productions/{id}/voice-script — get or auto-create voice script */
+export function getVoiceScript(productionId: string): Promise<VoiceScriptResponse> {
+  return request<VoiceScriptResponse>(`/api/productions/${productionId}/voice-script`);
+}
+
+/** POST /api/productions/{id}/voice-script/generate — generate voice lines from screenplay */
+export function generateVoiceScript(productionId: string, textModel?: string): Promise<VoiceScriptActionResponse> {
+  const body: Record<string, string> = {};
+  if (textModel) body.text_model = textModel;
+  return request<VoiceScriptActionResponse>(
+    `/api/productions/${productionId}/voice-script/generate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** POST /api/voice-scripts/{id}/resolve-bindings — bind lines to cast voices */
+export function resolveVoiceBindings(voiceScriptId: string): Promise<VoiceScriptActionResponse> {
+  return request<VoiceScriptActionResponse>(
+    `/api/voice-scripts/${voiceScriptId}/resolve-bindings`,
+    { method: "POST" },
+  );
+}
+
+/** POST /api/voice-scripts/{id}/generate-audio — generate TTS for pending lines */
+export function generateVoiceScriptAudio(voiceScriptId: string): Promise<VoiceScriptActionResponse> {
+  return request<VoiceScriptActionResponse>(
+    `/api/voice-scripts/${voiceScriptId}/generate-audio`,
+    { method: "POST" },
+  );
+}
+
+/** POST /api/voice-lines/{id}/generate-audio — generate TTS for one line */
+export function generateVoiceLineAudio(voiceLineId: string): Promise<VoiceLineResponse> {
+  return request<VoiceLineResponse>(
+    `/api/voice-lines/${voiceLineId}/generate-audio`,
+    { method: "POST" },
+  );
+}
+
+/** PATCH /api/voice-lines/{id} — edit one voice line */
+export function updateVoiceLine(voiceLineId: string, body: VoiceLineUpdate): Promise<VoiceLineResponse> {
+  return request<VoiceLineResponse>(`/api/voice-lines/${voiceLineId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE /api/voice-lines/{id} — delete one voice line */
+export function deleteVoiceLine(voiceLineId: string): Promise<void> {
+  return request<void>(`/api/voice-lines/${voiceLineId}`, { method: "DELETE" });
+}
+
+/** POST /api/voice-scripts/{id}/mix — build voice stem artifacts */
+export function mixVoiceScript(voiceScriptId: string): Promise<VoiceScriptActionResponse> {
+  return request<VoiceScriptActionResponse>(
+    `/api/voice-scripts/${voiceScriptId}/mix`,
+    { method: "POST" },
+  );
+}
+
+/** POST /api/voice-scripts/{id}/lip-sync — create lip-sync jobs */
+export function lipSyncVoiceScript(voiceScriptId: string, adapterType = "FAKE"): Promise<VoiceScriptActionResponse> {
+  return request<VoiceScriptActionResponse>(
+    `/api/voice-scripts/${voiceScriptId}/lip-sync?adapter_type=${encodeURIComponent(adapterType)}`,
+    { method: "POST" },
+  );
+}
+
+/** GET /api/voice-scripts/{id}/jobs — list lip-sync jobs */
+export function getVoiceScriptJobs(voiceScriptId: string): Promise<LipSyncJobResponse[]> {
+  return request<LipSyncJobResponse[]>(`/api/voice-scripts/${voiceScriptId}/jobs`);
 }
 
 // ============================================================================

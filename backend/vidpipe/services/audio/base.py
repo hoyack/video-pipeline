@@ -42,6 +42,11 @@ class AudioAdapter(ABC):
         *,
         style_notes: Optional[str] = None,
         model_id: Optional[str] = None,
+        previous_text: Optional[str] = None,
+        next_text: Optional[str] = None,
+        output_format: Optional[str] = None,
+        voice_settings: Optional[dict] = None,
+        seed: Optional[int] = None,
     ) -> bytes:
         """Generate TTS audio from text using the specified voice.
 
@@ -50,6 +55,11 @@ class AudioAdapter(ABC):
             text: Text to convert to speech.
             style_notes: Optional style direction for the voice.
             model_id: Optional model override (provider-specific).
+            previous_text: Optional preceding line context.
+            next_text: Optional following line context.
+            output_format: Optional provider output format.
+            voice_settings: Optional provider voice controls.
+            seed: Optional deterministic seed where supported.
 
         Returns:
             Raw audio bytes (MP3 format).

@@ -18,6 +18,7 @@ from vidpipe.api.sequences import sequence_router
 from vidpipe.api.characters import character_router
 from vidpipe.api.sets_props import sets_props_router
 from vidpipe.api.screenplay import screenplay_router
+from vidpipe.api.voice_script import voice_script_router
 from vidpipe.api.sound import sound_router
 from vidpipe.api.audio_gen import audio_gen_router
 from vidpipe.api.bindings import bindings_router
@@ -79,6 +80,7 @@ app.include_router(sequence_router)
 app.include_router(character_router)
 app.include_router(sets_props_router)
 app.include_router(screenplay_router)
+app.include_router(voice_script_router)
 
 app.include_router(sound_router)
 app.include_router(audio_gen_router)

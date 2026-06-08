@@ -13,13 +13,15 @@ import {
   updateScreenplayStatus,
   generateScenesFromScreenplay,
 } from "../api/client.ts";
+import { VoiceScriptTab } from "./VoiceScriptTab.tsx";
 
 interface ScreenplayEditorProps {
   productionId: string;
   onScenesGenerated?: () => void;
 }
 
-type TabId = "logline" | "treatment" | "characters" | "breakdown" | "script" | "shotlist";
+type TabId = "logline" | "treatment" | "characters" | "breakdown" | "script" | "shotlist" | "voice";
+type RegenerableTabId = Exclude<TabId, "voice">;
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "logline", label: "Logline" },
@@ -28,10 +30,11 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "breakdown", label: "Scene Breakdown" },
   { id: "script", label: "Script" },
   { id: "shotlist", label: "Shot List" },
+  { id: "voice", label: "Voice" },
 ];
 
 // Map tab IDs to the API step name for generation
-const TAB_TO_STEP: Record<TabId, string> = {
+const TAB_TO_STEP: Record<RegenerableTabId, string> = {
   logline: "logline",
   treatment: "treatment",
   characters: "character-breakdowns",
@@ -99,7 +102,7 @@ export function ScreenplayEditor({ productionId, onScenesGenerated }: Screenplay
 
   // ----- Regeneration -----
 
-  async function handleRegenerate(tab: TabId) {
+  async function handleRegenerate(tab: RegenerableTabId) {
     if (isLocked) return;
     const step = TAB_TO_STEP[tab];
     setRegenerating(step);
@@ -355,6 +358,9 @@ export function ScreenplayEditor({ productionId, onScenesGenerated }: Screenplay
             onRegenerate={() => handleRegenerate("shotlist")}
             onSave={(data) => saveField("shot_list", data)}
           />
+        )}
+        {activeTab === "voice" && (
+          <VoiceScriptTab productionId={productionId} screenplay={screenplay} />
         )}
       </div>
     </div>

@@ -809,6 +809,136 @@ class Screenplay(Base):
     )
 
 
+class VoiceScript(Base):
+    """Generated voice script attached 1:1 to a screenplay.
+
+    Stores narration and dialogue lines separately from the screenplay text so
+    they can be edited, bound to cast voices, rendered, mixed, and lip-synced.
+    """
+    __tablename__ = "voice_scripts"
+    __table_args__ = (
+        UniqueConstraint("screenplay_id", name="uq_voice_scripts_screenplay_id"),
+        Index("idx_voice_scripts_production", "production_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    screenplay_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("screenplays.id"), index=True)
+    production_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("productions.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    script_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_screenplay_updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    voice_generation_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    mix_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    lip_sync_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now()
+    )
+
+
+class VoiceLine(Base):
+    """A narration or dialogue line that can be rendered by a TTS provider."""
+    __tablename__ = "voice_lines"
+    __table_args__ = (
+        Index("idx_voice_lines_script_order", "voice_script_id", "line_index"),
+        Index("idx_voice_lines_scene_order", "scene_id", "line_index"),
+        Index("idx_voice_lines_shot_order", "shot_id", "line_index"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    voice_script_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("voice_scripts.id"), index=True)
+    production_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("productions.id"), index=True)
+    scene_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    scene_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scenes.id"), nullable=True, index=True)
+    shot_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    shot_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("shots.id"), nullable=True, index=True)
+    line_index: Mapped[int] = mapped_column(Integer)
+    line_type: Mapped[str] = mapped_column(String(20), default="DIALOGUE")
+    speaker_tag: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    speaker_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cast_binding_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("cast_bindings.id"), nullable=True, index=True
+    )
+    actor_voice_profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("actor_voice_profiles.id"), nullable=True, index=True
+    )
+    character_voice_profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("voice_profiles.id"), nullable=True, index=True
+    )
+    voice_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    adapter_type: Mapped[str] = mapped_column(String(50), default="ELEVENLABS")
+    text: Mapped[str] = mapped_column(Text)
+    delivery_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    timing_hint: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    start_time_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    end_time_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    audio_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    audio_mime_type: Mapped[str] = mapped_column(String(50), default="audio/mpeg")
+    generation_status: Mapped[str] = mapped_column(String(32), default="PENDING", index=True)
+    lip_sync_mode: Mapped[str] = mapped_column(String(20), default="AUTO")
+    lip_sync_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    provider_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now()
+    )
+
+
+class VoiceMixArtifact(Base):
+    """Rendered voice stem or mixed audio artifact for a voice script."""
+    __tablename__ = "voice_mix_artifacts"
+    __table_args__ = (
+        Index("idx_voice_mix_script", "voice_script_id"),
+        Index("idx_voice_mix_scene", "scene_id"),
+        Index("idx_voice_mix_shot", "shot_id"),
+        Index("idx_voice_mix_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    voice_script_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("voice_scripts.id"), index=True)
+    scene_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scenes.id"), nullable=True, index=True)
+    shot_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("shots.id"), nullable=True, index=True)
+    artifact_type: Mapped[str] = mapped_column(String(40), default="SCENE_VOICE_STEM")
+    audio_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="READY")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class LipSyncJob(Base):
+    """Tracks a post-video lip-sync operation for one voice line and shot."""
+    __tablename__ = "lip_sync_jobs"
+    __table_args__ = (
+        Index("idx_lip_sync_line", "voice_line_id"),
+        Index("idx_lip_sync_shot", "shot_id"),
+        Index("idx_lip_sync_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    voice_line_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("voice_lines.id"), nullable=True, index=True
+    )
+    shot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("shots.id"), index=True)
+    input_clip_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("video_clips.id"), nullable=True, index=True
+    )
+    input_audio_path: Mapped[str] = mapped_column(String(500))
+    output_clip_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    adapter_type: Mapped[str] = mapped_column(String(50), default="FAKE")
+    status: Mapped[str] = mapped_column(String(32), default="QUEUED")
+    eligibility_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metrics_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class Scene(Base):
     """Scene model representing a video generation scene.
 

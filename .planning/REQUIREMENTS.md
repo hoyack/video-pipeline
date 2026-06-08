@@ -382,16 +382,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ## Voice Script, TTS, and Lip Sync Layer
 
-- [ ] **VOICE-01**: VoiceScript and VoiceLine persistence supports one active editable voice script per production screenplay with ordered narration/dialogue lines and stale-source tracking
-- [ ] **VOICE-02**: Dialogue VoiceLine binding resolves speaker tags to Production Bible CastBinding rows and snapshots selected ActorVoiceProfile or bible-scoped VoiceProfile data
-- [ ] **VOICE-03**: Voice script generation creates structured narration and dialogue lines from Screenplay content, shot list, and Production Bible bindings without inventing provider voice IDs
-- [ ] **VOICE-04**: Screenplay editor includes a Voice tab for generating, editing, binding, locking, previewing, and regenerating voice lines
-- [ ] **VOICE-05**: ElevenLabs TTS generation works per line and per script, stores playable audio artifacts, measures duration, and reports provider/auth/quota/missing-voice errors at line level
-- [ ] **VOICE-06**: Voice mix artifacts can be built from generated lines with deterministic timing, ffmpeg mixing, storage-backed playback, and optional overlay onto shot or scene video without overwriting originals
-- [ ] **VOICE-07**: LipSyncAdapter abstraction and LipSyncJob persistence support optional post-video lip-sync for eligible single-speaker character dialogue while preserving original clips
-- [ ] **VOICE-08**: UI and API expose voice generation, mix, and lip-sync progress/status including unresolved speaker, missing voice, overlong audio, skipped lip-sync, and failed provider warnings
+- [x] **VOICE-01**: VoiceScript and VoiceLine persistence supports one active editable voice script per production screenplay with ordered narration/dialogue lines and stale-source tracking
+- [x] **VOICE-02**: Dialogue VoiceLine binding resolves speaker tags to Production Bible CastBinding rows and snapshots selected ActorVoiceProfile or bible-scoped VoiceProfile data
+- [x] **VOICE-03**: Voice script generation creates structured narration and dialogue lines from Screenplay content, shot list, and Production Bible bindings without inventing provider voice IDs
+- [x] **VOICE-04**: Screenplay editor includes a Voice tab for generating, editing, binding, locking, previewing, and regenerating voice lines
+- [x] **VOICE-05**: ElevenLabs TTS generation works per line and per script, stores playable audio artifacts, measures duration, and reports provider/auth/quota/missing-voice errors at line level
+- [x] **VOICE-06**: Voice mix artifacts can be built from generated lines with deterministic timing, ffmpeg mixing, storage-backed playback, and optional overlay onto shot or scene video without overwriting originals
+- [x] **VOICE-07**: LipSyncAdapter abstraction and LipSyncJob persistence support optional post-video lip-sync for eligible single-speaker character dialogue while preserving original clips
+- [x] **VOICE-08**: UI and API expose voice generation, mix, and lip-sync progress/status including unresolved speaker, missing voice, overlong audio, skipped lip-sync, and failed provider warnings
 
 **Coverage:
+
 - v1 requirements: 41 total (all complete)
 - LLM Provider Abstraction: 7 total (all complete)
 - Storyboard Asset Binding: 4 total (all complete)

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vidpipe.config import settings
-from vidpipe.db.models import Scene, Shot, VideoClip
+from vidpipe.db.models import LipSyncJob, Scene, Shot, VideoClip
 from vidpipe.services.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
@@ -67,14 +67,26 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
     # Get clip paths — for S3, download to local temp if needed
     clip_paths: list[Path] = []
     for clip in clips:
+        lip_sync_result = await session.execute(
+            select(LipSyncJob)
+            .where(LipSyncJob.input_clip_id == clip.id)
+            .where(LipSyncJob.status == "READY")
+            .where(LipSyncJob.output_clip_path.isnot(None))
+            .order_by(LipSyncJob.completed_at.desc().nullslast(), LipSyncJob.created_at.desc())
+        )
+        lip_sync_job = lip_sync_result.scalars().first()
+        clip_path = lip_sync_job.output_clip_path if lip_sync_job and lip_sync_job.output_clip_path else clip.local_path
         if isinstance(storage, LocalStorageBackend):
-            clip_paths.append(Path(clip.local_path))
+            if lip_sync_job and lip_sync_job.output_clip_path:
+                clip_paths.append(storage.resolve_local_path(lip_sync_job.output_clip_path))
+            else:
+                clip_paths.append(Path(clip_path))
         else:
             # S3 mode: try local temp copy first, download if missing
-            local_path = file_mgr.base_dir / clip.local_path
+            local_path = file_mgr.base_dir / clip_path
             if not local_path.exists():
                 local_path.parent.mkdir(parents=True, exist_ok=True)
-                clip_data = await storage.get(clip.local_path)
+                clip_data = await storage.get(clip_path)
                 local_path.write_bytes(clip_data)
             clip_paths.append(local_path)
 

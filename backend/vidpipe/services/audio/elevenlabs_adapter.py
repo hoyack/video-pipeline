@@ -7,6 +7,7 @@ sound effects generation, and voice listing.
 from __future__ import annotations
 
 import logging
+import inspect
 from typing import Optional
 
 import httpx
@@ -37,14 +38,33 @@ class ElevenLabsAdapter(AudioAdapter):
         *,
         style_notes: Optional[str] = None,
         model_id: Optional[str] = None,
+        previous_text: Optional[str] = None,
+        next_text: Optional[str] = None,
+        output_format: Optional[str] = None,
+        voice_settings: Optional[dict] = None,
+        seed: Optional[int] = None,
     ) -> bytes:
         """Generate TTS audio via ElevenLabs text-to-speech API."""
         try:
-            response = self._client.text_to_speech.convert(
-                voice_id=voice_id,
-                text=text,
-                model_id=model_id or "eleven_multilingual_v2",
-            )
+            kwargs: dict = {
+                "voice_id": voice_id,
+                "text": text,
+                "model_id": model_id or "eleven_multilingual_v2",
+            }
+            if previous_text:
+                kwargs["previous_text"] = previous_text
+            if next_text:
+                kwargs["next_text"] = next_text
+            if output_format:
+                kwargs["output_format"] = output_format
+            if voice_settings:
+                kwargs["voice_settings"] = voice_settings
+            if seed is not None:
+                kwargs["seed"] = seed
+
+            response = self._client.text_to_speech.convert(**kwargs)
+            if inspect.isawaitable(response):
+                response = await response
             # SDK v2.x returns an async iterator of bytes chunks
             chunks: list[bytes] = []
             async for chunk in response:

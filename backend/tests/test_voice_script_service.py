@@ -233,6 +233,8 @@ async def test_generate_line_audio_stores_audio_asset(session_factory):
         assert updated.audio_path is not None
         storage = get_storage_backend()
         assert await storage.exists(updated.audio_path)
+        voice_script = (await session.execute(select(VoiceScript))).scalar_one()
+        assert voice_script.voice_generation_status == "READY"
 
 
 @pytest.mark.asyncio
@@ -258,6 +260,8 @@ async def test_generate_line_audio_retains_existing_audio_on_regeneration_failur
         assert updated.duration_seconds == 1.5
         assert updated.error_message is not None
         assert "existing audio retained" in updated.error_message
+        voice_script = (await session.execute(select(VoiceScript))).scalar_one()
+        assert voice_script.voice_generation_status == "READY"
 
 
 @pytest.mark.asyncio

@@ -324,6 +324,7 @@ class VoiceScriptService:
         if not line.voice_id:
             line.generation_status = "SKIPPED"
             line.error_message = "No voice_id assigned"
+            await self._update_voice_generation_status(session, line.voice_script_id)
             await session.commit()
             return line
 
@@ -359,6 +360,7 @@ class VoiceScriptService:
                 line.generation_status = "FAILED"
                 line.error_message = str(exc)[:500]
             logger.exception("Voice line generation failed for %s", line.id)
+        await self._update_voice_generation_status(session, line.voice_script_id)
         await session.commit()
         await session.refresh(line)
         return line
@@ -390,13 +392,30 @@ class VoiceScriptService:
                     api_key=api_key,
                 )
             )
-        voice_script.voice_generation_status = (
-            "READY"
-            if generated and all(line.generation_status in {"READY", "SKIPPED"} for line in lines)
-            else "PARTIAL"
-        )
+        await self._update_voice_generation_status(session, voice_script.id)
         await session.commit()
         return generated
+
+    async def _update_voice_generation_status(
+        self,
+        session: AsyncSession,
+        voice_script_id: uuid.UUID,
+    ) -> None:
+        voice_script = await self.get_script_by_id(session, voice_script_id)
+        lines = await self.list_lines(session, voice_script_id)
+        statuses = {line.generation_status for line in lines}
+        if not statuses:
+            voice_script.voice_generation_status = "PENDING"
+        elif statuses <= {"READY", "SKIPPED"}:
+            voice_script.voice_generation_status = "READY" if "READY" in statuses else "SKIPPED"
+        elif "READY" in statuses or "SKIPPED" in statuses:
+            voice_script.voice_generation_status = "PARTIAL"
+        elif "GENERATING" in statuses:
+            voice_script.voice_generation_status = "GENERATING"
+        elif "FAILED" in statuses:
+            voice_script.voice_generation_status = "FAILED"
+        else:
+            voice_script.voice_generation_status = "PENDING"
 
     async def build_mix_artifacts(
         self,

@@ -234,4 +234,6 @@ async def test_mix_and_fake_lip_sync_create_ui_visible_artifacts(session_factory
         assert len(jobs) == 1
         assert jobs[0].status == "READY"
         assert jobs[0].output_clip_path is not None
+        assert jobs[0].completed_at is not None
+        assert jobs[0].completed_at.tzinfo is None
         assert (await session.execute(select(LipSyncJob))).scalars().first() is not None

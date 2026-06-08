@@ -512,7 +512,7 @@ class VoiceScriptService:
             job.output_clip_path = output_key
             job.metrics_json = result.metrics
             job.status = "READY"
-            job.completed_at = datetime.now(UTC)
+            job.completed_at = datetime.now(UTC).replace(tzinfo=None)
         except Exception as exc:
             job.status = "FAILED"
             job.error_message = str(exc)[:500]

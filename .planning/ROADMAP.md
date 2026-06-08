@@ -41,6 +41,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 25: LoRA Training Infrastructure** - Per-actor LoRA training pipeline with dataset prep, pluggable training backend (Replicate API), training job management, Actor model extensions (completed 2026-03-14)
 - [x] **Phase 26: Asset Tag Frontend Enhancements** - @tag autocomplete in scene editor, tag preview panel, LoRA training status UI, Production Bible tag reference sheet (completed 2026-03-14)
 - [ ] **Phase 27: Storyboard Performance Optimization** - Split monolithic storyboard Call #3 into parallel per-shot calls, add per-shot progress events, skip screenwriter agent for simple scenes, eliminate redundant schema fields
+- [ ] **Phase 28: Voice Script, TTS, and Lip Sync Layer** - Structured voice scripts bound to Production Bible cast voices, ElevenLabs line generation, voice mixing, and optional post-video lip-sync
 
 ## Phase Details
 
@@ -131,6 +132,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → ... → 16
 | 25. LoRA Training Infrastructure | 2/2 | Complete    | 2026-03-14 |
 | 26. Asset Tag Frontend | 3/3 | Complete    | 2026-03-14 |
 | 27. Storyboard Performance | 0/0 | ○ Planned | — |
+| 28. Voice Script, TTS, and Lip Sync | 0/2 | ○ Planned | — |
 
 ### Phase 4: Manifest System Foundation
 **Goal**: Manifests exist as standalone, reusable entities with CRUD API, database storage, and a frontend Manifest Library view with filter/sort plus a Manifest Creator that supports Stage 1 (upload + tag, no processing yet)
@@ -580,3 +582,21 @@ Plans:
   3. Screenwriter agent (Calls #1-2) is skipped when `dynamic_shot_count=False` and scene has a single shot, saving 30-80 seconds
   4. Redundant `characters[]` and `style_guide` generation removed from per-shot output (uses existing actor/binding data instead)
 **Plans**: 0 plans
+
+### Phase 28: Voice Script, TTS, and Lip Sync Layer
+**Goal**: Productions have an editable voice script layer that binds narration and character dialogue to Production Bible cast voices, generates ElevenLabs audio, mixes voice into generated video, and supports an optional post-video lip-sync pass for eligible character dialogue
+**Depends on**: Phase 18, Phase 22, Phase 23
+**Requirements**: VOICE-01, VOICE-02, VOICE-03, VOICE-04, VOICE-05, VOICE-06, VOICE-07, VOICE-08
+**PRD**: `docs/voice-plan.md`
+**Success Criteria** (what must be TRUE):
+  1. Productions can store a persistent editable VoiceScript with ordered VoiceLine rows for narration and dialogue
+  2. Dialogue lines resolve speaker tags to CastBinding rows and use ActorVoiceProfile or VoiceProfile data for ElevenLabs generation
+  3. Screenplay UI exposes a Voice tab where users can generate, edit, bind, preview, and regenerate voice lines
+  4. Line-level ElevenLabs generation stores playable audio artifacts and surfaces missing API key, missing voice, quota, and provider errors clearly
+  5. Voice mix artifacts can be built from generated lines with ffmpeg and overlaid onto shot or scene videos without overwriting originals
+  6. Lip-sync jobs are represented through an adapter boundary and can queue/skip eligible character dialogue with explicit reasons
+**Plans**: 2 plans in 2 waves
+
+Plans:
+- [ ] 28-01-PLAN.md — VoiceScript/VoiceLine foundation, binding resolution, ElevenLabs line generation, and Screenplay Voice tab
+- [ ] 28-02-PLAN.md — Voice mixing artifacts, ffmpeg overlay path, lip-sync job model, adapter boundary, and UI status integration

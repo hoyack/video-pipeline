@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
+status: Awaiting next milestone
 stopped_at: Completed 26-03-PLAN.md
-last_updated: "2026-03-14T23:28:25.009Z"
-last_activity: 2026-03-14 — Completed 26-03 (Tag Click Handler)
+last_updated: "2026-06-08T01:57:40.832Z"
+last_activity: 2026-06-08 — Milestone v1.0 completed and archived
 progress:
-  total_phases: 26
+  total_phases: 27
   completed_phases: 26
   total_plans: 73
   completed_plans: 73
-  percent: 100
+  percent: 96
 ---
 
 # Project State
@@ -25,16 +25,15 @@ See: .planning/PROJECT.md (updated 2026-02-14)
 
 ## Current Position
 
-Phase: 26 of 26 (Asset Tag Frontend Enhancements)
-Plan: 3 of 3 complete
-Status: Phase 26 Complete
-Last activity: 2026-03-14 — Completed 26-03 (Tag Click Handler)
-
-Progress: [██████████] 100% (Phase 26, Plan 3 of 3)
+Phase: Milestone v1.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-08 — Milestone v1.0 completed and archived
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 43
 - Average duration: 2.7 min
 - Total execution time: 1.82 hours
@@ -60,6 +59,7 @@ Progress: [██████████] 100% (Phase 26, Plan 3 of 3)
 | 15-video-generation-editor | 3/3 | 14.0 min | 4.7 min |
 
 **Recent Trend:**
+
 - Last 5 plans: 13-03 (3.0min), 15-01 (4.0min), 15-02 (4.0min), 15-03 (6.0min)
 - Trend: Phase 15 COMPLETE — Video Generation Editor fully built
 
@@ -362,14 +362,17 @@ None yet.
 ### Blockers/Concerns
 
 **Phase 1:**
+
 - ~~SQLite WAL mode must be enabled from first migration to prevent database corruption during crashes~~ ✓ Resolved in 01-03
 
 **Phase 2:**
+
 - Rate limiting on Vertex AI free tier may require quota increase or billing enablement for production use
 - ADC authentication requires GOOGLE_APPLICATION_CREDENTIALS environment variable in production
 - ffmpeg must be installed on deployment environment (validated at startup with clear error message)
 
 **Phase 3:**
+
 - ~~Cost estimation ($15 per 5-scene project) should be communicated to users before generation starts~~ ✓ Resolved in 03-02 (cost warning in CLI)
 
 ## Session Continuity
@@ -377,3 +380,23 @@ None yet.
 Last session: 2026-03-14T23:25:06.412Z
 Stopped at: Completed 26-03-PLAN.md
 Resume file: None
+
+## Deferred Items
+
+Auto-close acknowledged on 2026-06-07 via `lets complete everything --auto`.
+
+| Category | Item | Status |
+|----------|------|--------|
+| UAT gap | Phase 16 - 16-UAT.md | diagnosed; 0 pending scenarios |
+| UAT gap | Phase 17 - 17-UAT.md | diagnosed; 0 pending scenarios |
+| UAT gap | Phase 26 - 26-UAT.md | testing; 7 pending scenarios |
+| Verification gap | Phase 16 - 16-VERIFICATION.md | gaps_found |
+| Verification gap | Phase 26 - 26-VERIFICATION.md | human_needed |
+| Requirement gap | SBPERF-01 | storyboard parallel per-shot LLM calls not completed |
+| Requirement gap | SBPERF-02 | per-shot `shot_text_ready` SSE progress not completed |
+| Requirement gap | SBPERF-03 | single-shot screenwriter skip not completed |
+| Requirement gap | SBPERF-04 | per-shot output schema cleanup not completed |
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

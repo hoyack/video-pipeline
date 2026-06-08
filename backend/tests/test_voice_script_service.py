@@ -1,6 +1,12 @@
 """Tests for Phase 28 voice script, TTS, mix, and lip-sync services."""
 
+import math
+import shutil
+import struct
+import subprocess
 import uuid
+import wave
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -62,6 +68,65 @@ class FakeAudioAdapter(AudioAdapter):
 
     async def get_voice(self, voice_id: str) -> VoiceProfileInfo:
         raise NotImplementedError
+
+
+def _write_tone_mp3(path: Path, duration_seconds: float = 0.5) -> bytes:
+    """Create a small non-silent MP3 fixture that browser audio controls can decode."""
+    sample_rate = 44_100
+    wav_path = path.with_suffix(".wav")
+    with wave.open(str(wav_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        total_samples = int(sample_rate * duration_seconds)
+        for index in range(total_samples):
+            sample = int(12_000 * math.sin(2 * math.pi * 440 * index / sample_rate))
+            wav_file.writeframes(struct.pack("<h", sample))
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required to build MP3 voice fixtures")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(wav_path),
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            "64k",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path.read_bytes()
+
+
+def _assert_non_silent_audio(path: Path) -> None:
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required to inspect MP3 voice fixtures")
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-i",
+            str(path),
+            "-af",
+            "volumedetect",
+            "-f",
+            "null",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "max_volume: -" in result.stderr
+    assert "max_volume: -inf" not in result.stderr
 
 
 @pytest_asyncio.fixture
@@ -223,7 +288,8 @@ async def test_mix_and_fake_lip_sync_create_ui_visible_artifacts(session_factory
         )
         session.add(line)
         await session.flush()
-        await storage.put(line.audio_path, b"fake-mp3", "audio/mpeg")
+        fixture_audio_path = settings.storage.tmp_dir / "audible-line.mp3"
+        await storage.put(line.audio_path, _write_tone_mp3(fixture_audio_path), "audio/mpeg")
 
         artifacts = await service.build_mix_artifacts(session, voice_script.id)
         jobs = await service.queue_lip_sync_jobs(session, voice_script.id, adapter_type="FAKE")
@@ -231,6 +297,7 @@ async def test_mix_and_fake_lip_sync_create_ui_visible_artifacts(session_factory
         assert len(artifacts) == 1
         assert artifacts[0].status == "READY"
         assert artifacts[0].audio_path is not None
+        _assert_non_silent_audio(settings.storage.tmp_dir / artifacts[0].audio_path)
         assert len(jobs) == 1
         assert jobs[0].status == "READY"
         assert jobs[0].output_clip_path is not None

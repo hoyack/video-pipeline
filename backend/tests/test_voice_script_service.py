@@ -70,6 +70,20 @@ class FakeAudioAdapter(AudioAdapter):
         raise NotImplementedError
 
 
+class FailingAudioAdapter(AudioAdapter):
+    async def generate_voice(self, voice_id: str, text: str, **kwargs) -> bytes:
+        raise RuntimeError("provider rejected voice id")
+
+    async def generate_sfx(self, prompt: str, **kwargs) -> bytes:
+        raise NotImplementedError
+
+    async def list_voices(self, **kwargs) -> list[VoiceProfileInfo]:
+        return []
+
+    async def get_voice(self, voice_id: str) -> VoiceProfileInfo:
+        raise NotImplementedError
+
+
 def _write_tone_mp3(path: Path, duration_seconds: float = 0.5) -> bytes:
     """Create a small non-silent MP3 fixture that browser audio controls can decode."""
     sample_rate = 44_100
@@ -219,6 +233,31 @@ async def test_generate_line_audio_stores_audio_asset(session_factory):
         assert updated.audio_path is not None
         storage = get_storage_backend()
         assert await storage.exists(updated.audio_path)
+
+
+@pytest.mark.asyncio
+async def test_generate_line_audio_retains_existing_audio_on_regeneration_failure(session_factory):
+    service = VoiceScriptService()
+    async with session_factory() as session:
+        production = await _seed_voice_production(session)
+        await service.generate_from_screenplay(session, production.id, FakeLLMAdapter())
+        line = (await session.execute(select(VoiceLine))).scalar_one()
+        line.audio_path = f"productions/{production.id}/voice/test-existing.mp3"
+        line.duration_seconds = 1.5
+        line.generation_status = "READY"
+        await session.commit()
+
+        updated = await service.generate_line_audio(
+            session,
+            line.id,
+            audio_adapter=FailingAudioAdapter(),
+        )
+
+        assert updated.generation_status == "READY"
+        assert updated.audio_path == line.audio_path
+        assert updated.duration_seconds == 1.5
+        assert updated.error_message is not None
+        assert "existing audio retained" in updated.error_message
 
 
 @pytest.mark.asyncio

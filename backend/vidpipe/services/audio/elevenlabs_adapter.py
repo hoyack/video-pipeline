@@ -73,7 +73,7 @@ class ElevenLabsAdapter(AudioAdapter):
         except httpx.HTTPStatusError as e:
             _raise_domain_error(e)
         except Exception as e:
-            raise AudioAdapterError(f"ElevenLabs TTS failed: {e}") from e
+            _raise_sdk_error(e, "TTS")
 
     async def generate_sfx(
         self,
@@ -94,7 +94,7 @@ class ElevenLabsAdapter(AudioAdapter):
         except httpx.HTTPStatusError as e:
             _raise_domain_error(e)
         except Exception as e:
-            raise AudioAdapterError(f"ElevenLabs SFX generation failed: {e}") from e
+            _raise_sdk_error(e, "SFX generation")
 
     async def list_voices(
         self,
@@ -120,7 +120,7 @@ class ElevenLabsAdapter(AudioAdapter):
         except httpx.HTTPStatusError as e:
             _raise_domain_error(e)
         except Exception as e:
-            raise AudioAdapterError(f"ElevenLabs voice list failed: {e}") from e
+            _raise_sdk_error(e, "voice list")
 
     async def get_voice(self, voice_id: str) -> VoiceProfileInfo:
         """Get details for a specific ElevenLabs voice."""
@@ -135,7 +135,7 @@ class ElevenLabsAdapter(AudioAdapter):
         except httpx.HTTPStatusError as e:
             _raise_domain_error(e)
         except Exception as e:
-            raise AudioAdapterError(f"ElevenLabs voice get failed: {e}") from e
+            _raise_sdk_error(e, "voice get")
 
 
 def _raise_domain_error(e: httpx.HTTPStatusError) -> None:
@@ -147,3 +147,31 @@ def _raise_domain_error(e: httpx.HTTPStatusError) -> None:
     if status == 429:
         raise AudioQuotaError(f"ElevenLabs rate limit exceeded: {detail}") from e
     raise AudioAdapterError(f"ElevenLabs API error ({status}): {detail}") from e
+
+
+def _raise_sdk_error(e: Exception, operation: str) -> None:
+    """Convert ElevenLabs SDK ApiError objects to concise domain errors."""
+    status = getattr(e, "status_code", None)
+    body = getattr(e, "body", None)
+    if status is None:
+        raise AudioAdapterError(f"ElevenLabs {operation} failed: {e}") from e
+
+    detail = _extract_error_message(body) or str(e)
+    if status == 401:
+        raise AudioAuthError(f"Invalid ElevenLabs API key: {detail}") from e
+    if status == 429:
+        raise AudioQuotaError(f"ElevenLabs rate limit exceeded: {detail}") from e
+    raise AudioAdapterError(f"ElevenLabs API error ({status}): {detail}") from e
+
+
+def _extract_error_message(body: object) -> str | None:
+    if isinstance(body, dict):
+        detail = body.get("detail")
+        if isinstance(detail, dict):
+            message = detail.get("message")
+            if isinstance(message, str) and message:
+                return message
+        message = body.get("message")
+        if isinstance(message, str) and message:
+            return message
+    return None

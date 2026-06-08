@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-import pytest_asyncio
 
 from vidpipe.services.audio.base import (
     AudioAdapterError,
@@ -50,6 +49,13 @@ def adapter(mock_client):
 async def _async_iter(chunks: list[bytes]):
     for chunk in chunks:
         yield chunk
+
+
+class FakeElevenLabsApiError(Exception):
+    def __init__(self, status_code: int, body: dict):
+        super().__init__("headers: noisy-provider-headers")
+        self.status_code = status_code
+        self.body = body
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +122,29 @@ async def test_generate_voice_quota_error(adapter, mock_client):
 
     with pytest.raises(AudioQuotaError, match="rate limit"):
         await adapter.generate_voice("v1", "text")
+
+
+@pytest.mark.asyncio
+async def test_generate_voice_sdk_api_error_uses_provider_message(adapter, mock_client):
+    """TTS SDK ApiError body is surfaced without dumping response headers."""
+    mock_client.text_to_speech.convert = AsyncMock(
+        side_effect=FakeElevenLabsApiError(
+            400,
+            {
+                "detail": {
+                    "message": "An invalid ID has been received: 'bad-voice'.",
+                }
+            },
+        )
+    )
+
+    with pytest.raises(AudioAdapterError) as exc_info:
+        await adapter.generate_voice("bad-voice", "text")
+
+    message = str(exc_info.value)
+    assert "ElevenLabs API error (400)" in message
+    assert "An invalid ID has been received" in message
+    assert "headers:" not in message
 
 
 # ---------------------------------------------------------------------------

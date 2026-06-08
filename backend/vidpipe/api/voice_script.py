@@ -385,6 +385,8 @@ def _line_warnings(line: VoiceLine) -> list[str]:
         warnings.append("No voice assigned")
     if line.line_type == "DIALOGUE" and line.lip_sync_mode != "NEVER" and line.shot_id is None:
         warnings.append("No linked shot for lip-sync")
+    if line.generation_status == "READY" and line.error_message:
+        warnings.append(line.error_message)
     if line.generation_status == "FAILED" and line.error_message:
         warnings.append(line.error_message)
     return warnings

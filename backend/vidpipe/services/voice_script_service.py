@@ -327,6 +327,8 @@ class VoiceScriptService:
             await session.commit()
             return line
 
+        existing_audio_path = line.audio_path
+        existing_duration_seconds = line.duration_seconds
         line.generation_status = "GENERATING"
         line.error_message = None
         await session.flush()
@@ -348,8 +350,14 @@ class VoiceScriptService:
             line.generation_status = "READY"
             line.error_message = None
         except (AudioAdapterError, Exception) as exc:
-            line.generation_status = "FAILED"
-            line.error_message = str(exc)[:500]
+            if existing_audio_path:
+                line.audio_path = existing_audio_path
+                line.duration_seconds = existing_duration_seconds
+                line.generation_status = "READY"
+                line.error_message = f"Regeneration failed; existing audio retained: {exc}"[:500]
+            else:
+                line.generation_status = "FAILED"
+                line.error_message = str(exc)[:500]
             logger.exception("Voice line generation failed for %s", line.id)
         await session.commit()
         await session.refresh(line)

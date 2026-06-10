@@ -1,18 +1,27 @@
 # vidpipe
 
-AI-powered multi-scene video generation pipeline. Takes a text prompt and produces a cohesive short video with visual continuity across scenes — fully automated, crash-safe, and resumable.
-
-Built on Google Vertex AI (Gemini, Imagen, Veo) with SQLite state tracking for crash recovery.
+**An AI film studio in a box.** vidpipe turns a text prompt into a finished, multi-scene video — screenplay, consistent characters, generated footage, narration, and sound effects, all assembled into a single master MP4. Fully automated, crash-safe, and resumable at every stage.
 
 ![Scenes dashboard](docs/scenes-view.png)
 
 The Scenes dashboard gives a per-scene view of the pipeline — status badges, keyframe thumbnails, and clip previews — with filtering and editing controls for each shot.
 
+## What it does
+
+- **Screenplay generation** — LLM-driven writers' room: logline → treatment → character breakdowns → scene breakdown → script → shot list, all editable and lockable before production begins
+- **Production Bible** — a reusable asset library that keeps your film consistent: cast (actors with reference images, ElevenLabs voice profiles, and wardrobe looks), sets, props, and sound assets, bound to productions by tag
+- **Scene pipeline with visual continuity** — storyboard → keyframes → video clips → stitched scene. Each shot's end frame seeds the next shot's start frame, so the camera never "jumps"
+- **Multi-model, per-scene** — Vertex AI (Gemini, Imagen, Veo), ComfyUI (WAN 2.2), and Ollama-hosted text models; mix and match per scene from the UI
+- **Narration & dialogue** — voice script generated from the screenplay, speaker tags resolved to cast voices, TTS via ElevenLabs, optional lip-sync, mixed into per-scene voice stems
+- **Sound design** — an editable Sound Deck of SFX/ambience/foley cues generated from the timeline, rendered with ElevenLabs, mixed into per-scene SFX stems
+- **Master render** — scene videos concatenated with voice and SFX stems mixed at timeline positions into one final MP4
+- **Crash-safe & resumable** — every stage checkpoints to the database before proceeding; failed or stopped runs resume from the last checkpoint with no wasted API spend
+- **Editing & iteration** — regenerate individual shots or clips, score and select among generation candidates, fork scenes, revert to checkpoints
+- **Cost awareness** — cost estimates shown before generation starts
+
 ## How it works
 
-### Scene pipeline
-
-Each scene runs through a four-stage generation pipeline:
+Each scene runs through a four-stage pipeline:
 
 ```
 Scene Prompt
@@ -42,10 +51,6 @@ Scene Prompt
   scene.mp4
 ```
 
-Each step persists state to the database before proceeding. If the process crashes at any point, resume picks up where it left off — no wasted API calls.
-
-### Production layer
-
 On top of scenes, a **production** assembles a complete film:
 
 ```
@@ -58,249 +63,150 @@ Production
   └── Master Render ───── scene videos + voice stems + SFX stems → master.mp4
 ```
 
-See **[docs/api-production-workflow.md](docs/api-production-workflow.md)** for the complete step-by-step API guide to creating a full production — from empty database to a finished master MP4 with narration and sound effects.
+## Documentation
 
-## Repository Structure
+| Doc | What's in it |
+|-----|--------------|
+| **[API: Creating a Full Production](docs/api-production-workflow.md)** | Step-by-step API guide from empty database to finished master MP4 — bible, screenplay, scenes, narration, SFX, master render, with curl examples and a full endpoint reference |
+| [Backend docs](docs/backend-docs.md) | Backend architecture, services, and pipeline internals |
+| [Frontend docs](docs/frontend-docs.md) | React SPA structure, components, and API client |
+| [Backend README](backend/README.md) | Backend setup, CLI usage, and development |
+| [Frontend README](frontend/README.md) | Frontend setup and development |
+| [Video generation pipeline](docs/video-generation-pipeline.md) | Deep dive on the immediate vs. deferred generation workflows |
+| [NASA documentary E2E](docs/nasa-documentary-e2e.md) | The end-to-end production test plan — a working reference for the full feature set |
 
-```
-video-pipeline/
-├── backend/            # Python API + pipeline (see backend/README.md)
-│   ├── vidpipe/        # Python package
-│   ├── pyproject.toml
-│   └── requirements.txt
-├── frontend/           # React SPA (see frontend/README.md)
-│   ├── src/
-│   └── package.json
-├── config.yaml         # Pipeline + model configuration
-├── .env                # Credentials + GCP project (not committed)
-├── .env.example
-└── docs/
-```
+## Setup (Docker — recommended)
 
-## Prerequisites
+The app runs as two containers (FastAPI backend + nginx-served React frontend) and **requires a self-hosted [Supabase](https://github.com/supabase/supabase) stack** for PostgreSQL (via the Supavisor pooler) and S3-compatible object storage (Supabase Storage backed by MinIO).
 
-- **Python 3.11+**
-- **Node.js 18+**
-- **ffmpeg** — `sudo apt-get install ffmpeg` (Ubuntu) or `brew install ffmpeg` (macOS)
-- **Google Cloud service account** with Vertex AI API enabled
-- **Supabase (self-hosted)** — see [Supabase Storage](#supabase-storage-s3--minio) below
-- **ElevenLabs API key** (optional) — required for narration TTS and SFX generation in the production workflow; set via `PUT /api/settings`
-- **ComfyUI** (optional) — required only for WAN video models (`wan-2.2-i2v`)
+### 1. Prerequisites
 
-## Quick Start
+- **Docker** with Compose v2 (and the NVIDIA container toolkit if you plan to use GPU features)
+- **Self-hosted Supabase** running as a sibling project (e.g. `../supabase-project/`)
+- **Google Cloud service account** JSON with the Vertex AI API enabled
+- **ElevenLabs API key** (optional) — needed for narration TTS and SFX generation
+- **ComfyUI** (optional) — needed only for WAN video models (`wan-2.2-i2v`)
 
-```bash
-# Clone
-git clone <repo-url> && cd video-pipeline
+### 2. Start Supabase with the S3 overlay
 
-# Configure credentials and GCP project
-cp .env.example .env
-# Edit .env:
-#   GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-service-account.json
-#   VIDPIPE_GOOGLE_CLOUD__PROJECT_ID=your-gcp-project-id
-
-# Install backend
-pip install -e backend/
-
-# Install frontend
-cd frontend && npm install && npm run build && cd ..
-
-# Start backend (serves both API and frontend)
-uvicorn vidpipe.api.app:app --host 0.0.0.0 --port 8000
-```
-
-Open `http://localhost:8000` to use the app.
-
-For frontend development with hot reload, run `npm run dev` in the `frontend/` directory (proxies to backend on port 8000).
-
-## Configuration
-
-### Credentials (`.env`)
-
-Google Cloud credentials and project ID live in `.env` (never committed):
-
-```bash
-# Required
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-VIDPIPE_GOOGLE_CLOUD__PROJECT_ID=your-gcp-project-id
-
-# Optional (defaults to us-central1)
-# VIDPIPE_GOOGLE_CLOUD__LOCATION=us-central1
-```
-
-### Pipeline settings (`config.yaml`)
-
-```yaml
-models:
-  storyboard_llm: "gemini-2.5-flash"
-  image_gen: "imagen-4.0-fast-generate-001"
-  image_conditioned: "gemini-2.5-flash-image"
-  video_gen: "veo-3.1-fast-generate-001"
-
-pipeline:
-  default_style: "cinematic"
-  default_aspect_ratio: "16:9"
-  default_clip_duration: 4        # seconds per clip
-  max_scenes: 15
-  image_gen_delay: 3              # seconds between image API calls
-  video_poll_interval: 15         # seconds between Veo poll checks
-  video_poll_max: 40              # max polls (~10 min timeout)
-  crossfade_seconds: 0.0          # 0 = hard cuts, >0 = crossfade
-```
-
-Any setting can be overridden via environment variables with `VIDPIPE_` prefix and `__` for nesting:
-```bash
-export VIDPIPE_PIPELINE__MAX_SCENES=10
-export VIDPIPE_MODELS__VIDEO_GEN=veo-3.0-generate-001
-```
-
-## Supported Models
-
-All models can be selected per-project in the UI.
-
-**Text (storyboard):** Gemini 2.5 Flash, Flash Lite, Pro | Gemini 3 Flash, Pro
-
-**Image (keyframes):** Imagen 3, 4, 4 Fast, 4 Ultra | Gemini Flash Image, 3 Pro Image
-
-**Video:** Veo 2 | Veo 3, 3 Fast | Veo 3.1, 3.1 GA, 3.1 Fast, 3.1 Fast GA
-
-Audio generation is supported on Veo 3+ models and can be toggled per-project.
-
-Some preview models (Gemini 3 Flash/Pro, Gemini 3 Pro Image) are automatically routed to the `global` Vertex AI endpoint.
-
-## CLI Usage
-
-```bash
-# Generate a single scene
-python -m vidpipe generate "A cat exploring a neon-lit Tokyo alley at night"
-
-# With options
-python -m vidpipe generate "Ocean waves at sunset" \
-  --style cinematic \
-  --aspect-ratio 16:9 \
-  --clip-duration 5
-
-# Check status
-python -m vidpipe status <scene-id>
-
-# List all scenes
-python -m vidpipe list
-
-# Resume a failed or stopped run
-python -m vidpipe resume <scene-id>
-
-# Re-stitch with crossfade
-python -m vidpipe stitch <scene-id> --crossfade 0.5
-```
-
-## HTTP API
-
-Core scene endpoints:
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/scenes` | Create a draft scene |
-| `POST` | `/api/scenes/{id}/generate` | Run pipeline (storyboard → keyframes → clips → stitch) |
-| `GET` | `/api/scenes/{id}/status` | Poll generation progress |
-| `GET` | `/api/scenes/{id}` | Full scene detail with shots, keyframes, clips |
-| `GET` | `/api/scenes` | List all scenes |
-| `POST` | `/api/scenes/{id}/resume` | Resume failed/stopped scene |
-| `POST` | `/api/scenes/{id}/stop` | Stop a running pipeline |
-| `GET` | `/api/scenes/{id}/download` | Download stitched scene MP4 |
-| `GET` | `/api/health` | Health check |
-
-Production-level endpoints (productions, production bibles, screenplay, voice script, sound deck, master render):
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/productions` | Create a production |
-| `POST` | `/api/productions/{id}/screenplay/generate` | Generate screenplay (LLM) |
-| `POST` | `/api/productions/{id}/screenplay/generate-scenes` | Create scenes from locked screenplay |
-| `POST` | `/api/productions/{id}/voice-script/generate` | Generate narration/dialogue lines |
-| `POST` | `/api/productions/{id}/sound-deck/generate` | Generate SFX/ambience cues |
-| `POST` | `/api/productions/{id}/render-master` | Render final master MP4 (video + voice + SFX) |
-| `GET` | `/api/productions/{id}/master-video` | Download master MP4 |
-
-Full workflow with request/response examples: **[docs/api-production-workflow.md](docs/api-production-workflow.md)**
-
-## Pipeline States
-
-```
-pending → storyboarding → keyframing → video_gen → stitching → complete
-                                                                   │
-                          ┌──── stopped (user) ◄───────────────────┤
-                          │                                        │
-                          └──── failed (error) ◄───────────────────┘
-                                    │
-                                    └──► resume picks up from last checkpoint
-```
-
-Stopped and failed scenes can be resumed — the pipeline skips completed steps and picks up from the failure/stop point.
-
-## Crash Recovery
-
-Every step commits to the database (SQLite WAL or PostgreSQL) before proceeding:
-
-- **Storyboard** — shots saved to DB before keyframe generation starts
-- **Keyframes** — committed after each shot, not at the end
-- **Video generation** — Veo operation ID saved before polling begins; resume continues polling from last count
-- **Stitching** — idempotent, can be re-run with different crossfade settings
-
-If anything fails, `python -m vidpipe resume <scene-id>` (or `POST /api/scenes/{id}/resume`) skips completed steps and picks up from the failure point.
-
-## Cost Estimate
-
-Costs vary by model selection. Examples using default models (Imagen 4 Fast + Veo 3.1 Fast):
-
-| Scenes | Clip Duration | Estimated Cost |
-|--------|--------------|----------------|
-| 3 | 4s | ~$2.50 |
-| 5 | 6s | ~$5.50 |
-| 5 | 8s | ~$7.00 |
-
-Higher-tier models (Veo 3.1 GA, Imagen 4 Ultra) cost more. The UI shows a cost estimate before generation starts.
-
-## Supabase Storage (S3 + MinIO)
-
-Asset storage (keyframes, video clips, asset library images) uses Supabase Storage backed by a MinIO S3-compatible object store. The Supabase project lives in a sibling directory (`../supabase-project/`).
-
-### Starting Supabase with S3 storage
-
-Supabase Storage **must** be started with the S3 compose overlay. Without it, the storage service defaults to `STORAGE_BACKEND=file` and cannot read MinIO's internal object format, causing `EISDIR` 500 errors on all asset requests.
+Supabase Storage **must** run with the S3 compose overlay so it talks to MinIO over HTTP. Without it, storage defaults to `STORAGE_BACKEND=file` and every asset request fails with a 500 (`EISDIR`):
 
 ```bash
 cd ../supabase-project
 
-# Correct — includes the S3 overlay so storage talks to MinIO over HTTP
+# Correct — includes the S3 overlay
 docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
 
 # WRONG — storage defaults to file backend, all asset GETs return 500
 # docker compose up -d
 ```
 
-### After rebuilding Supabase containers
+Remember the overlay every time you restart Supabase. Verify with:
 
-If you run `docker compose down` and bring services back up, make sure to include the S3 overlay again. `docker compose down` removes containers and networks but **not** volumes or bind-mounted data, so MinIO (`./volumes/storage/`) and PostgreSQL (`./volumes/db/data/`) data survive. Just ensure you start with both compose files:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
-```
-
-### Troubleshooting
-
-**Symptom:** All images/assets return 500. Backend logs show `FileNotFoundError: S3 GET failed: 500`.
-
-**Cause:** Supabase Storage is running with `STORAGE_BACKEND=file` instead of `s3`. Verify with:
 ```bash
 docker exec supabase-storage env | grep STORAGE_BACKEND
 # Should show: STORAGE_BACKEND=s3
 ```
 
-**Fix:** Restart storage with the S3 overlay:
+Create a storage bucket for vidpipe (default name: `vidpipe-master`) in Supabase Studio if it doesn't exist.
+
+### 3. Configure `.env`
+
+```bash
+cp .env.example .env
+```
+
+Fill in:
+
+```bash
+# Host ports
+VIDPIPE_PORT=8100                # backend (8000 is typically taken by Supabase Kong)
+VIDPIPE_FRONTEND_PORT=80         # frontend
+
+# PostgreSQL via the Supavisor pooler (tenant ID in username, port 6543)
+VIDPIPE_STORAGE__DATABASE_URL=postgresql+asyncpg://postgres.your-tenant-id:your-password@supabase-pooler:6543/postgres
+
+# Supabase service role JWT (for Storage bucket access)
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-jwt
+VIDPIPE_STORAGE__S3_SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+
+# Google Cloud
+VIDPIPE_GOOGLE_CLOUD__PROJECT_ID=your-gcp-project-id
+VIDPIPE_GOOGLE_CLOUD__LOCATION=us-central1
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-service-account.json
+
+# ComfyUI (optional — only for WAN video models; can also be set in the Settings UI)
+# COMFY_UI_HOST=https://cloud.comfy.org
+# COMFY_UI_KEY=comfyui-your-api-key
+```
+
+The service account JSON is bind-mounted into the backend container; the backend joins the external `supabase_default` Docker network to reach the pooler and storage.
+
+### 4. Build and start
+
+```bash
+docker compose up -d --build
+```
+
+Open `http://localhost` (frontend) — the backend API is at `http://localhost:8100`.
+
+Runtime settings — model selection, ComfyUI endpoint, Ollama, and the ElevenLabs API key — are configured in the **Settings UI** (stored in the database), not in `.env`.
+
+### Rebuilding after code changes
+
+Production images copy source code at build time — **code changes are not live until you rebuild**:
+
+```bash
+docker compose up -d --build backend frontend   # or just the one you changed
+```
+
+For iterative development, use the dev compose file instead — volume-mounted source with backend `--reload` and Vite HMR, running on SQLite (no Supabase needed):
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+# frontend: http://localhost:5173, backend: http://localhost:8000
+```
+
+### ⚠️ Security note
+
+vidpipe currently has **no authentication** ([#28](https://github.com/hoyack/video-pipeline/issues/28)) — anyone who can reach the ports can trigger paid generation jobs and read stored API keys. Keep deployments on localhost or behind a VPN/authenticating reverse proxy.
+
+## Setup (without Docker)
+
+For local development against SQLite:
+
+```bash
+pip install -e backend/
+cd frontend && npm install && npm run build && cd ..
+
+# .env: VIDPIPE_STORAGE__DATABASE_URL=sqlite+aiosqlite:///vidpipe.db
+uvicorn vidpipe.api.app:app --host 0.0.0.0 --port 8000
+```
+
+Requires Python 3.11+, Node.js 18+, and ffmpeg (`apt-get install ffmpeg` / `brew install ffmpeg`). See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md) for development details, tests, and CLI usage.
+
+## Supported models
+
+All models are selectable per scene in the UI.
+
+- **Text (screenplay/storyboard):** Gemini 2.5 Flash / Flash Lite / Pro, Gemini 3 Flash / Pro, Ollama-hosted models (e.g. Kimi K2.5 cloud)
+- **Image (keyframes):** Imagen 3 / 4 / 4 Fast / 4 Ultra, Gemini Flash Image, Gemini 3 Pro Image
+- **Video:** Veo 2, Veo 3 / 3 Fast, Veo 3.1 / 3.1 Fast (+ GA variants), WAN 2.2 (via ComfyUI)
+- **Voice & SFX:** ElevenLabs TTS and sound effects
+
+Native clip audio is supported on Veo 3+; WAN clips are silent, with narration and SFX mixed in at the production level. Preview models route automatically to the `global` Vertex AI endpoint.
+
+## Troubleshooting
+
+**All images/assets return 500; backend logs show `FileNotFoundError: S3 GET failed: 500`.**
+Supabase Storage is running with the file backend instead of S3. Restart it with the overlay:
+
 ```bash
 cd ../supabase-project
 docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d storage
 ```
+
+`docker compose down` preserves volumes and bind-mounted data (MinIO `./volumes/storage/`, PostgreSQL `./volumes/db/data/`) — just remember the S3 overlay when bringing services back up.
 
 ## License
 

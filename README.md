@@ -10,35 +10,55 @@ The Scenes dashboard gives a per-scene view of the pipeline — status badges, k
 
 ## How it works
 
+### Scene pipeline
+
+Each scene runs through a four-stage generation pipeline:
+
 ```
-Text Prompt
+Scene Prompt
     │
     ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  1. STORYBOARD (Gemini LLM)                                 │
-│     Prompt → structured scene breakdown with style guide,   │
+│     Prompt → structured shot breakdown with style guide,    │
 │     character bible, keyframe prompts, motion descriptions  │
 ├─────────────────────────────────────────────────────────────┤
 │  2. KEYFRAMES (Imagen / Gemini Image)                       │
-│     Scene 0 start frame from text                           │
+│     Shot 0 start frame from text                            │
 │     End frames via image-conditioned generation             │
-│     Scene N+1 start = Scene N end (visual continuity)       │
+│     Shot N+1 start = Shot N end (visual continuity)         │
 ├─────────────────────────────────────────────────────────────┤
-│  3. VIDEO GENERATION (Veo)                                   │
+│  3. VIDEO GENERATION (Veo / ComfyUI WAN)                    │
 │     Start frame + end frame → interpolated video clip       │
-│     Optional audio generation (Veo 3+)                      │
+│     Optional native audio (Veo 3+)                          │
 │     Long-running operations polled with crash-safe resume   │
 ├─────────────────────────────────────────────────────────────┤
 │  4. STITCHING (ffmpeg)                                      │
-│     Concatenate clips → final MP4                           │
+│     Concatenate clips → scene MP4                           │
 │     Optional crossfade transitions                          │
 └─────────────────────────────────────────────────────────────┘
     │
     ▼
-  final.mp4
+  scene.mp4
 ```
 
-Each step persists state to SQLite before proceeding. If the process crashes at any point, resume picks up where it left off — no wasted API calls.
+Each step persists state to the database before proceeding. If the process crashes at any point, resume picks up where it left off — no wasted API calls.
+
+### Production layer
+
+On top of scenes, a **production** assembles a complete film:
+
+```
+Production
+  ├── Production Bible ── cast (actors + voices + wardrobe), sets, props, sound assets
+  ├── Screenplay ──────── logline → treatment → breakdowns → script → shot list (LLM)
+  ├── Scenes ──────────── generated from the screenplay breakdown (pipeline above)
+  ├── Voice Script ────── narration/dialogue lines → ElevenLabs TTS → per-scene voice stems
+  ├── Sound Deck ──────── SFX/ambience cues → ElevenLabs SFX → per-scene SFX stems
+  └── Master Render ───── scene videos + voice stems + SFX stems → master.mp4
+```
+
+See **[docs/api-production-workflow.md](docs/api-production-workflow.md)** for the complete step-by-step API guide to creating a full production — from empty database to a finished master MP4 with narration and sound effects.
 
 ## Repository Structure
 
@@ -64,6 +84,8 @@ video-pipeline/
 - **ffmpeg** — `sudo apt-get install ffmpeg` (Ubuntu) or `brew install ffmpeg` (macOS)
 - **Google Cloud service account** with Vertex AI API enabled
 - **Supabase (self-hosted)** — see [Supabase Storage](#supabase-storage-s3--minio) below
+- **ElevenLabs API key** (optional) — required for narration TTS and SFX generation in the production workflow; set via `PUT /api/settings`
+- **ComfyUI** (optional) — required only for WAN video models (`wan-2.2-i2v`)
 
 ## Quick Start
 
@@ -149,7 +171,7 @@ Some preview models (Gemini 3 Flash/Pro, Gemini 3 Pro Image) are automatically r
 ## CLI Usage
 
 ```bash
-# Generate a video
+# Generate a single scene
 python -m vidpipe generate "A cat exploring a neon-lit Tokyo alley at night"
 
 # With options
@@ -159,30 +181,47 @@ python -m vidpipe generate "Ocean waves at sunset" \
   --clip-duration 5
 
 # Check status
-python -m vidpipe status <project-id>
+python -m vidpipe status <scene-id>
 
-# List all projects
+# List all scenes
 python -m vidpipe list
 
 # Resume a failed or stopped run
-python -m vidpipe resume <project-id>
+python -m vidpipe resume <scene-id>
 
 # Re-stitch with crossfade
-python -m vidpipe stitch <project-id> --crossfade 0.5
+python -m vidpipe stitch <scene-id> --crossfade 0.5
 ```
 
 ## HTTP API
 
+Core scene endpoints:
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/generate` | Start new video generation |
-| `GET` | `/api/projects/{id}/status` | Poll project status |
-| `GET` | `/api/projects/{id}` | Full project details with scenes |
-| `GET` | `/api/projects` | List all projects |
-| `POST` | `/api/projects/{id}/resume` | Resume failed/stopped project |
-| `POST` | `/api/projects/{id}/stop` | Stop a running pipeline |
-| `GET` | `/api/projects/{id}/download` | Download final MP4 |
+| `POST` | `/api/scenes` | Create a draft scene |
+| `POST` | `/api/scenes/{id}/generate` | Run pipeline (storyboard → keyframes → clips → stitch) |
+| `GET` | `/api/scenes/{id}/status` | Poll generation progress |
+| `GET` | `/api/scenes/{id}` | Full scene detail with shots, keyframes, clips |
+| `GET` | `/api/scenes` | List all scenes |
+| `POST` | `/api/scenes/{id}/resume` | Resume failed/stopped scene |
+| `POST` | `/api/scenes/{id}/stop` | Stop a running pipeline |
+| `GET` | `/api/scenes/{id}/download` | Download stitched scene MP4 |
 | `GET` | `/api/health` | Health check |
+
+Production-level endpoints (productions, production bibles, screenplay, voice script, sound deck, master render):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/productions` | Create a production |
+| `POST` | `/api/productions/{id}/screenplay/generate` | Generate screenplay (LLM) |
+| `POST` | `/api/productions/{id}/screenplay/generate-scenes` | Create scenes from locked screenplay |
+| `POST` | `/api/productions/{id}/voice-script/generate` | Generate narration/dialogue lines |
+| `POST` | `/api/productions/{id}/sound-deck/generate` | Generate SFX/ambience cues |
+| `POST` | `/api/productions/{id}/render-master` | Render final master MP4 (video + voice + SFX) |
+| `GET` | `/api/productions/{id}/master-video` | Download master MP4 |
+
+Full workflow with request/response examples: **[docs/api-production-workflow.md](docs/api-production-workflow.md)**
 
 ## Pipeline States
 
@@ -196,18 +235,18 @@ pending → storyboarding → keyframing → video_gen → stitching → complet
                                     └──► resume picks up from last checkpoint
 ```
 
-Stopped and failed projects can be resumed — the pipeline skips completed steps and picks up from the failure/stop point.
+Stopped and failed scenes can be resumed — the pipeline skips completed steps and picks up from the failure/stop point.
 
 ## Crash Recovery
 
-Every step commits to SQLite (WAL mode) before proceeding:
+Every step commits to the database (SQLite WAL or PostgreSQL) before proceeding:
 
-- **Storyboard** — scenes saved to DB before keyframe generation starts
-- **Keyframes** — committed after each scene, not at the end
+- **Storyboard** — shots saved to DB before keyframe generation starts
+- **Keyframes** — committed after each shot, not at the end
 - **Video generation** — Veo operation ID saved before polling begins; resume continues polling from last count
 - **Stitching** — idempotent, can be re-run with different crossfade settings
 
-If anything fails, `python -m vidpipe resume <project-id>` skips completed steps and picks up from the failure point.
+If anything fails, `python -m vidpipe resume <scene-id>` (or `POST /api/scenes/{id}/resume`) skips completed steps and picks up from the failure point.
 
 ## Cost Estimate
 

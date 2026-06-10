@@ -4,6 +4,10 @@ AI-powered multi-scene video generation pipeline. Takes a text prompt and produc
 
 Built on Google Vertex AI (Gemini, Imagen, Veo) with SQLite state tracking for crash recovery.
 
+![Scenes dashboard](docs/scenes-view.png)
+
+The Scenes dashboard gives a per-scene view of the pipeline — status badges, keyframe thumbnails, and clip previews — with filtering and editing controls for each shot.
+
 ## How it works
 
 ```

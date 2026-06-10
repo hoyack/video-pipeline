@@ -60,6 +60,9 @@ frontend/dist/
 *.png
 *.mp4
 
+# Docs screenshots (explicitly allowed despite *.png rule above)
+!docs/scenes-view.png
+
 # OS
 .DS_Store
 Thumbs.db

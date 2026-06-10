@@ -30,6 +30,7 @@ from vidpipe.schemas.storyboard_enhanced import (
 from vidpipe.services.event_bus import emit_task_log
 from vidpipe.services.llm import get_adapter, LLMAdapter
 from vidpipe.services.manifest_service import load_manifest_assets, format_asset_registry, format_binding_registry
+from vidpipe.services.model_catalog import canonical_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -1220,7 +1221,7 @@ async def generate_storyboard(
     """
     from sqlalchemy import select as sa_select
 
-    model_id = scene.text_model or settings.models.storyboard_llm
+    model_id = canonical_model_id(scene.text_model or settings.models.storyboard_llm) or settings.models.storyboard_llm
     adapter = text_adapter or get_adapter(model_id)
 
     style_label = scene.style.replace("_", " ")
@@ -1353,27 +1354,33 @@ async def generate_storyboard(
     screenplay_enrichment = ""
     if hasattr(scene, 'screenplay_context') and scene.screenplay_context:
         breakdown = scene.screenplay_context
-        parts = []
-        parts.append("SCREENPLAY DIRECTION:")
-        if breakdown.get("slugline"):
-            parts.append(f"  Scene: {breakdown['slugline']}")
-        if breakdown.get("intent"):
-            parts.append(f"  Intent: {breakdown['intent']}")
-        if breakdown.get("emotional_beat"):
-            parts.append(f"  Emotional beat: {breakdown['emotional_beat']}")
-        if breakdown.get("story_state_in"):
-            parts.append(f"  Story state (entering): {breakdown['story_state_in']}")
-        if breakdown.get("story_state_out"):
-            parts.append(f"  Story state (leaving): {breakdown['story_state_out']}")
-        if breakdown.get("characters_present"):
-            chars = ", ".join(breakdown["characters_present"])
-            parts.append(f"  Characters in scene: {chars}")
-        if breakdown.get("set_ref"):
-            parts.append(f"  Location/Set: {breakdown['set_ref']}")
-        if breakdown.get("props_required"):
-            props = ", ".join(breakdown["props_required"])
-            parts.append(f"  Props: {props}")
-        screenplay_enrichment = "\n".join(parts) + "\n\n"
+        if isinstance(breakdown, str):
+            try:
+                breakdown = json.loads(breakdown)
+            except json.JSONDecodeError:
+                breakdown = {"intent": breakdown}
+        if isinstance(breakdown, dict):
+            parts = []
+            parts.append("SCREENPLAY DIRECTION:")
+            if breakdown.get("slugline"):
+                parts.append(f"  Scene: {breakdown['slugline']}")
+            if breakdown.get("intent"):
+                parts.append(f"  Intent: {breakdown['intent']}")
+            if breakdown.get("emotional_beat"):
+                parts.append(f"  Emotional beat: {breakdown['emotional_beat']}")
+            if breakdown.get("story_state_in"):
+                parts.append(f"  Story state (entering): {breakdown['story_state_in']}")
+            if breakdown.get("story_state_out"):
+                parts.append(f"  Story state (leaving): {breakdown['story_state_out']}")
+            if breakdown.get("characters_present"):
+                chars = ", ".join(breakdown["characters_present"])
+                parts.append(f"  Characters in scene: {chars}")
+            if breakdown.get("set_ref"):
+                parts.append(f"  Location/Set: {breakdown['set_ref']}")
+            if breakdown.get("props_required"):
+                props = ", ".join(breakdown["props_required"])
+                parts.append(f"  Props: {props}")
+            screenplay_enrichment = "\n".join(parts) + "\n\n"
 
     # Phase 22/23: Resolve [CHAR:TAG], [SET:TAG], [PROP:TAG] and @tag in scene prompt
     # before sending to LLM. Original prompt preserved in DB, resolved text

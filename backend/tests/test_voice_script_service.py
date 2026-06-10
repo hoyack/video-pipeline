@@ -54,6 +54,90 @@ class FakeLLMAdapter:
         })
 
 
+class SparseThenDenseLLMAdapter:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    async def generate_text(self, prompt, schema, **kwargs):
+        self.prompts.append(prompt)
+        if len(self.prompts) == 1:
+            return schema.model_validate({
+                "lines": [
+                    {
+                        "scene_number": 1,
+                        "shot_number": 1,
+                        "line_type": "NARRATION",
+                        "speaker_tag": "NARRATOR",
+                        "speaker_name": "Narrator",
+                        "text": "The launch begins.",
+                        "delivery_notes": "measured",
+                        "timing_hint": "opening image",
+                        "lip_sync_mode": "NEVER",
+                    }
+                ]
+            })
+        return schema.model_validate({
+            "lines": [
+                {
+                    "scene_number": 1,
+                    "shot_number": 1,
+                    "line_type": "NARRATION",
+                    "speaker_tag": "NARRATOR",
+                    "speaker_name": "Narrator",
+                    "text": (
+                        "At dawn, the launch complex becomes a landscape of calculations, "
+                        "procedure, restrained anticipation, and precisely rehearsed trust."
+                    ),
+                    "delivery_notes": "documentary",
+                    "timing_hint": "scene 1 shot 1",
+                    "lip_sync_mode": "NEVER",
+                },
+                {
+                    "scene_number": 1,
+                    "shot_number": 2,
+                    "line_type": "NARRATION",
+                    "speaker_tag": "NARRATOR",
+                    "speaker_name": "Narrator",
+                    "text": (
+                        "Every cable, gantry, and checklist turns human judgment into a "
+                        "system carefully tested enough to survive orbit."
+                    ),
+                    "delivery_notes": "documentary",
+                    "timing_hint": "scene 1 shot 2",
+                    "lip_sync_mode": "NEVER",
+                },
+                {
+                    "scene_number": 2,
+                    "shot_number": 1,
+                    "line_type": "NARRATION",
+                    "speaker_tag": "NARRATOR",
+                    "speaker_name": "Narrator",
+                    "text": (
+                        "Inside mission control, engineers and mathematicians translate "
+                        "uncertainty into numbers that pilots, controllers, and leaders can trust."
+                    ),
+                    "delivery_notes": "documentary",
+                    "timing_hint": "scene 2 shot 1",
+                    "lip_sync_mode": "NEVER",
+                },
+                {
+                    "scene_number": 2,
+                    "shot_number": 2,
+                    "line_type": "NARRATION",
+                    "speaker_tag": "NARRATOR",
+                    "speaker_name": "Narrator",
+                    "text": (
+                        "The achievement is not a single heroic moment, but a "
+                        "minute-by-minute discipline shared across the room and nation."
+                    ),
+                    "delivery_notes": "documentary",
+                    "timing_hint": "scene 2 shot 2",
+                    "lip_sync_mode": "NEVER",
+                },
+            ]
+        })
+
+
 class FakeAudioAdapter(AudioAdapter):
     async def generate_voice(self, voice_id: str, text: str, **kwargs) -> bytes:
         assert voice_id == "voice-hero"
@@ -213,6 +297,146 @@ async def test_generate_from_screenplay_creates_bound_voice_line(session_factory
         assert line.voice_id == "voice-hero"
         assert line.cast_binding_id is not None
         assert line.generation_status == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_generate_from_screenplay_retries_sparse_documentary_narration(session_factory):
+    service = VoiceScriptService()
+    async with session_factory() as session:
+        production = await _seed_voice_production(session)
+        scene_1 = Scene(
+            production_id=production.id,
+            production_bible_id=production.production_bible_id,
+            screenplay_breakdown_index=1,
+            scene_order=1,
+            title="Launch Pad",
+            prompt="A launch pad at dawn.",
+            style="documentary",
+            aspect_ratio="16:9",
+            target_clip_duration=10,
+            target_shot_count=2,
+            status="complete",
+        )
+        scene_2 = Scene(
+            production_id=production.id,
+            production_bible_id=production.production_bible_id,
+            screenplay_breakdown_index=2,
+            scene_order=2,
+            title="Mission Control",
+            prompt="Mission control at work.",
+            style="documentary",
+            aspect_ratio="16:9",
+            target_clip_duration=10,
+            target_shot_count=2,
+            status="complete",
+        )
+        session.add_all([scene_1, scene_2])
+        await session.flush()
+        for scene in (scene_1, scene_2):
+            for shot_index in range(2):
+                session.add(
+                    Shot(
+                        scene_id=scene.id,
+                        shot_index=shot_index,
+                        shot_description=f"Shot {shot_index + 1}",
+                        start_frame_prompt="start",
+                        end_frame_prompt="end",
+                        video_motion_prompt="hold",
+                        status="video_done",
+                    )
+                )
+        await session.commit()
+
+        adapter = SparseThenDenseLLMAdapter()
+        voice_script = await service.generate_from_screenplay(
+            session,
+            production.id,
+            adapter,
+            text_model="test-model",
+        )
+
+        lines = list(
+            (
+                await session.execute(
+                    select(VoiceLine)
+                    .where(VoiceLine.voice_script_id == voice_script.id)
+                    .order_by(VoiceLine.line_index)
+                )
+            ).scalars().all()
+        )
+        assert len(adapter.prompts) == 2
+        assert "Production runtime: 40.0 seconds" in adapter.prompts[0]
+        assert "Coverage failure" in adapter.prompts[1]
+        assert len(lines) == 4
+        assert sum(len(line.text.split()) for line in lines) >= 60
+        assert {line.scene_id for line in lines} == {scene_1.id, scene_2.id}
+
+
+@pytest.mark.asyncio
+async def test_resolve_bindings_maps_one_based_screenplay_scene_numbers(session_factory):
+    service = VoiceScriptService()
+    async with session_factory() as session:
+        production = await _seed_voice_production(session)
+        scene_1 = Scene(
+            production_id=production.id,
+            title="Scene 1",
+            prompt="First scene",
+            style="documentary",
+            aspect_ratio="16:9",
+            target_clip_duration=5,
+            status="complete",
+            screenplay_breakdown_index=1,
+            scene_order=1,
+        )
+        scene_2 = Scene(
+            production_id=production.id,
+            title="Scene 2",
+            prompt="Second scene",
+            style="documentary",
+            aspect_ratio="16:9",
+            target_clip_duration=5,
+            status="complete",
+            screenplay_breakdown_index=2,
+            scene_order=2,
+        )
+        session.add_all([scene_1, scene_2])
+        await session.flush()
+        shot_2 = Shot(
+            scene_id=scene_2.id,
+            shot_index=0,
+            shot_description="Second scene opening shot",
+            start_frame_prompt="start",
+            end_frame_prompt="end",
+            video_motion_prompt="hold",
+            status="ready",
+        )
+        session.add(shot_2)
+        await session.flush()
+
+        screenplay = (await session.execute(select(Screenplay))).scalar_one()
+        voice_script = VoiceScript(screenplay_id=screenplay.id, production_id=production.id)
+        session.add(voice_script)
+        await session.flush()
+        line = VoiceLine(
+            voice_script_id=voice_script.id,
+            production_id=production.id,
+            scene_number=2,
+            shot_number=1,
+            line_index=0,
+            line_type="DIALOGUE",
+            speaker_tag="HERO",
+            speaker_name="Hero",
+            text="Scene two line.",
+            generation_status="PENDING",
+        )
+        session.add(line)
+        await session.flush()
+
+        await service.resolve_all_bindings(session, voice_script.id)
+
+        assert line.scene_id == scene_2.id
+        assert line.shot_id == shot_2.id
+        assert line.voice_id == "voice-hero"
 
 
 @pytest.mark.asyncio

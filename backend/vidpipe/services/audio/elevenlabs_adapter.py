@@ -86,7 +86,9 @@ class ElevenLabsAdapter(AudioAdapter):
             kwargs: dict = {"text": prompt}
             if duration_seconds is not None:
                 kwargs["duration_seconds"] = duration_seconds
-            response = await self._client.text_to_sound_effects.convert(**kwargs)
+            response = self._client.text_to_sound_effects.convert(**kwargs)
+            if inspect.isawaitable(response):
+                response = await response
             chunks: list[bytes] = []
             async for chunk in response:
                 chunks.append(chunk)

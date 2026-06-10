@@ -22,7 +22,7 @@ class ReversePromptService:
 
         Args:
             vision_adapter: Optional LLMAdapter. If None, gets default via
-                get_adapter("gemini-2.5-flash") on first use.
+                get_adapter("gemini-3.5-flash") on first use.
         """
         self._adapter = vision_adapter
 
@@ -59,8 +59,8 @@ class ReversePromptService:
             f"User-provided name: {user_name}" if user_name else "No name provided."
         )
 
-        # Use adapter (fall back to gemini-2.5-flash for backward compat)
-        adapter = self._adapter or get_adapter("gemini-2.5-flash")
+        # Use adapter (fall back to a low-latency Vertex model for backward compat)
+        adapter = self._adapter or get_adapter("gemini-3.5-flash")
         result = await adapter.analyze_image(
             image_bytes=image_bytes,
             prompt=f"{system_prompt}\n\n{user_context}",

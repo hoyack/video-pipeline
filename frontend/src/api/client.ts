@@ -58,6 +58,10 @@ import type {
   LipSyncJobResponse,
   VoiceLineResponse,
   VoiceLineUpdate,
+  SoundDeckActionResponse,
+  SoundDeckResponse,
+  SoundEffectCueResponse,
+  SoundEffectCueUpdate,
   VoiceScriptActionResponse,
   VoiceScriptResponse,
   VoiceInfo,
@@ -643,6 +647,15 @@ export interface ProductionResponse {
   updated_at: string;
 }
 
+export interface ProductionMasterResponse {
+  production_id: string;
+  video_path: string;
+  video_url: string;
+  scene_count: number;
+  duration_seconds: number | null;
+  audio_stem_count: number;
+}
+
 export interface ProductionCreate {
   name: string;
   description?: string;
@@ -687,6 +700,18 @@ export function updateProduction(productionId: string, body: ProductionUpdate): 
 export function deleteProduction(productionId: string): Promise<{ status: string; production_id: string }> {
   return request<{ status: string; production_id: string }>(`/api/productions/${productionId}`, {
     method: "DELETE",
+  });
+}
+
+/** GET /api/productions/{id}/master — get rendered master metadata */
+export function getProductionMaster(productionId: string): Promise<ProductionMasterResponse> {
+  return request<ProductionMasterResponse>(`/api/productions/${productionId}/master`);
+}
+
+/** POST /api/productions/{id}/render-master — render final mixed master */
+export function renderProductionMaster(productionId: string): Promise<ProductionMasterResponse> {
+  return request<ProductionMasterResponse>(`/api/productions/${productionId}/render-master`, {
+    method: "POST",
   });
 }
 
@@ -1338,6 +1363,61 @@ export function lipSyncVoiceScript(voiceScriptId: string, adapterType = "FAKE"):
 /** GET /api/voice-scripts/{id}/jobs — list lip-sync jobs */
 export function getVoiceScriptJobs(voiceScriptId: string): Promise<LipSyncJobResponse[]> {
   return request<LipSyncJobResponse[]>(`/api/voice-scripts/${voiceScriptId}/jobs`);
+}
+
+// ============================================================================
+// Sound deck API
+// ============================================================================
+
+/** GET /api/productions/{id}/sound-deck — list generated SFX cues and stems */
+export function getSoundDeck(productionId: string): Promise<SoundDeckResponse> {
+  return request<SoundDeckResponse>(`/api/productions/${productionId}/sound-deck`);
+}
+
+/** POST /api/productions/{id}/sound-deck/generate — generate SFX cues */
+export function generateSoundDeck(productionId: string, textModel?: string): Promise<SoundDeckActionResponse> {
+  const body: Record<string, string> = {};
+  if (textModel) body.text_model = textModel;
+  return request<SoundDeckActionResponse>(`/api/productions/${productionId}/sound-deck/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** POST /api/productions/{id}/sound-deck/generate-audio — generate all pending SFX audio */
+export function generateSoundDeckAudio(productionId: string): Promise<SoundDeckActionResponse> {
+  return request<SoundDeckActionResponse>(`/api/productions/${productionId}/sound-deck/generate-audio`, {
+    method: "POST",
+  });
+}
+
+/** POST /api/productions/{id}/sound-deck/mix — build SFX scene stems */
+export function mixSoundDeck(productionId: string): Promise<SoundDeckActionResponse> {
+  return request<SoundDeckActionResponse>(`/api/productions/${productionId}/sound-deck/mix`, {
+    method: "POST",
+  });
+}
+
+/** PATCH /api/sound-cues/{id} — edit one SFX cue */
+export function updateSoundCue(cueId: string, body: SoundEffectCueUpdate): Promise<SoundEffectCueResponse> {
+  return request<SoundEffectCueResponse>(`/api/sound-cues/${cueId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** POST /api/sound-cues/{id}/generate-audio — generate one cue */
+export function generateSoundCueAudio(cueId: string): Promise<SoundEffectCueResponse> {
+  return request<SoundEffectCueResponse>(`/api/sound-cues/${cueId}/generate-audio`, {
+    method: "POST",
+  });
+}
+
+/** DELETE /api/sound-cues/{id} — delete one SFX cue */
+export function deleteSoundCue(cueId: string): Promise<void> {
+  return request<void>(`/api/sound-cues/${cueId}`, { method: "DELETE" });
 }
 
 // ============================================================================

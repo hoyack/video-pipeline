@@ -35,18 +35,16 @@ _VIDEO_COST_PER_SECOND = {
     "veo-2.0-generate-001": 0.35,
     "veo-3.0-generate-001": 0.40,
     "veo-3.0-fast-generate-001": 0.15,
-    "veo-3.1-generate-preview": 0.40,
     "veo-3.1-generate-001": 0.40,
-    "veo-3.1-fast-generate-preview": 0.10,
     "veo-3.1-fast-generate-001": 0.10,
+    "veo-3.1-lite-generate-001": 0.10,
 }
 _VIDEO_COST_PER_SECOND_AUDIO = {
     "veo-3.0-generate-001": 0.40,
     "veo-3.0-fast-generate-001": 0.15,
-    "veo-3.1-generate-preview": 0.40,
     "veo-3.1-generate-001": 0.40,
-    "veo-3.1-fast-generate-preview": 0.15,
     "veo-3.1-fast-generate-001": 0.15,
+    "veo-3.1-lite-generate-001": 0.15,
 }
 _IMAGE_COST_PER_IMAGE = {
     "gemini-2.5-flash-image": 0.04,
@@ -57,16 +55,16 @@ _TEXT_COST_PER_CALL = {
     "gemini-2.5-flash-lite": 0.001,
     "gemini-2.5-pro": 0.023,
     "gemini-3-flash-preview": 0.007,
-    "gemini-3-pro-preview": 0.028,
+    "gemini-3.1-pro-preview": 0.028,
+    "gemini-3.5-flash": 0.007,
 }
 _ALLOWED_DURATIONS: dict[str, list[int]] = {
     "veo-2.0-generate-001": [5, 6, 7, 8],
     "veo-3.0-generate-001": [4, 6, 8],
     "veo-3.0-fast-generate-001": [4, 6, 8],
-    "veo-3.1-generate-preview": [4, 6, 8],
     "veo-3.1-generate-001": [4, 6, 8],
-    "veo-3.1-fast-generate-preview": [4, 6, 8],
     "veo-3.1-fast-generate-001": [4, 6, 8],
+    "veo-3.1-lite-generate-001": [4, 6, 8],
 }
 
 app = typer.Typer(name="vidpipe", help="AI-powered multi-shot video generation pipeline")
@@ -80,7 +78,7 @@ def generate(
     aspect_ratio: str = typer.Option("16:9", "--aspect-ratio", "-a", help="Video aspect ratio"),
     clip_duration: int = typer.Option(6, "--clip-duration", "-d", help="Target clip duration in seconds"),
     total_duration: int = typer.Option(30, "--total-duration", "-t", help="Total video duration in seconds"),
-    text_model: str = typer.Option("gemini-2.5-flash", "--text-model", help="Text/storyboard model"),
+    text_model: str = typer.Option("gemini-3.5-flash", "--text-model", help="Text/storyboard model"),
     image_model: str = typer.Option("gemini-2.5-flash-image", "--image-model", help="Image generation model"),
     video_model: str = typer.Option("veo-3.1-fast-generate-001", "--video-model", help="Video generation model"),
     enable_audio: bool = typer.Option(True, "--enable-audio/--no-audio", help="Enable audio generation (Veo 3+ only)"),

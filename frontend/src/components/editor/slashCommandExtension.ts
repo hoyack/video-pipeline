@@ -2,6 +2,7 @@ import { Extension } from "@tiptap/core";
 import { Suggestion } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/core";
+import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
 
 const slashCommandPluginKey = new PluginKey("slashCommand");
 
@@ -131,7 +132,7 @@ export const SlashCommand = Extension.create({
 
   addProseMirrorPlugins() {
     return [
-      Suggestion({
+      Suggestion<SlashCommandItem, SlashCommandItem>({
         pluginKey: slashCommandPluginKey,
         editor: this.editor,
         char: "/",
@@ -182,18 +183,17 @@ export const SlashCommand = Extension.create({
           }
 
           return {
-            onStart(props: Record<string, unknown>) {
+            onStart(props: SuggestionProps<SlashCommandItem, SlashCommandItem>) {
               container = document.createElement("div");
               container.style.position = "fixed";
               container.style.zIndex = "9999";
               document.body.appendChild(container);
 
               selectedIndex = 0;
-              currentItems = (props.items ?? []) as SlashCommandItem[];
-              currentCommand = props.command as (p: SlashCommandItem) => void;
+              currentItems = props.items ?? [];
+              currentCommand = props.command;
 
-              const clientRect = props.clientRect as (() => DOMRect | null) | undefined;
-              const rect = clientRect?.();
+              const rect = props.clientRect?.();
               if (rect && container) {
                 container.style.left = `${rect.left}px`;
                 container.style.top = `${rect.bottom + 4}px`;
@@ -201,13 +201,12 @@ export const SlashCommand = Extension.create({
               render();
             },
 
-            onUpdate(props: Record<string, unknown>) {
-              currentItems = (props.items ?? []) as SlashCommandItem[];
-              currentCommand = props.command as (p: SlashCommandItem) => void;
+            onUpdate(props: SuggestionProps<SlashCommandItem, SlashCommandItem>) {
+              currentItems = props.items ?? [];
+              currentCommand = props.command;
               if (selectedIndex >= currentItems.length) selectedIndex = 0;
 
-              const clientRect = props.clientRect as (() => DOMRect | null) | undefined;
-              const rect = clientRect?.();
+              const rect = props.clientRect?.();
               if (rect && container) {
                 container.style.left = `${rect.left}px`;
                 container.style.top = `${rect.bottom + 4}px`;
@@ -215,7 +214,7 @@ export const SlashCommand = Extension.create({
               render();
             },
 
-            onKeyDown(props: { event: KeyboardEvent }) {
+            onKeyDown(props: SuggestionKeyDownProps) {
               if (props.event.key === "ArrowDown") {
                 selectedIndex = (selectedIndex + 1) % Math.max(1, currentItems.length);
                 render();

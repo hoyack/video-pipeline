@@ -185,7 +185,7 @@ class PromptRewriterService:
         Raises:
             Exception: After 3 retry attempts exhausted
         """
-        adapter = self._adapter or get_adapter("gemini-2.5-flash")
+        adapter = self._adapter or get_adapter("gemini-3.5-flash")
         result = await adapter.generate_text(
             prompt=f"{system_prompt}\n\n{user_context}",
             schema=schema,

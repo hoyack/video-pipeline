@@ -493,7 +493,7 @@ def build_qwen_txt2img_workflow(
     prompt: str,
     width: int = 1328,
     height: int = 1328,
-    seed: int = 0,
+    seed: int | None = 0,
 ) -> dict:
     """Build ComfyUI API-format workflow for Qwen 2512 text-to-image.
 
@@ -511,9 +511,10 @@ def build_qwen_txt2img_workflow(
     Returns:
         ComfyUI API-format prompt dict
     """
+    seed_value = int(seed or 0)
     workflow = copy.deepcopy(_load_qwen_template())
     workflow["108"]["inputs"]["text"] = prompt
-    workflow["106"]["inputs"]["seed"] = seed
+    workflow["106"]["inputs"]["seed"] = seed_value
     workflow["107"]["inputs"]["width"] = width
     workflow["107"]["inputs"]["height"] = height
     return workflow
@@ -584,7 +585,7 @@ def build_qwen_image_edit_workflow(
     *,
     prompt: str,
     input_image_filename: str,
-    seed: int = 0,
+    seed: int | None = 0,
 ) -> dict:
     """Build ComfyUI API-format workflow for Qwen Image Edit.
 
@@ -604,9 +605,10 @@ def build_qwen_image_edit_workflow(
     Returns:
         ComfyUI API-format prompt dict
     """
+    seed_value = int(seed or 0)
     workflow = copy.deepcopy(_load_qwen_image_edit_template())
     workflow["102:76"]["inputs"]["prompt"] = prompt
-    workflow["102:3"]["inputs"]["seed"] = seed
+    workflow["102:3"]["inputs"]["seed"] = seed_value
     workflow["78"]["inputs"]["image"] = input_image_filename
     return workflow
 

@@ -63,6 +63,7 @@ async def _create_character_binding(
     ref_urls: list[str],
     base_ref_urls: list[str] | None = None,
     look_tag: str | None = None,
+    look_is_default: bool = False,
     identity_type: str = "HUMAN",
 ) -> None:
     actor = Actor(
@@ -104,7 +105,7 @@ async def _create_character_binding(
             cast_binding_id=binding.id,
             wardrobe_preset_id=preset.id,
             tag=look_tag,
-            is_default=False,
+            is_default=look_is_default,
         ))
     else:
         for index, ref_url in enumerate(ref_urls):
@@ -229,6 +230,71 @@ async def test_multi_character_refs_include_all_visible_tags(session_factory, tm
             "DRACULA_NORMAL",
             "BRANDON_CROSS_CYBERPUNK",
             "DRACULA_NORMAL",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_binding_tag_with_default_look_keeps_requested_character_ref(
+    session_factory,
+    tmp_path: Path,
+):
+    async with session_factory() as session:
+        bible = ProductionBible(name="Default Look Alias Bible")
+        session.add(bible)
+        await session.flush()
+
+        await _create_character_binding(
+            session,
+            bible_id=bible.id,
+            actor_name="Brandon Cross",
+            binding_tag="BRANDON_CROSS",
+            look_tag="BRANDON_CROSS_CYBERPUNK",
+            look_is_default=True,
+            ref_urls=[_write_ref(tmp_path, "brandon-look.png")],
+            base_ref_urls=[_write_ref(tmp_path, "brandon-face.png")],
+        )
+        await session.commit()
+
+        resolved = await resolve_tags_with_assets(
+            "@BRANDON_CROSS enters frame.",
+            bible.id,
+            session,
+        )
+        char_ref = next(ref for ref in resolved.asset_refs if ref.asset_type == "CHARACTER")
+        assert char_ref.tag == "BRANDON_CROSS_CYBERPUNK"
+
+        shot = Shot(
+            scene_id=uuid.uuid4(),
+            shot_index=0,
+            shot_description="The recurring hero enters.",
+            start_frame_prompt="",
+            end_frame_prompt="",
+            video_motion_prompt="",
+            status="draft",
+            characters_present=[],
+        )
+
+        context = await _assemble_nano_banana_reference_context(
+            session,
+            production_bible_id=bible.id,
+            scene_prompt=None,
+            shot=shot,
+            shot_manifest_json={
+                "placements": [
+                    {"asset_tag": "BRANDON_CROSS"},
+                ]
+            },
+            selected_reference_tags=["BRANDON_CROSS"],
+            all_assets=[],
+            file_mgr=FileManager(),
+        )
+
+        assert context.mandatory_character_tags == ["BRANDON_CROSS"]
+        assert context.final_reference_tags == ["BRANDON_CROSS", "BRANDON_CROSS"]
+        assert context.identity_types_by_tag["BRANDON_CROSS"] == "HUMAN"
+        assert context.ref_image_bytes_list == [
+            Path(tmp_path / "brandon-face.png").read_bytes(),
+            Path(tmp_path / "brandon-look.png").read_bytes(),
         ]
 
 

@@ -74,11 +74,10 @@ export interface VideoModelOption {
 // ---------------------------------------------------------------------------
 
 export const TEXT_MODELS: TextModelOption[] = [
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", costPerCall: 0.006 },
-  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", costPerCall: 0.001 },
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", costPerCall: 0.023 },
   { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", costPerCall: 0.007 },
-  { id: "gemini-3-pro-preview", label: "Gemini 3 Pro", costPerCall: 0.028 },
+  { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", costPerCall: 0.028 },
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", costPerCall: 0.007 },
 ];
 
 export const IMAGE_MODELS: ImageModelOption[] = [
@@ -96,10 +95,9 @@ export const VIDEO_MODELS: VideoModelOption[] = [
   { id: "veo-2.0-generate-001", label: "Veo 2", costPerSecond: 0.35, costPerSecondAudio: 0.35, supportsAudio: false, allowedDurations: [5, 6, 7, 8] },
   { id: "veo-3.0-generate-001", label: "Veo 3", costPerSecond: 0.40, costPerSecondAudio: 0.40, supportsAudio: true, allowedDurations: [4, 6, 8] },
   { id: "veo-3.0-fast-generate-001", label: "Veo 3 Fast", costPerSecond: 0.15, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8] },
-  { id: "veo-3.1-generate-preview", label: "Veo 3.1", costPerSecond: 0.40, costPerSecondAudio: 0.40, supportsAudio: true, allowedDurations: [4, 6, 8] },
   { id: "veo-3.1-generate-001", label: "Veo 3.1 GA", costPerSecond: 0.40, costPerSecondAudio: 0.40, supportsAudio: true, allowedDurations: [4, 6, 8] },
-  { id: "veo-3.1-fast-generate-preview", label: "Veo 3.1 Fast", costPerSecond: 0.10, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8] },
   { id: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast GA", costPerSecond: 0.10, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8] },
+  { id: "veo-3.1-lite-generate-001", label: "Veo 3.1 Lite", costPerSecond: 0.10, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8] },
   { id: "wan-2.2-i2v", label: "Wan 2.2", costPerSecond: 0, costPerSecondAudio: 0, supportsAudio: false, allowedDurations: [5] },
 ];
 

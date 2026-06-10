@@ -2,6 +2,7 @@ import { Extension } from "@tiptap/core";
 import { Suggestion } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/core";
+import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
 
 const assetMentionPluginKey = new PluginKey("assetMention");
 
@@ -50,7 +51,7 @@ export const AssetMention = Extension.create({
     const extensionStorage = this.storage as { assets: AssetMentionItem[] };
 
     return [
-      Suggestion({
+      Suggestion<AssetMentionItem, AssetMentionItem>({
         pluginKey: assetMentionPluginKey,
         editor: this.editor,
         char: "@",
@@ -81,7 +82,8 @@ export const AssetMention = Extension.create({
 
           function render() {
             if (!container) return;
-            container.innerHTML = "";
+            const menu = container;
+            menu.innerHTML = "";
             if (currentItems.length === 0) {
               const empty = document.createElement("div");
               empty.className = "px-3 py-2 text-xs text-gray-500 italic";
@@ -91,7 +93,7 @@ export const AssetMention = Extension.create({
                 assets.length === 0
                   ? "No Production Bible attached"
                   : "No matching assets";
-              container.appendChild(empty);
+              menu.appendChild(empty);
               return;
             }
 
@@ -144,12 +146,12 @@ export const AssetMention = Extension.create({
                 currentCommand?.(item);
               });
 
-              container.appendChild(btn);
+              menu.appendChild(btn);
             });
           }
 
           return {
-            onStart(props: Record<string, unknown>) {
+            onStart(props: SuggestionProps<AssetMentionItem, AssetMentionItem>) {
               container = document.createElement("div");
               container.className =
                 "w-64 max-h-72 overflow-y-auto rounded-lg border border-gray-700 bg-gray-800 py-1 shadow-xl";
@@ -158,11 +160,10 @@ export const AssetMention = Extension.create({
               document.body.appendChild(container);
 
               selectedIndex = 0;
-              currentItems = (props.items ?? []) as AssetMentionItem[];
-              currentCommand = props.command as (props: AssetMentionItem) => void;
+              currentItems = props.items ?? [];
+              currentCommand = props.command;
 
-              const clientRect = props.clientRect as (() => DOMRect | null) | undefined;
-              const rect = clientRect?.();
+              const rect = props.clientRect?.();
               if (rect && container) {
                 container.style.left = `${rect.left}px`;
                 container.style.top = `${rect.bottom + 4}px`;
@@ -171,13 +172,12 @@ export const AssetMention = Extension.create({
               render();
             },
 
-            onUpdate(props: Record<string, unknown>) {
-              currentItems = (props.items ?? []) as AssetMentionItem[];
-              currentCommand = props.command as (props: AssetMentionItem) => void;
+            onUpdate(props: SuggestionProps<AssetMentionItem, AssetMentionItem>) {
+              currentItems = props.items ?? [];
+              currentCommand = props.command;
               if (selectedIndex >= currentItems.length) selectedIndex = 0;
 
-              const clientRect = props.clientRect as (() => DOMRect | null) | undefined;
-              const rect = clientRect?.();
+              const rect = props.clientRect?.();
               if (rect && container) {
                 container.style.left = `${rect.left}px`;
                 container.style.top = `${rect.bottom + 4}px`;
@@ -186,7 +186,7 @@ export const AssetMention = Extension.create({
               render();
             },
 
-            onKeyDown(props: { event: KeyboardEvent }) {
+            onKeyDown(props: SuggestionKeyDownProps) {
               if (props.event.key === "ArrowDown") {
                 selectedIndex = (selectedIndex + 1) % Math.max(1, currentItems.length);
                 render();

@@ -22,7 +22,7 @@ function formatCost(item: SceneListItem): string | null {
 /** Short display name for a video model ID */
 function shortModel(modelId: string | null | undefined): string | null {
   if (!modelId) return null;
-  // e.g. "veo-3.1-generate-preview" → "Veo 3.1"
+  // e.g. "veo-3.1-generate-001" -> "Veo 3.1"
   const match = modelId.match(/veo[- ]?([\d.]+)/i);
   if (match) return `Veo ${match[1]}`;
   // comfyui models

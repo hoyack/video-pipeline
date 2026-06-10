@@ -5,20 +5,24 @@ Provides async SQLAlchemy engine with driver-aware configuration
 (SQLite WAL mode or PostgreSQL connection pooling),
 session management, and schema initialization.
 """
+import json
 import logging
 
-from sqlalchemy import text
+from sqlalchemy import select, text, update
 
 from vidpipe.db.engine import async_session, engine, get_session, shutdown, _is_sqlite
-from vidpipe.db.models import (
+from vidpipe.db.models import (  # noqa: F401
     Base, ShotManifest, ShotAudioManifest, AssetCleanReference, AssetAppearance,
     SceneCheckpoint, Production, ProductionBible, Sequence, Screenplay, DEFAULT_USER_ID,
+    Scene, UserSettings,
     Character, Wardrobe, VoiceProfile, Set, SonicIdentity, Prop, ScoreTheme, SFXItem,
     Actor, ActorRef, ActorVoiceProfile, ActorWardrobePreset,
     LibrarySet, LibrarySetRef, LibrarySonicIdentity,
     LibraryProp, LibraryPropRef, SoundAsset,
     CastBinding, SetBinding, PropBinding, SoundBinding,
+    SoundEffectCue, SoundMixArtifact,
 )
+from vidpipe.services.model_catalog import LEGACY_MODEL_REPLACEMENTS, canonical_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +271,100 @@ async def _run_migrations(conn) -> None:
         await _promote_json_text_columns(conn)
     await _backfill_cast_binding_identity_types(conn)
     await _widen_keyframe_verification_status_column(conn)
+    await _canonicalize_legacy_model_ids(conn)
+
+
+def _canonicalize_model_list(value):
+    """Return an enabled-model JSON list with legacy IDs replaced."""
+    if value is None:
+        return None
+
+    raw = value
+    if isinstance(value, str):
+        try:
+            raw = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+
+    if not isinstance(raw, list):
+        return value
+
+    canonical = []
+    seen = set()
+    changed = raw is not value
+    for item in raw:
+        next_item = canonical_model_id(item) if isinstance(item, str) else item
+        changed = changed or next_item != item
+        if isinstance(next_item, str):
+            if next_item in seen:
+                changed = True
+                continue
+            seen.add(next_item)
+        canonical.append(next_item)
+
+    return canonical if changed else value
+
+
+async def _canonicalize_legacy_model_ids(conn) -> None:
+    """Backfill deprecated model IDs in persisted scenes and settings."""
+    scene_table = Scene.__table__
+    settings_table = UserSettings.__table__
+    migrated = 0
+
+    for column_name in ("text_model", "image_model", "video_model", "vision_model"):
+        column = scene_table.c[column_name]
+        for legacy_model, replacement_model in LEGACY_MODEL_REPLACEMENTS.items():
+            result = await conn.execute(
+                update(scene_table)
+                .where(column == legacy_model)
+                .values({column_name: replacement_model})
+            )
+            migrated += max(result.rowcount or 0, 0)
+
+    for column_name in (
+        "default_text_model",
+        "default_image_model",
+        "default_video_model",
+        "default_vision_model",
+    ):
+        column = settings_table.c[column_name]
+        for legacy_model, replacement_model in LEGACY_MODEL_REPLACEMENTS.items():
+            result = await conn.execute(
+                update(settings_table)
+                .where(column == legacy_model)
+                .values({column_name: replacement_model})
+            )
+            migrated += max(result.rowcount or 0, 0)
+
+    rows = await conn.execute(
+        select(
+            settings_table.c.id,
+            settings_table.c.enabled_text_models,
+            settings_table.c.enabled_image_models,
+            settings_table.c.enabled_video_models,
+        )
+    )
+    for row in rows.mappings():
+        values = {}
+        for column_name in (
+            "enabled_text_models",
+            "enabled_image_models",
+            "enabled_video_models",
+        ):
+            updated_value = _canonicalize_model_list(row[column_name])
+            if updated_value != row[column_name]:
+                values[column_name] = updated_value
+
+        if values:
+            await conn.execute(
+                update(settings_table)
+                .where(settings_table.c.id == row["id"])
+                .values(**values)
+            )
+            migrated += 1
+
+    if migrated:
+        logger.info("Canonicalized %s legacy model ID references", migrated)
 
 
 async def _backfill_cast_binding_identity_types(conn) -> None:

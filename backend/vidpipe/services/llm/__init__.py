@@ -6,7 +6,7 @@ across multiple LLM providers (Vertex AI, Ollama, and future providers).
 Usage:
     from vidpipe.services.llm import get_adapter, LLMAdapter
 
-    adapter = get_adapter("gemini-2.5-flash")
+    adapter = get_adapter("gemini-3.5-flash")
     result = await adapter.generate_text(prompt, MySchema)
 
     adapter = get_adapter("ollama/llama3.1", user_settings)

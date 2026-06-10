@@ -958,6 +958,75 @@ export interface VoiceScriptActionResponse {
 }
 
 // ============================================================================
+// Sound deck types
+// ============================================================================
+
+export interface SoundEffectCueResponse {
+  id: string;
+  production_id: string;
+  scene_id: string | null;
+  shot_id: string | null;
+  scene_number: number | null;
+  shot_number: number | null;
+  cue_index: number;
+  cue_type: string;
+  name: string;
+  prompt: string;
+  timing_hint: string | null;
+  start_time_seconds: number | null;
+  duration_seconds: number | null;
+  volume_db: number | null;
+  sound_asset_id: string | null;
+  sfx_item_id: string | null;
+  audio_path: string | null;
+  audio_url: string | null;
+  audio_mime_type: string;
+  generation_status: string;
+  provider_metadata: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SoundEffectCueUpdate {
+  scene_number?: number | null;
+  shot_number?: number | null;
+  cue_type?: string;
+  name?: string;
+  prompt?: string;
+  timing_hint?: string | null;
+  start_time_seconds?: number | null;
+  duration_seconds?: number | null;
+  volume_db?: number | null;
+  sound_asset_id?: string | null;
+  sfx_item_id?: string | null;
+}
+
+export interface SoundMixArtifactResponse {
+  id: string;
+  production_id: string;
+  scene_id: string | null;
+  artifact_type: string;
+  audio_path: string | null;
+  audio_url: string | null;
+  duration_seconds: number | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface SoundDeckResponse {
+  production_id: string;
+  cues: SoundEffectCueResponse[];
+  mix_artifacts: SoundMixArtifactResponse[];
+}
+
+export interface SoundDeckActionResponse {
+  sound_deck: SoundDeckResponse;
+  message: string;
+}
+
+// ============================================================================
 // Audio generation types (ElevenLabs adapter)
 // ============================================================================
 

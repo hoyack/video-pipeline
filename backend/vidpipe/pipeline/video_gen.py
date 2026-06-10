@@ -43,8 +43,9 @@ from vidpipe.services.candidate_scoring import CandidateScoringService
 from vidpipe.services.cv_analysis_service import CVAnalysisService
 from vidpipe.services.entity_extraction import identify_new_entities, extract_and_register_new_entities
 from vidpipe.services.file_manager import FileManager
-from vidpipe.services.llm import get_adapter, LLMAdapter
+from vidpipe.services.llm import LLMAdapter
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+from vidpipe.services.model_catalog import canonical_model_id
 from vidpipe.services import manifest_service
 
 # ---------------------------------------------------------------------------
@@ -698,7 +699,9 @@ async def _handle_quality_mode_candidates(
     await session.commit()
 
     # Step 8: Run CV analysis on selected candidate only
-    await _run_post_generation_analysis(session, shot, clip, scene, shot_manifest_row, cv_service=cv_service)
+    await _run_post_generation_analysis(
+        session, shot, clip, scene, shot_manifest_row, file_mgr, cv_service=cv_service
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +713,7 @@ async def _run_post_generation_analysis(
     clip: VideoClip,
     scene: Scene,
     shot_manifest_row,  # ShotManifest | None (imported inline to avoid circular)
+    file_mgr: FileManager,
     cv_service: Optional[CVAnalysisService] = None,
 ) -> None:
     """Run CV analysis on completed video clip for progressive enrichment.
@@ -837,11 +841,11 @@ async def generate_videos(
         session: Database session for persisting clips and candidates
         scene: Scene containing shots to generate videos for
         text_adapter: Optional LLMAdapter for prompt rewriting. If None,
-            PromptRewriterService falls back to get_adapter("gemini-2.5-flash").
+            PromptRewriterService falls back to get_adapter("gemini-3.5-flash").
         vision_adapter: Optional LLMAdapter for CV analysis and candidate scoring.
-            If None, services fall back to get_adapter("gemini-2.5-flash").
+            If None, services fall back to get_adapter("gemini-3.5-flash").
     """
-    video_model = scene.video_model or settings.models.video_gen
+    video_model = canonical_model_id(scene.video_model or settings.models.video_gen) or settings.models.video_gen
     is_comfyui = video_model in COMFYUI_VIDEO_MODELS
     client = None if is_comfyui else get_vertex_client(location=location_for_model(video_model))
     file_mgr = FileManager()
@@ -1116,7 +1120,7 @@ async def _generate_video_comfyui(
 
             # Post-generation CV analysis (reuse existing)
             await _run_post_generation_analysis(
-                session, shot, clip, scene, shot_manifest_row,
+                session, shot, clip, scene, shot_manifest_row, file_mgr,
             )
 
             logger.info("Shot %d: ComfyUI video complete", shot.shot_index)
@@ -1165,8 +1169,8 @@ async def _load_char_ref_images(
         select(Asset).where(
             Asset.production_bible_id == scene.production_bible_id,
             Asset.asset_type == "CHARACTER",
-            Asset.reference_image_url != None,
-            Asset.is_inherited == False,
+            Asset.reference_image_url.is_not(None),
+            Asset.is_inherited.is_(False),
         ).order_by(Asset.sort_order).limit(2)
     )
     assets = result.scalars().all()
@@ -1452,7 +1456,7 @@ async def _generate_video_for_shot(
                 if poll_result == "complete":
                     # Phase 9: Post-generation CV analysis for progressive enrichment
                     await _run_post_generation_analysis(
-                        session, shot, clip, scene, shot_manifest_row, cv_service=cv_service,
+                        session, shot, clip, scene, shot_manifest_row, file_mgr, cv_service=cv_service,
                     )
                 return  # complete, failed, or timed_out
             # Content policy → fall through to escalation loop
@@ -1631,7 +1635,7 @@ async def _generate_video_for_shot(
                 else:
                     # Standard mode: Phase 9 post-generation CV analysis
                     await _run_post_generation_analysis(
-                        session, shot, clip, scene, shot_manifest_row, cv_service=cv_service,
+                        session, shot, clip, scene, shot_manifest_row, file_mgr, cv_service=cv_service,
                     )
                 return
             elif poll_result == "content_policy":

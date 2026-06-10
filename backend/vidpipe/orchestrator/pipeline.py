@@ -224,10 +224,17 @@ async def run_pipeline(
 
     # Load UserSettings for adapter creation
     from vidpipe.config import settings as app_settings
+    from vidpipe.services.model_catalog import canonical_model_id
     user_settings_result = await session.execute(
         select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
     )
     user_settings = user_settings_result.scalar_one_or_none()
+
+    scene.text_model = canonical_model_id(scene.text_model) or scene.text_model
+    scene.image_model = canonical_model_id(scene.image_model) or scene.image_model
+    scene.video_model = canonical_model_id(scene.video_model) or scene.video_model
+    scene.vision_model = canonical_model_id(scene.vision_model) or scene.vision_model
+    await session.commit()
 
     # Create adapters from scene config + user settings
     text_model_id = scene.text_model or app_settings.models.storyboard_llm

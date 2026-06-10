@@ -21,7 +21,6 @@ import { CopyButton } from "./CopyButton.tsx";
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
-import { MarkdownEditorModal } from "./MarkdownEditorModal.tsx";
 import { ProductionBibleSelector } from "./ProductionBibleSelector.tsx";
 import { RegenProgressBar } from "./RegenProgressBar.tsx";
 import type { RegenTaskLogEntry } from "./RegenProgressBar.tsx";
@@ -422,7 +421,7 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
   const [error, setError] = useState<string | null>(null);
   const [regenScope, setRegenScope] = useState<string | null>(null);
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
-  const [_stitching, setStitching] = useState(false);
+  const [, setStitching] = useState(false);
   const [stitchMessage, setStitchMessage] = useState<string | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(!detail.prompt);
   const [manifestExpanded, setManifestExpanded] = useState(!detail.production_bible_id);
@@ -1149,7 +1148,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     if (regenDone.current) return true;
     const req = buildEditRequest();
     // Exclude expected_sha and commit_message from change detection
-    const { expected_sha: _e, commit_message: _c, ...rest } = req;
+    const rest = { ...req };
+    delete rest.expected_sha;
+    delete rest.commit_message;
     return Object.keys(rest).length > 0;
   }
 
@@ -1184,7 +1185,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
     setError(null);
     try {
       const req = buildEditRequest();
-      const { expected_sha: _e, commit_message: _c, ...fieldChanges } = req;
+      const fieldChanges = { ...req };
+      delete fieldChanges.expected_sha;
+      delete fieldChanges.commit_message;
       if (Object.keys(fieldChanges).length > 0) {
         // Text/field edits present — use the edit endpoint
         await editScene(detail.scene_id, req);
@@ -1213,7 +1216,9 @@ export function EditModeOverlay({ detail, onCommitted, onCancel, onRefresh }: Ed
       // Auto-save pending edits so the backend uses the latest state
       let currentSha = detail.head_sha ?? null;
       const req = buildEditRequest();
-      const { expected_sha: _e, commit_message: _c, ...fieldChanges } = req;
+      const fieldChanges = { ...req };
+      delete fieldChanges.expected_sha;
+      delete fieldChanges.commit_message;
       if (Object.keys(fieldChanges).length > 0) {
         const editResp = await editScene(detail.scene_id, req);
         currentSha = editResp.head_sha;

@@ -866,7 +866,7 @@ async def generate_actor_metadata(actor_id: str):
         mime_type = mime_map.get(suffix, "image/jpeg")
 
         settings = await session.get(UserSettings, DEFAULT_USER_ID)
-        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-3.5-flash"
         user_settings = settings
 
     prompt = """You are a visual prompt engineer for AI video generation.
@@ -1117,7 +1117,7 @@ async def train_actor_lora(actor_id: str):
         # Extract values for background task (never share request session)
         replicate_token = settings.replicate_api_token
         replicate_username = getattr(settings, "replicate_username", None) or "vidpipe"
-        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-3.5-flash"
         user_settings = settings
         actor_id_str = str(actor.id)
         actor_uuid = actor.id
@@ -1916,7 +1916,7 @@ async def generate_set_metadata(set_id: str):
 
         # Get user's default vision model
         settings = await session.get(UserSettings, DEFAULT_USER_ID)
-        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-3.5-flash"
 
         user_settings = settings  # pass through for adapter API key resolution
 
@@ -2412,7 +2412,7 @@ async def generate_prop_metadata(prop_id: str):
         mime_type = mime_map.get(suffix, "image/jpeg")
 
         settings = await session.get(UserSettings, DEFAULT_USER_ID)
-        vision_model = (settings.default_vision_model if settings else None) or "gemini-2.5-flash"
+        vision_model = (settings.default_vision_model if settings else None) or "gemini-3.5-flash"
         user_settings = settings
 
     prompt = """You are a visual prompt engineer for AI video generation.

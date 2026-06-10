@@ -82,7 +82,7 @@ class CVAnalysisService:
 
         Args:
             vision_adapter: Optional LLMAdapter for semantic analysis.
-                If None, falls back to get_adapter("gemini-2.5-flash").
+                If None, falls back to get_adapter("gemini-3.5-flash").
         """
         self._vision_adapter = vision_adapter
         self._cv_service: Optional[CVDetectionService] = None
@@ -358,13 +358,13 @@ class CVAnalysisService:
             shot_manifest_json: Shot manifest dict with expected assets
             face_matches: Face matching results
             vision_adapter: Optional LLMAdapter for vision. Falls back to
-                get_adapter("gemini-2.5-flash") if None.
+                get_adapter("gemini-3.5-flash") if None.
 
         Returns:
             SemanticAnalysis or None if API call fails
         """
         try:
-            adapter = vision_adapter or get_adapter("gemini-2.5-flash")
+            adapter = vision_adapter or get_adapter("gemini-3.5-flash")
 
             # Read first frame bytes
             if not frame_paths:

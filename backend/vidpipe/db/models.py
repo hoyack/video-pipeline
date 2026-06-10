@@ -911,6 +911,67 @@ class VoiceMixArtifact(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class SoundEffectCue(Base):
+    """Editable production sound-deck cue for SFX, ambience, foley, or UI audio."""
+    __tablename__ = "sound_effect_cues"
+    __table_args__ = (
+        Index("idx_sound_cue_production", "production_id"),
+        Index("idx_sound_cue_scene", "scene_id"),
+        Index("idx_sound_cue_shot", "shot_id"),
+        Index("idx_sound_cue_status", "generation_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("productions.id"), index=True)
+    scene_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scenes.id"), nullable=True, index=True)
+    shot_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("shots.id"), nullable=True, index=True)
+    scene_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    shot_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cue_index: Mapped[int] = mapped_column(Integer, default=0)
+    cue_type: Mapped[str] = mapped_column(String(30), default="SFX")
+    name: Mapped[str] = mapped_column(Text)
+    prompt: Mapped[str] = mapped_column(Text)
+    timing_hint: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    start_time_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    volume_db: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sound_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("sound_assets.id"), nullable=True, index=True
+    )
+    sfx_item_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("sfx_items.id"), nullable=True, index=True
+    )
+    audio_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    audio_mime_type: Mapped[str] = mapped_column(String(50), default="audio/mpeg")
+    generation_status: Mapped[str] = mapped_column(String(32), default="PENDING", index=True)
+    provider_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SoundMixArtifact(Base):
+    """Rendered sound-deck stem for a production or scene."""
+    __tablename__ = "sound_mix_artifacts"
+    __table_args__ = (
+        Index("idx_sound_mix_production", "production_id"),
+        Index("idx_sound_mix_scene", "scene_id"),
+        Index("idx_sound_mix_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    production_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("productions.id"), index=True)
+    scene_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scenes.id"), nullable=True, index=True)
+    artifact_type: Mapped[str] = mapped_column(String(40), default="SCENE_SFX_STEM")
+    audio_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="READY")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class LipSyncJob(Base):
     """Tracks a post-video lip-sync operation for one voice line and shot."""
     __tablename__ = "lip_sync_jobs"

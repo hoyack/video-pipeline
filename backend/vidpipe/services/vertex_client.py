@@ -19,9 +19,9 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
 
 from vidpipe.config import settings
+from vidpipe.services.model_catalog import GLOBAL_REGION_MODELS, canonical_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +35,6 @@ _clients: dict[str, genai.Client] = {}
 _db_project_id: Optional[str] = None
 _db_location: Optional[str] = None
 _db_credentials: Optional[object] = None  # google.oauth2.service_account.Credentials
-
-# Models that must use the global endpoint
-GLOBAL_REGION_MODELS = {
-    "gemini-3-flash-preview",
-    "gemini-3-pro-preview",
-    "gemini-3-pro-image-preview",
-}
-
 
 async def load_vertex_credentials_from_db() -> None:
     """Load Vertex AI credentials from user_settings DB table.
@@ -112,7 +104,8 @@ def _effective_location() -> str:
 
 def location_for_model(model_id: str) -> str:
     """Return the Vertex AI location needed for a given model ID."""
-    if model_id in GLOBAL_REGION_MODELS:
+    canonical = canonical_model_id(model_id) or model_id
+    if canonical in GLOBAL_REGION_MODELS:
         return "global"
     return _effective_location()
 

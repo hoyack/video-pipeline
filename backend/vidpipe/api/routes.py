@@ -26,6 +26,18 @@ from vidpipe.orchestrator.state import can_resume
 from vidpipe.schemas.storyboard import ShotSchema
 from vidpipe.schemas.storyboard_enhanced import EnhancedShotSchema
 from vidpipe.services.file_manager import FileManager
+from vidpipe.services.model_catalog import (
+    AUDIO_CAPABLE_VIDEO_MODELS,
+    IMAGE_MODEL_COST,
+    IMAGE_MODELS,
+    TEXT_MODEL_COST,
+    TEXT_MODELS,
+    VIDEO_MODEL_COST_AUDIO,
+    VIDEO_MODEL_COST_SILENT,
+    VIDEO_MODEL_DURATIONS,
+    VIDEO_MODELS,
+    canonical_model_id,
+)
 from vidpipe.services.storage_backend import get_storage_backend, LocalStorageBackend, StorageBackend
 from vidpipe.services import manifest_service
 from vidpipe.workers.processing_tasks import process_manifest_task, extract_video_frames_task, TASK_STATUS
@@ -39,92 +51,27 @@ router = APIRouter(prefix="/api")
 # ---------------------------------------------------------------------------
 # Allowed model IDs
 # ---------------------------------------------------------------------------
-ALLOWED_TEXT_MODELS = {
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-    "gemini-3-flash-preview",
-    "gemini-3-pro-preview",
-}
-ALLOWED_IMAGE_MODELS = {
-    "gemini-2.5-flash-image",
-    "gemini-3-pro-image-preview",
-    "qwen-fast",
-    "qwen-image-edit",
-    "flux-dev",
-    "flux-dev-lora",
-    "flux-dev-redux",
-    "flux-dev-full",
-}
-ALLOWED_VIDEO_MODELS = {
-    "veo-2.0-generate-001",
-    "veo-3.0-generate-001",
-    "veo-3.0-fast-generate-001",
-    "veo-3.1-generate-preview",
-    "veo-3.1-generate-001",
-    "veo-3.1-fast-generate-preview",
-    "veo-3.1-fast-generate-001",
-    "wan-2.2-i2v",
-}
+ALLOWED_TEXT_MODELS = TEXT_MODELS
+ALLOWED_IMAGE_MODELS = IMAGE_MODELS
+ALLOWED_VIDEO_MODELS = VIDEO_MODELS
 
 # Video models that support audio generation
-AUDIO_CAPABLE_MODELS = ALLOWED_VIDEO_MODELS - {"veo-2.0-generate-001", "wan-2.2-i2v"}
+AUDIO_CAPABLE_MODELS = AUDIO_CAPABLE_VIDEO_MODELS
 
 # Allowed clip durations per video model
-ALLOWED_DURATIONS: dict[str, list[int]] = {
-    "veo-2.0-generate-001": [5, 6, 7, 8],
-    "veo-3.0-generate-001": [4, 6, 8],
-    "veo-3.0-fast-generate-001": [4, 6, 8],
-    "veo-3.1-generate-preview": [4, 6, 8],
-    "veo-3.1-generate-001": [4, 6, 8],
-    "veo-3.1-fast-generate-preview": [4, 6, 8],
-    "veo-3.1-fast-generate-001": [4, 6, 8],
-    "wan-2.2-i2v": [5],
-}
+ALLOWED_DURATIONS: dict[str, list[int]] = VIDEO_MODEL_DURATIONS
+
+
+def _canonical_model_or_ollama(model_id: str | None) -> str | None:
+    """Normalize known legacy Vertex model IDs while preserving Ollama IDs."""
+    if model_id is None or model_id.startswith("ollama/"):
+        return model_id
+    return canonical_model_id(model_id)
+
 
 # ---------------------------------------------------------------------------
 # Pricing (for server-side cost estimation)
 # ---------------------------------------------------------------------------
-TEXT_MODEL_COST: dict[str, float] = {
-    "gemini-2.5-flash": 0.006,
-    "gemini-2.5-flash-lite": 0.001,
-    "gemini-2.5-pro": 0.023,
-    "gemini-3-flash-preview": 0.007,
-    "gemini-3-pro-preview": 0.028,
-}
-
-IMAGE_MODEL_COST: dict[str, float] = {
-    "gemini-2.5-flash-image": 0.04,
-    "gemini-3-pro-image-preview": 0.13,
-    "qwen-fast": 0.0,
-    "qwen-image-edit": 0.0,
-    "flux-dev": 0.0,
-    "flux-dev-lora": 0.0,
-    "flux-dev-redux": 0.0,
-    "flux-dev-full": 0.0,
-}
-
-VIDEO_MODEL_COST_SILENT: dict[str, float] = {
-    "veo-2.0-generate-001": 0.35,
-    "veo-3.0-generate-001": 0.40,
-    "veo-3.0-fast-generate-001": 0.15,
-    "veo-3.1-generate-preview": 0.40,
-    "veo-3.1-generate-001": 0.40,
-    "veo-3.1-fast-generate-preview": 0.10,
-    "veo-3.1-fast-generate-001": 0.10,
-    "wan-2.2-i2v": 0.0,
-}
-
-VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
-    "veo-2.0-generate-001": 0.35,
-    "veo-3.0-generate-001": 0.40,
-    "veo-3.0-fast-generate-001": 0.15,
-    "veo-3.1-generate-preview": 0.40,
-    "veo-3.1-generate-001": 0.40,
-    "veo-3.1-fast-generate-preview": 0.15,
-    "veo-3.1-fast-generate-001": 0.15,
-    "wan-2.2-i2v": 0.0,
-}
 
 
 def _estimate_scene_cost(
@@ -213,7 +160,7 @@ class GenerateRequest(BaseModel):
     aspect_ratio: str = "16:9"
     clip_duration: int = 6
     total_duration: int = 15
-    text_model: str = "gemini-2.5-flash"
+    text_model: str = "gemini-3.5-flash"
     image_model: str = "gemini-2.5-flash-image"
     video_model: str = "veo-3.1-fast-generate-001"
     enable_audio: bool = True
@@ -737,6 +684,11 @@ async def generate_video(request: GenerateRequest, background_tasks: BackgroundT
     if request.aspect_ratio not in ("16:9", "9:16"):
         raise HTTPException(status_code=422, detail=f"aspect_ratio must be 16:9 or 9:16, got {request.aspect_ratio}")
 
+    request.text_model = _canonical_model_or_ollama(request.text_model) or request.text_model
+    request.image_model = canonical_model_id(request.image_model) or request.image_model
+    request.video_model = canonical_model_id(request.video_model) or request.video_model
+    request.vision_model = _canonical_model_or_ollama(request.vision_model)
+
     # Validate clip duration per video model
     allowed = ALLOWED_DURATIONS.get(request.video_model, [5, 6, 7, 8])
     if request.clip_duration not in allowed:
@@ -871,6 +823,11 @@ async def create_draft_scene(request: CreateSceneRequest):
     if request.aspect_ratio is not None:
         if request.aspect_ratio not in ("16:9", "9:16"):
             raise HTTPException(status_code=422, detail=f"aspect_ratio must be 16:9 or 9:16, got {request.aspect_ratio}")
+
+    request.text_model = _canonical_model_or_ollama(request.text_model)
+    request.image_model = canonical_model_id(request.image_model) if request.image_model is not None else None
+    request.video_model = canonical_model_id(request.video_model) if request.video_model is not None else None
+    request.vision_model = _canonical_model_or_ollama(request.vision_model)
 
     # Validate clip duration per video model (skip if either is None)
     if request.clip_duration is not None and request.video_model is not None:
@@ -1026,18 +983,22 @@ async def start_generation(
                 scene.run_through = None
 
             if body.text_model is not None:
+                body.text_model = _canonical_model_or_ollama(body.text_model) or body.text_model
                 if not (body.text_model in ALLOWED_TEXT_MODELS or body.text_model.startswith("ollama/")):
                     raise HTTPException(status_code=422, detail=f"Invalid text_model: {body.text_model}")
                 scene.text_model = body.text_model
             if body.image_model is not None:
+                body.image_model = canonical_model_id(body.image_model) or body.image_model
                 if body.image_model not in ALLOWED_IMAGE_MODELS:
                     raise HTTPException(status_code=422, detail=f"Invalid image_model: {body.image_model}")
                 scene.image_model = body.image_model
             if body.video_model is not None:
+                body.video_model = canonical_model_id(body.video_model) or body.video_model
                 if body.video_model not in ALLOWED_VIDEO_MODELS:
                     raise HTTPException(status_code=422, detail=f"Invalid video_model: {body.video_model}")
                 scene.video_model = body.video_model
             if body.vision_model is not None:
+                body.vision_model = _canonical_model_or_ollama(body.vision_model) or body.vision_model
                 if not (body.vision_model in ALLOWED_TEXT_MODELS or body.vision_model.startswith("ollama/")):
                     raise HTTPException(status_code=422, detail=f"Invalid vision_model: {body.vision_model}")
                 scene.vision_model = body.vision_model if body.vision_model else None
@@ -1053,6 +1014,11 @@ async def start_generation(
                 if body.enable_audio and scene.video_model not in AUDIO_CAPABLE_MODELS:
                     raise HTTPException(status_code=422, detail=f"Audio not supported for {scene.video_model}")
                 scene.audio_enabled = body.enable_audio
+
+        scene.text_model = _canonical_model_or_ollama(scene.text_model)
+        scene.image_model = canonical_model_id(scene.image_model) if scene.image_model is not None else None
+        scene.video_model = canonical_model_id(scene.video_model) if scene.video_model is not None else None
+        scene.vision_model = _canonical_model_or_ollama(scene.vision_model)
 
         # Verify scene is fully configured before launching pipeline
         run_through = scene.run_through
@@ -1671,7 +1637,7 @@ async def _generate_expansion_shots(
     from vidpipe.services.llm import get_adapter
 
     if text_adapter is None:
-        model_id = scene.text_model or "gemini-2.5-flash"
+        model_id = scene.text_model or "gemini-3.5-flash"
         text_adapter = get_adapter(model_id)
 
     style_label = (scene.style or "cinematic").replace("_", " ")
@@ -2526,7 +2492,9 @@ async def edit_scene_in_place(scene_id: uuid.UUID, body: EditSceneRequest):
                         Shot.scene_id == scene.id
                     )
                 )
-                max_idx = max_idx_result.scalar() or 0
+                max_idx = max_idx_result.scalar()
+                if max_idx is None:
+                    max_idx = -1
                 for i in range(body.target_shot_count - existing_count):
                     new_idx = max_idx + 1 + i
                     new_shot = Shot(
@@ -3843,6 +3811,34 @@ async def get_settings() -> UserSettingsResponse:
 @router.put("/settings")
 async def update_settings(body: UserSettingsUpdate) -> UserSettingsResponse:
     """Update user settings."""
+    if body.enabled_text_models is not None:
+        body.enabled_text_models = [
+            _canonical_model_or_ollama(model_id) or model_id
+            for model_id in body.enabled_text_models
+        ]
+    if body.enabled_image_models is not None:
+        body.enabled_image_models = [
+            canonical_model_id(model_id) or model_id
+            for model_id in body.enabled_image_models
+        ]
+    if body.enabled_video_models is not None:
+        body.enabled_video_models = [
+            canonical_model_id(model_id) or model_id
+            for model_id in body.enabled_video_models
+        ]
+    body.default_text_model = _canonical_model_or_ollama(body.default_text_model)
+    body.default_image_model = (
+        canonical_model_id(body.default_image_model)
+        if body.default_image_model is not None
+        else None
+    )
+    body.default_video_model = (
+        canonical_model_id(body.default_video_model)
+        if body.default_video_model is not None
+        else None
+    )
+    body.default_vision_model = _canonical_model_or_ollama(body.default_vision_model)
+
     # Validate model IDs if provided
     if body.enabled_text_models is not None:
         invalid = set(body.enabled_text_models) - ALLOWED_TEXT_MODELS
@@ -4469,7 +4465,7 @@ async def regenerate_shot_text(
 
     # Call LLM — prefer request override (edit-mode selection) over saved scene model
     from vidpipe.services.llm import get_adapter
-    model_id = body.text_model or scene.text_model or "gemini-2.5-flash"
+    model_id = body.text_model or scene.text_model or "gemini-3.5-flash"
     adapter = get_adapter(model_id, user_settings=user_settings)
 
     try:
@@ -4615,7 +4611,7 @@ async def generate_shot_fields(
 
     # Call LLM
     from vidpipe.services.llm import get_adapter
-    model_id = body.text_model or scene.text_model or "gemini-2.5-flash"
+    model_id = body.text_model or scene.text_model or "gemini-3.5-flash"
     adapter = get_adapter(model_id, user_settings=user_settings)
 
     try:
@@ -4773,7 +4769,7 @@ async def generate_new_shot(
         user_prompt = "\n".join(parts)
 
         from vidpipe.services.llm import get_adapter
-        model_id = body.text_model or scene.text_model or "gemini-2.5-flash"
+        model_id = body.text_model or scene.text_model or "gemini-3.5-flash"
         adapter = get_adapter(model_id, user_settings=user_settings)
 
         try:
@@ -5838,7 +5834,10 @@ async def _run_clips_regeneration(
                 scene.text_model = text_model_override
                 await session.flush()
 
-            saved_status = scene.status
+            if scene.status == "failed":
+                scene.status = "generating"
+                scene.error_message = None
+                await session.flush()
 
             # Load user settings for adapter creation
             us_result = await session.execute(
@@ -5864,8 +5863,12 @@ async def _run_clips_regeneration(
                     select(VideoClip).where(VideoClip.shot_id == shot.id)
                 )
                 clip = clip_result.scalar_one_or_none()
-                if not clip:
-                    # No clip exists — mark as keyframes_done so generate_videos picks it up
+                if clip and clip.local_path:
+                    shot.generation_status = None
+                    if shot.status != "video_done":
+                        shot.status = "video_done"
+                else:
+                    # No usable clip exists — mark as keyframes_done so generate_videos picks it up.
                     shot.status = "keyframes_done"
             await session.flush()
 
@@ -5876,9 +5879,10 @@ async def _run_clips_regeneration(
                 vision_adapter=vision_adapter,
             )
 
-            # Standalone clip regeneration preserves the existing scene status.
             if _emit_complete:
-                scene.status = saved_status
+                from vidpipe.pipeline.stitcher import stitch_videos
+                await stitch_videos(session, scene)
+                await session.refresh(scene)
 
             from vidpipe.services.checkpoint_service import create_checkpoint
             cp = await create_checkpoint(session, scene, "Regenerated stale clips")

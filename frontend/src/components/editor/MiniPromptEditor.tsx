@@ -20,6 +20,11 @@ interface MiniPromptEditorProps {
   placeholder?: string;
 }
 
+function setAssetMentionAssets(editor: { storage: unknown }, assets: AssetMentionItem[]) {
+  const storage = editor.storage as { assetMention: { assets: AssetMentionItem[] } };
+  storage.assetMention.assets = assets;
+}
+
 export function MiniPromptEditor({
   value,
   onChange,
@@ -31,7 +36,10 @@ export function MiniPromptEditor({
 }: MiniPromptEditorProps) {
   const lastEmittedRef = useRef(value);
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   const editor = useEditor({
     extensions: [
@@ -72,7 +80,7 @@ export function MiniPromptEditor({
       type: a.type,
       thumbnailUrl: a.primary_thumbnail_url,
     }));
-    (editor.storage.assetMention as { assets: AssetMentionItem[] }).assets = items;
+    setAssetMentionAssets(editor, items);
   }, [editor, boundAssets]);
 
   // Sync external value changes

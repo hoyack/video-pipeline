@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 import subprocess
 import uuid
@@ -40,10 +41,13 @@ from vidpipe.services.voice_mixer import VoiceMixer, VoiceMixerError
 logger = logging.getLogger(__name__)
 
 
-VOICE_SCRIPT_SYSTEM_PROMPT = """You convert production screenplays into a concise voice script.
-Return only JSON matching the schema. Include narration for visual context only when useful.
+VOICE_SCRIPT_SYSTEM_PROMPT = """You convert production screenplays into a timeline-aligned voice script.
+Return only JSON matching the schema. For documentary productions, write enough narration
+to cover the requested spoken-duration target while leaving short visual breathing room.
 Use DIALOGUE for character speech and NARRATION for narrator lines. Keep speaker_tag aligned
-with Production Bible tags when available. Keep line text ready for text-to-speech."""
+with Production Bible tags when available. Do not write DIALOGUE for cast members that do not
+have a voice profile; turn those beats into NARRATION instead. Keep line text ready for
+text-to-speech."""
 
 
 class VoiceScriptService:
@@ -108,7 +112,13 @@ class VoiceScriptService:
         if screenplay is None:
             raise ValueError("Screenplay not found")
 
-        prompt = await self._build_generation_prompt(session, production_id, screenplay)
+        requirements = await self._build_voice_requirements(session, production_id)
+        prompt = await self._build_generation_prompt(
+            session,
+            production_id,
+            screenplay,
+            requirements,
+        )
         generated = await llm_adapter.generate_text(
             prompt,
             GeneratedVoiceScript,
@@ -117,6 +127,33 @@ class VoiceScriptService:
         )
         if not isinstance(generated, GeneratedVoiceScript):
             generated = GeneratedVoiceScript.model_validate(generated)
+        if not self._voice_script_meets_coverage(generated, requirements):
+            retry_prompt = (
+                f"{prompt}\n"
+                "Coverage failure: the previous voice script was too sparse for the timeline. "
+                f"Regenerate it with at least {requirements['min_line_count']} lines and "
+                f"{requirements['min_word_count']} spoken words, distributed across the listed "
+                "scenes and shots. Return the complete replacement JSON only."
+            )
+            regenerated = await llm_adapter.generate_text(
+                retry_prompt,
+                GeneratedVoiceScript,
+                temperature=0.45,
+                system_prompt=VOICE_SCRIPT_SYSTEM_PROMPT,
+            )
+            if not isinstance(regenerated, GeneratedVoiceScript):
+                regenerated = GeneratedVoiceScript.model_validate(regenerated)
+            if self._voice_script_meets_coverage(regenerated, requirements):
+                generated = regenerated
+            else:
+                logger.warning(
+                    "Generated voice script remains sparse: lines=%s words=%s minimum_lines=%s minimum_words=%s",
+                    len(regenerated.lines),
+                    self._count_script_words(regenerated),
+                    requirements["min_line_count"],
+                    requirements["min_word_count"],
+                )
+                generated = regenerated
 
         await session.execute(
             delete(VoiceLine).where(VoiceLine.voice_script_id == voice_script.id)
@@ -212,6 +249,12 @@ class VoiceScriptService:
             raise ValueError("Production not found")
         lines = await self.list_lines(session, voice_script_id)
         for line in lines:
+            line.scene_id, line.shot_id = await self._resolve_scene_shot(
+                session,
+                production.id,
+                line.scene_number,
+                line.shot_number,
+            )
             await self.resolve_line_binding(session, line, production)
         await session.flush()
         return lines
@@ -549,6 +592,7 @@ class VoiceScriptService:
         session: AsyncSession,
         production_id: uuid.UUID,
         screenplay: Screenplay,
+        requirements: dict[str, Any],
     ) -> str:
         production = await session.get(Production, production_id)
         cast = []
@@ -556,15 +600,18 @@ class VoiceScriptService:
             result = await session.execute(
                 select(CastBinding).where(CastBinding.production_bible_id == production.production_bible_id)
             )
-            cast = [
-                {
-                    "tag": binding.tag,
-                    "name": binding.character_name,
-                    "role": binding.role,
-                    "notes": binding.behavioral_notes,
-                }
-                for binding in result.scalars().all()
-            ]
+            cast = []
+            for binding in result.scalars().all():
+                profile = await self._actor_voice_profile(session, binding)
+                cast.append(
+                    {
+                        "tag": binding.tag,
+                        "name": binding.character_name,
+                        "role": binding.role,
+                        "notes": binding.behavioral_notes,
+                        "has_voice_profile": bool(profile and profile.voice_id),
+                    }
+                )
 
         return (
             f"Title: {screenplay.title or (production.name if production else 'Untitled')}\n"
@@ -575,7 +622,98 @@ class VoiceScriptService:
             f"Shot list: {screenplay.shot_list or []}\n"
             f"Script:\n{screenplay.script or ''}\n"
             f"Production Bible cast bindings: {cast}\n"
+            "Voice timing requirements:\n"
+            f"- Production runtime: {requirements['production_duration_seconds']:.1f} seconds.\n"
+            f"- Target spoken narration/dialogue duration: {requirements['target_spoken_seconds']:.1f} seconds.\n"
+            f"- Target total spoken words: {requirements['target_word_count']} "
+            f"(acceptable minimum {requirements['min_word_count']}).\n"
+            f"- Target voice lines: {requirements['target_line_count']} "
+            f"(minimum {requirements['min_line_count']}).\n"
+            f"- Scene timing plan: {requirements['scene_plan']}.\n"
+            "Write narration that spans the whole timeline, not only the opening. "
+            "For documentaries, prefer one concise NARRATION line per shot or major visual beat. "
+            "Only use DIALOGUE when the named cast binding has has_voice_profile=true. "
+            "If no character voice is available, rewrite quotes and character speech as narrator context. "
+            "Bind each line to the relevant scene_number and shot_number. "
+            "Keep individual lines natural for TTS, usually 8-16 words, and set timing_hint "
+            "to describe where the line should fall inside the shot or scene.\n"
         )
+
+    async def _build_voice_requirements(
+        self,
+        session: AsyncSession,
+        production_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        result = await session.execute(
+            select(Scene)
+            .where(Scene.production_id == production_id)
+            .where(Scene.deleted_at.is_(None))
+            .order_by(Scene.scene_order, Scene.screenplay_breakdown_index, Scene.created_at)
+        )
+        scenes = list(result.scalars().all())
+
+        scene_plan: list[dict[str, Any]] = []
+        production_duration = 0.0
+        total_shots = 0
+        for scene_number, scene in enumerate(scenes, start=1):
+            shot_count_result = await session.execute(
+                select(func.count(Shot.id)).where(Shot.scene_id == scene.id)
+            )
+            shot_count = int(shot_count_result.scalar_one() or 0)
+            planned_shots = shot_count or scene.target_shot_count or 1
+            scene_duration = float(scene.total_duration or (scene.target_clip_duration * planned_shots))
+            production_duration += scene_duration
+            total_shots += planned_shots
+            scene_plan.append(
+                {
+                    "scene_number": scene_number,
+                    "scene_id": str(scene.id),
+                    "title": scene.title,
+                    "duration_seconds": round(scene_duration, 2),
+                    "shot_count": planned_shots,
+                    "target_voice_lines": planned_shots,
+                    "target_words": max(1, round(scene_duration * 2.15)),
+                }
+            )
+
+        if production_duration <= 0:
+            production_duration = float(
+                screenplay_duration
+                if (screenplay_duration := len(scene_plan) * 30) > 0
+                else 0
+            )
+
+        target_spoken_seconds = production_duration * 0.84 if production_duration else 0.0
+        target_word_count = round(target_spoken_seconds * 2.55) if target_spoken_seconds else 0
+        min_word_count = round(target_spoken_seconds * 2.3) if target_spoken_seconds else 0
+        target_line_count = total_shots or (math.ceil(production_duration / 7) if production_duration else 0)
+        min_line_count = max(0, min(target_line_count, math.ceil(production_duration / 8))) if production_duration else 0
+
+        return {
+            "production_duration_seconds": production_duration,
+            "target_spoken_seconds": target_spoken_seconds,
+            "target_word_count": target_word_count,
+            "min_word_count": min_word_count,
+            "target_line_count": target_line_count,
+            "min_line_count": min_line_count,
+            "scene_plan": scene_plan,
+        }
+
+    def _voice_script_meets_coverage(
+        self,
+        generated: GeneratedVoiceScript,
+        requirements: dict[str, Any],
+    ) -> bool:
+        if requirements["production_duration_seconds"] < 20:
+            return True
+        return (
+            len(generated.lines) >= requirements["min_line_count"]
+            and self._count_script_words(generated) >= requirements["min_word_count"]
+        )
+
+    @staticmethod
+    def _count_script_words(generated: GeneratedVoiceScript) -> int:
+        return sum(len(line.text.split()) for line in generated.lines)
 
     async def _resolve_scene_shot(
         self,
@@ -590,19 +728,55 @@ class VoiceScriptService:
             scene_result = await session.execute(
                 select(Scene)
                 .where(Scene.production_id == production_id)
-                .where(Scene.screenplay_breakdown_index == scene_number - 1)
+                .where(Scene.deleted_at.is_(None))
+                .order_by(
+                    Scene.scene_order,
+                    Scene.screenplay_breakdown_index,
+                    Scene.created_at,
+                )
             )
-            scene = scene_result.scalar_one_or_none()
+            scenes = list(scene_result.scalars().all())
+            scene = self._match_scene_number(scenes, scene_number)
             scene_id = scene.id if scene is not None else None
             if scene is not None and shot_number is not None:
                 shot_result = await session.execute(
                     select(Shot)
                     .where(Shot.scene_id == scene.id)
-                    .where(Shot.shot_index == shot_number - 1)
+                    .order_by(Shot.shot_index)
                 )
-                shot = shot_result.scalar_one_or_none()
+                shots = list(shot_result.scalars().all())
+                shot = self._match_shot_number(shots, shot_number)
                 shot_id = shot.id if shot is not None else None
         return scene_id, shot_id
+
+    @staticmethod
+    def _match_scene_number(scenes: list[Scene], scene_number: int) -> Scene | None:
+        for scene in scenes:
+            if scene.screenplay_breakdown_index == scene_number:
+                return scene
+        for scene in scenes:
+            if scene.screenplay_breakdown_index == scene_number - 1:
+                return scene
+        for scene in scenes:
+            if scene.scene_order == scene_number:
+                return scene
+        index = scene_number - 1
+        if 0 <= index < len(scenes):
+            return scenes[index]
+        return None
+
+    @staticmethod
+    def _match_shot_number(shots: list[Shot], shot_number: int) -> Shot | None:
+        for shot in shots:
+            if shot.shot_index == shot_number - 1:
+                return shot
+        for shot in shots:
+            if shot.shot_index == shot_number:
+                return shot
+        index = shot_number - 1
+        if 0 <= index < len(shots):
+            return shots[index]
+        return None
 
     async def _match_cast_binding(
         self,

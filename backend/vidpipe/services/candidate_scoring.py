@@ -122,7 +122,7 @@ class CandidateScoringService:
 
         Args:
             vision_adapter: Optional LLMAdapter for visual/prompt scoring.
-                If None, falls back to get_adapter("gemini-2.5-flash").
+                If None, falls back to get_adapter("gemini-3.5-flash").
         """
         self._vision_adapter = vision_adapter
         self._cv_service = None
@@ -347,7 +347,7 @@ class CandidateScoringService:
             await asyncio.to_thread(_extract_first_frame, clip_path, first_frame_path)
             frame_bytes = await asyncio.to_thread(_frame_to_jpeg_bytes, first_frame_path)
 
-            adapter = self._vision_adapter or get_adapter("gemini-2.5-flash")
+            adapter = self._vision_adapter or get_adapter("gemini-3.5-flash")
 
             system_prompt = (
                 "You are a professional video quality assessor. "

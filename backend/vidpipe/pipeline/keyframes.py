@@ -38,6 +38,7 @@ from vidpipe.services.file_manager import FileManager
 from vidpipe.services.json_compat import normalize_json_list
 from vidpipe.services.llm import LLMAdapter, get_adapter
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
+from vidpipe.services.model_catalog import canonical_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -724,15 +725,19 @@ async def _assemble_nano_banana_reference_context(
     async def _merge_resolved_tags(tags: list[str]) -> None:
         if not tags:
             return
-        resolved = await resolve_tags_with_assets(
-            " ".join(f"@{tag}" for tag in tags),
-            production_bible_id,
-            session,
-        )
-        for asset_ref in resolved.asset_refs:
-            normalized = _normalize_reference_tag(asset_ref.tag)
-            if normalized and normalized not in resolved_binding_refs:
-                resolved_binding_refs[normalized] = asset_ref
+        for requested_tag in tags:
+            normalized_requested = _normalize_reference_tag(requested_tag)
+            resolved = await resolve_tags_with_assets(
+                f"@{requested_tag}",
+                production_bible_id,
+                session,
+            )
+            for asset_ref in resolved.asset_refs:
+                normalized = _normalize_reference_tag(asset_ref.tag)
+                if normalized and normalized not in resolved_binding_refs:
+                    resolved_binding_refs[normalized] = asset_ref
+                if normalized_requested and normalized_requested not in resolved_binding_refs:
+                    resolved_binding_refs[normalized_requested] = asset_ref
 
     await _merge_resolved_tags(_ordered_unique_tags(shot_specific_tags + optional_tags))
 
@@ -1931,7 +1936,7 @@ async def generate_keyframes(
         session: Database session for persisting keyframes
         scene: Scene containing shots to generate keyframes for
         text_adapter: Optional LLMAdapter for prompt rewriting. If None,
-            PromptRewriterService falls back to get_adapter("gemini-2.5-flash").
+            PromptRewriterService falls back to get_adapter("gemini-3.5-flash").
 
     Process:
         1. Query shots ordered by shot_index
@@ -1950,7 +1955,8 @@ async def generate_keyframes(
         - Sequential processing ensures visual continuity (KEYF-04)
     """
     # Resolve image model from scene (with fallback to settings)
-    image_model = scene.image_model or settings.models.image_gen
+    image_model = canonical_model_id(scene.image_model or settings.models.image_gen) or settings.models.image_gen
+    base_seed = int(scene.seed or 0)
 
     # Guard: Imagen models no longer supported — fall back to config default
     if image_model.startswith("imagen-"):
@@ -2401,7 +2407,7 @@ async def generate_keyframes(
                             from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
                             fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
                             start_frame_bytes = await _generate_image_comfyui_flux(
-                                comfy_client, prompt_with_emphasis, seed=scene.seed,
+                                comfy_client, prompt_with_emphasis, seed=base_seed,
                                 width=fw, height=fh,
                                 lora_filename=flux_lora,
                                 reference_image_filenames=flux_ref_filenames or None,
@@ -2411,7 +2417,7 @@ async def generate_keyframes(
                             # qwen-image-edit needs an input image; for shot 0 start
                             # there's none, so fall back to qwen-fast txt2img
                             start_frame_bytes = await _generate_image_comfyui(
-                                comfy_client, prompt_with_emphasis, seed=scene.seed,
+                                comfy_client, prompt_with_emphasis, seed=base_seed,
                             )
                         elif identity_level >= 2 and previous_attempt_bytes is not None:
                             start_frame_bytes = await _generate_image_conditioned(
@@ -2423,7 +2429,7 @@ async def generate_keyframes(
                         else:
                             start_frame_bytes = await _generate_image_from_text(
                                 image_client, prompt_with_emphasis, scene.aspect_ratio, image_model,
-                                seed=scene.seed,
+                                seed=base_seed,
                                 reference_images=attempt_ref_image_bytes or None,
                                 identity_instruction=identity_instr,
                             )
@@ -2697,7 +2703,7 @@ async def generate_keyframes(
                             efw, efh = _FR.get(scene.aspect_ratio, (1024, 1024))
                             end_frame_bytes = await _generate_image_comfyui_flux(
                                 comfy_client, prompt_with_emphasis,
-                                seed=scene.seed + shot.shot_index + 1000,
+                                seed=base_seed + shot.shot_index + 1000,
                                 width=efw, height=efh,
                             )
                         elif is_comfyui:
@@ -2706,13 +2712,13 @@ async def generate_keyframes(
                                 end_frame_bytes = await _generate_image_comfyui_edit(
                                     comfy_client, prompt_with_emphasis,
                                     input_image_bytes=start_frame_bytes,
-                                    seed=scene.seed + shot.shot_index + 1000,
+                                    seed=base_seed + shot.shot_index + 1000,
                                 )
                             else:
                                 # ComfyUI text-only: no image conditioning, use offset seed
                                 end_frame_bytes = await _generate_image_comfyui(
                                     comfy_client, prompt_with_emphasis,
-                                    seed=scene.seed + shot.shot_index + 1000,
+                                    seed=base_seed + shot.shot_index + 1000,
                                 )
                         elif identity_level >= 2 and previous_end_attempt_bytes is not None:
                             end_frame_bytes = await _generate_image_conditioned(

@@ -37,6 +37,11 @@ interface ScenePromptEditorProps {
   productionBibleId?: string | null;
 }
 
+function setAssetMentionAssets(editor: { storage: unknown }, assets: AssetMentionItem[]) {
+  const storage = editor.storage as { assetMention: { assets: AssetMentionItem[] } };
+  storage.assetMention.assets = assets;
+}
+
 // ── Toolbar button ──────────────────────────────────────────────────────────
 
 function TipBtn({
@@ -275,10 +280,13 @@ export function ScenePromptEditor({
 }: ScenePromptEditorProps) {
   const lastEmittedRef = useRef(value);
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
 
   // Ref for image upload — avoids stale closure in handleDrop/handlePaste
-  const doImageUploadRef = useRef<(file: File) => Promise<void>>();
+  const doImageUploadRef = useRef<((file: File) => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   const editor = useEditor({
     extensions: [
@@ -340,7 +348,7 @@ export function ScenePromptEditor({
       },
     },
     onUpdate: ({ editor: ed }) => {
-      const md = (ed.storage.markdown as { getMarkdown: () => string }).getMarkdown();
+      const md = ((ed.storage as unknown) as { markdown: { getMarkdown: () => string } }).markdown.getMarkdown();
       lastEmittedRef.current = md;
       onChangeRef.current(md);
     },
@@ -363,23 +371,25 @@ export function ScenePromptEditor({
     },
     [editor],
   );
-  doImageUploadRef.current = doImageUpload;
+  useEffect(() => {
+    doImageUploadRef.current = doImageUpload;
+  }, [doImageUpload]);
 
   // Load Production Bible assets for @-mention suggestions
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
     if (!productionBibleId) {
-      (editor.storage.assetMention as { assets: AssetMentionItem[] }).assets = [];
+      setAssetMentionAssets(editor, []);
       return;
     }
     getBoundAssetsSummary(productionBibleId)
       .then((assets) => {
-        (editor.storage.assetMention as { assets: AssetMentionItem[] }).assets = assets.map((a) => ({
+        setAssetMentionAssets(editor, assets.map((a) => ({
           tag: a.tag,
           name: a.name,
           type: a.type,
           thumbnailUrl: a.primary_thumbnail_url,
-        }));
+        })));
       })
       .catch((err) => {
         console.error("Failed to load bible assets for @-mentions:", err);
@@ -423,7 +433,6 @@ export function ScenePromptEditor({
       {editor && (
         <BubbleMenu
           editor={editor}
-          tippyOptions={{ duration: 150 }}
           className="flex items-center gap-0.5 rounded-lg border border-gray-700 bg-gray-800 px-1 py-0.5 shadow-xl"
         >
           <TipBtn active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} title="Bold">

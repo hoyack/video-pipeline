@@ -35,11 +35,10 @@ function formatCost(item: SceneListItem): string | null {
 
 interface SceneListProps {
   onSelectScene: (sceneId: string) => void;
-  onNewScene: () => void;
   onNewDraft?: () => void;
 }
 
-export function SceneList({ onSelectScene, onNewScene, onNewDraft }: SceneListProps) {
+export function SceneList({ onSelectScene, onNewDraft }: SceneListProps) {
   const { showCost } = useShowCost();
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const [scenes, setScenes] = useState<SceneListItem[]>([]);
@@ -146,12 +145,6 @@ export function SceneList({ onSelectScene, onNewScene, onNewDraft }: SceneListPr
       <div className="text-center py-12">
         <p className="text-gray-500">No scenes yet.</p>
         <div className="mt-4 flex items-center justify-center gap-3">
-          <button
-            onClick={onNewScene}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
-          >
-            + New Scene
-          </button>
           {onNewDraft && (
             <button
               onClick={onNewDraft}
@@ -172,12 +165,6 @@ export function SceneList({ onSelectScene, onNewScene, onNewDraft }: SceneListPr
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-white">Scenes</h1>
-            <button
-              onClick={onNewScene}
-              className="rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
-            >
-              + New
-            </button>
             {onNewDraft && (
               <button
                 onClick={onNewDraft}

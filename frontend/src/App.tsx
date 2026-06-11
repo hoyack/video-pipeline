@@ -36,7 +36,6 @@ function App() {
           <Route path="/">
             <SceneList
               onSelectScene={(id) => navigate(`/scenes/${id}`)}
-              onNewScene={() => navigate("/generate")}
               onNewDraft={handleNewDraft}
             />
           </Route>

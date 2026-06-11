@@ -1252,7 +1252,12 @@ async def get_scene_detail(scene_id: uuid.UUID):
                             name=asset.name,
                             asset_type=asset.asset_type,
                             thumbnail_url=asset.thumbnail_url,
-                            reference_image_url=asset.reference_image_url,
+                            # Serve via the asset image endpoint — the raw
+                            # column value is a storage key, not a URL.
+                            reference_image_url=(
+                                f"/api/assets/{asset.id}/image"
+                                if asset.reference_image_url else None
+                            ),
                             quality_score=asset.quality_score,
                             is_face_crop=asset.is_face_crop,
                         ))

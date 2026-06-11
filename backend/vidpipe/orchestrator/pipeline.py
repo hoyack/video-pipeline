@@ -369,6 +369,11 @@ async def run_pipeline(
             except Exception as cp_err:
                 logger.warning(f"Failed to create auto-checkpoint: {cp_err}")
 
+        # Clear any stale error from a previous failed run that this
+        # (re)run has now recovered from
+        if scene.status == "complete" and scene.error_message:
+            scene.error_message = None
+
         # Finalize PipelineRun on success
         run.completed_at = datetime.utcnow()
         run.total_duration_seconds = time.monotonic() - pipeline_start

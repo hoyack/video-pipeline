@@ -132,6 +132,7 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
             scene.output_path = output_key
 
         scene.status = "complete"
+        scene.error_message = None  # clear stale errors from recovered runs
         logger.info(f"Scene {scene.id}: Stitching complete -> {scene.output_path}")
         await session.commit()
 

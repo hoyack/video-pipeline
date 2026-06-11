@@ -1091,6 +1091,224 @@ def build_flux2_klein_workflow(
     return workflow
 
 
+# ---------------------------------------------------------------------------
+# LTX-2.3 FLF2V workflow builder + resolution mapping
+# ---------------------------------------------------------------------------
+
+LTX_FPS = 25
+
+_LTX_RESOLUTIONS: dict[str, tuple[int, int]] = {
+    "16:9": (1280, 720),
+    "9:16": (720, 1280),
+}
+
+
+def ltx_resolution(aspect_ratio: str) -> tuple[int, int]:
+    """Map aspect ratio string to LTX-2.3 native resolution (width, height)."""
+    if aspect_ratio not in _LTX_RESOLUTIONS:
+        raise ValueError(
+            f"Unsupported aspect ratio for LTX-2.3: {aspect_ratio}. "
+            f"Supported: {list(_LTX_RESOLUTIONS.keys())}"
+        )
+    return _LTX_RESOLUTIONS[aspect_ratio]
+
+
+def ltx_frames_for_duration(seconds: int) -> int:
+    """Frame count for an LTX clip of the given duration (template math: s*fps+1)."""
+    return seconds * LTX_FPS + 1
+
+
+_LTX_FLF2V_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "ltx-flf2v.json"
+)
+
+_cached_ltx_flf2v_template: Optional[dict] = None
+
+
+def _load_ltx_flf2v_template() -> dict:
+    """Load the LTX-2.3 FLF2V API-format workflow template, caching the result."""
+    global _cached_ltx_flf2v_template
+    if _cached_ltx_flf2v_template is None:
+        with open(_LTX_FLF2V_TEMPLATE_PATH) as f:
+            _cached_ltx_flf2v_template = json.load(f)
+        logger.info("Loaded LTX FLF2V template from %s", _LTX_FLF2V_TEMPLATE_PATH)
+    return _cached_ltx_flf2v_template
+
+
+def build_ltx23_flf2v_workflow(
+    *,
+    prompt: str,
+    negative_prompt: str,
+    start_keyframe_filename: str,
+    end_keyframe_filename: Optional[str] = None,
+    width: int = 1280,
+    height: int = 720,
+    frames: int = 126,
+    seed: int = 0,
+    generate_audio: bool = True,
+) -> dict:
+    """Build ComfyUI API-format workflow for LTX-2.3 first-last-frame to video.
+
+    Based on the official video_ltx2_3_flf2v template (22B distilled
+    checkpoint, joint audio+video latent, dual LTXVAddGuide conditioning at
+    frame 0 and frame -1, audio muxed via CreateVideo).
+
+    Keyframe images must be pre-resized to (width, height) before upload —
+    the committed template omits the ResizeImageMaskNode plumbing.
+
+    Injects runtime parameters into the cached template:
+    - Node 4/5: positive/negative prompt
+    - Node 10/13: start/end LoadImage filenames
+    - Node 16/19: latent dimensions + frame counts
+    - Node 21: RandomNoise seed
+    - End-frame guide (node 18) spliced out when end_keyframe_filename is None
+    - Audio input dropped from CreateVideo when generate_audio is False
+
+    Args:
+        prompt: Motion/shot prompt (can include a "Music:"/"Audio:" hint).
+        negative_prompt: Negative prompt text.
+        start_keyframe_filename: Uploaded filename for the start frame.
+        end_keyframe_filename: Uploaded filename for the end frame, or None
+            for plain image-to-video.
+        width: Video width (default 1280 for 16:9).
+        height: Video height (default 720 for 16:9).
+        frames: Frame count (use ltx_frames_for_duration; default 126 ≈ 5s @ 25fps).
+        seed: Random seed.
+        generate_audio: Mux generated audio into the output video.
+
+    Returns:
+        ComfyUI API-format prompt dict (node_id -> node_config).
+    """
+    workflow = copy.deepcopy(_load_ltx_flf2v_template())
+
+    workflow["4"]["inputs"]["text"] = prompt
+    workflow["5"]["inputs"]["text"] = negative_prompt
+    workflow["10"]["inputs"]["image"] = start_keyframe_filename
+    workflow["16"]["inputs"]["width"] = width
+    workflow["16"]["inputs"]["height"] = height
+    workflow["16"]["inputs"]["length"] = frames
+    workflow["19"]["inputs"]["frames_number"] = frames
+    workflow["21"]["inputs"]["noise_seed"] = seed
+
+    if end_keyframe_filename is not None:
+        workflow["13"]["inputs"]["image"] = end_keyframe_filename
+    else:
+        # Splice out the end-frame guide chain: downstream consumers of the
+        # last guide (node 18) rewire to the first guide (node 17).
+        workflow.pop("13", None)
+        workflow.pop("15", None)
+        workflow.pop("18", None)
+        workflow["20"]["inputs"]["video_latent"] = ["17", 2]
+        workflow["22"]["inputs"]["positive"] = ["17", 0]
+        workflow["22"]["inputs"]["negative"] = ["17", 1]
+        workflow["27"]["inputs"]["positive"] = ["17", 0]
+        workflow["27"]["inputs"]["negative"] = ["17", 1]
+
+    if not generate_audio:
+        # Silent output: drop the audio link from CreateVideo and the now
+        # unused audio decode node (the joint AV latent itself is structural).
+        workflow["30"]["inputs"].pop("audio", None)
+        workflow.pop("29", None)
+
+    return workflow
+
+
+# ---------------------------------------------------------------------------
+# Seedance 2.0 FLF2V workflow builder (ByteDance partner API node)
+# ---------------------------------------------------------------------------
+
+_SEEDANCE_RATIOS = {"16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"}
+
+_SEEDANCE_FLF2V_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "seedance-flf2v.json"
+)
+
+_cached_seedance_flf2v_template: Optional[dict] = None
+
+
+def _load_seedance_flf2v_template() -> dict:
+    """Load the Seedance 2.0 FLF2V API-format workflow template, caching the result."""
+    global _cached_seedance_flf2v_template
+    if _cached_seedance_flf2v_template is None:
+        with open(_SEEDANCE_FLF2V_TEMPLATE_PATH) as f:
+            _cached_seedance_flf2v_template = json.load(f)
+        logger.info(
+            "Loaded Seedance FLF2V template from %s", _SEEDANCE_FLF2V_TEMPLATE_PATH
+        )
+    return _cached_seedance_flf2v_template
+
+
+def build_seedance2_flf2v_workflow(
+    *,
+    prompt: str,
+    first_frame_filename: str,
+    last_frame_filename: Optional[str] = None,
+    duration: int = 5,
+    resolution: str = "720p",
+    aspect_ratio: str = "16:9",
+    seed: int = 0,
+    generate_audio: bool = True,
+    watermark: bool = False,
+) -> dict:
+    """Build ComfyUI API-format workflow for Seedance 2.0 first-last-frame video.
+
+    Uses the ByteDance2FirstLastFrameNode partner API node (paid, metered in
+    Comfy credits). The node's DynamicCombo "model" input serializes nested
+    fields as dotted paths (model.prompt, model.resolution, ...).
+
+    Injects runtime parameters into the cached template:
+    - Node 1/2: first/last LoadImage filenames (node 2 pruned when no last frame)
+    - Node 3: prompt, resolution, ratio, duration, generate_audio, seed, watermark
+
+    Args:
+        prompt: Motion/shot prompt text.
+        first_frame_filename: Uploaded filename for the first frame.
+        last_frame_filename: Uploaded filename for the last frame, or None
+            for first-frame-only generation.
+        duration: Clip duration in seconds (4-15).
+        resolution: "480p", "720p", or "1080p".
+        aspect_ratio: One of 16:9, 4:3, 1:1, 3:4, 9:16, 21:9, adaptive.
+        seed: Random seed (0-2147483647; results are non-deterministic anyway).
+        generate_audio: Generate synchronized audio.
+        watermark: Add a visible watermark.
+
+    Returns:
+        ComfyUI API-format prompt dict (node_id -> node_config).
+
+    Raises:
+        ValueError: On out-of-range duration or unsupported aspect ratio.
+    """
+    if not 4 <= duration <= 15:
+        raise ValueError(
+            f"Seedance 2.0 duration must be 4-15 seconds, got {duration}"
+        )
+    if aspect_ratio not in _SEEDANCE_RATIOS:
+        raise ValueError(
+            f"Unsupported aspect ratio for Seedance 2.0: {aspect_ratio}. "
+            f"Supported: {sorted(_SEEDANCE_RATIOS)}"
+        )
+
+    workflow = copy.deepcopy(_load_seedance_flf2v_template())
+
+    node = workflow["3"]["inputs"]
+    node["model.prompt"] = prompt
+    node["model.resolution"] = resolution
+    node["model.ratio"] = aspect_ratio
+    node["model.duration"] = duration
+    node["model.generate_audio"] = generate_audio
+    node["seed"] = int(seed) % 2147483648
+    node["watermark"] = watermark
+
+    workflow["1"]["inputs"]["image"] = first_frame_filename
+    if last_frame_filename is not None:
+        workflow["2"]["inputs"]["image"] = last_frame_filename
+    else:
+        workflow.pop("2", None)
+        node.pop("last_frame", None)
+
+    return workflow
+
+
 async def close_comfyui_client() -> None:
     """Close the singleton ComfyUIClient (for app shutdown)."""
     global _comfyui_client

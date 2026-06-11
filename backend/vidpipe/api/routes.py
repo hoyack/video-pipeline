@@ -5440,13 +5440,19 @@ async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None,
             seed=scene.seed or 0,
             shot_index=shot.shot_index,
             video_model=video_model,
+            duration_seconds=scene.target_clip_duration or 5,
+            audio_enabled=bool(scene.audio_enabled),
         )
 
         # Poll ComfyUI
         for _ in range(max_polls):
             status, error_msg = await adapter.poll(operation_id)
             if status == "completed":
-                video_bytes, _duration = await adapter.download(operation_id)
+                video_bytes, _duration = await adapter.download(
+                    operation_id,
+                    video_model=video_model,
+                    duration_seconds=scene.target_clip_duration or 5,
+                )
                 break
             elif status == "failed":
                 raise RuntimeError(f"ComfyUI job failed: {error_msg}")

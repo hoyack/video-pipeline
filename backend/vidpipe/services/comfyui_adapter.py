@@ -7,20 +7,33 @@ The adapter abstracts away ComfyUI-specific details (image upload, workflow
 templates, status endpoint quirks, history parsing) so the pipeline only
 deals with: submit → poll → download.
 
+Model-specific behavior (workflow builder, fps, end-frame/audio support)
+lives in COMFY_VIDEO_SPECS — add new ComfyUI video models there.
+
 Usage:
     adapter = ComfyUIVideoAdapter(comfy_client)
     op_id = await adapter.submit(video_prompt=..., start_frame_bytes=..., ...)
     status, err = await adapter.poll(op_id)
     if status == "completed":
-        video_bytes, duration = await adapter.download(op_id)
+        video_bytes, duration = await adapter.download(
+            op_id, video_model=..., duration_seconds=...)
 """
 
+import io
 import logging
+from dataclasses import dataclass
 from typing import Optional
+
+from PIL import Image
 
 from vidpipe.services.comfyui_client import (
     ComfyUIClient,
+    build_ltx23_flf2v_workflow,
+    build_seedance2_flf2v_workflow,
+    build_wan22_flf2v_workflow,
     build_wan22_i2v_workflow,
+    ltx_frames_for_duration,
+    ltx_resolution,
     wan_resolution,
 )
 
@@ -41,12 +54,114 @@ WAN_I2V_NEGATIVE_PROMPT = (
     "inconsistent face, cropped head, decapitated framing"
 )
 
+# Generic video negative prompt for LTX (no model-specific tuning yet)
+LTX_NEGATIVE_PROMPT = (
+    "blurry, out of focus, overexposed, underexposed, low contrast, "
+    "washed out colors, excessive noise, grainy texture, poor lighting, "
+    "flickering, motion blur, distorted proportions, unnatural skin tones, "
+    "deformed facial features, extra limbs, disfigured hands, "
+    "inconsistent perspective, camera shake, color banding, "
+    "cartoonish rendering, uncanny valley effect, jittery movement, "
+    "unnatural transitions, tilted camera, AI artifacts"
+)
+
+# Framing-safety prefix for models without reference-image support
+_FRAMING_SAFETY_PREFIX = (
+    "Keep the subject's face and full head visible in frame throughout the entire clip. "
+    "Maintain consistent character appearance and proportions. "
+)
+
 _VIDEO_OUTPUT_KEYS = ("videos", "video", "gifs", "images")
 _VIDEO_EXTENSIONS = (".mp4", ".webm", ".avi", ".mov", ".mkv")
 
 # Status normalization sets
 _COMPLETED_STATUSES = frozenset({"completed", "success", "done"})
 _FAILED_STATUSES = frozenset({"failed", "error", "cancelled"})
+
+
+# ---------------------------------------------------------------------------
+# Per-model specs
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ComfyVideoModelSpec:
+    """Behavioral metadata for one ComfyUI video model.
+
+    Attributes:
+        fps: Output frame rate.
+        fixed_duration: Actual clip duration in seconds when the model ignores
+            the requested duration (WAN: always 81 frames / 16 fps). None means
+            the clip honors the requested duration.
+        supports_end_frame: Model can condition on an end keyframe.
+        supports_audio: Model can generate audio.
+        supports_char_refs: Workflow accepts character reference passthroughs.
+        prompt_prefix: Text prepended to the motion prompt at submit time
+            (framing safety for models without reference images).
+    """
+
+    fps: float
+    fixed_duration: Optional[float]
+    supports_end_frame: bool
+    supports_audio: bool
+    supports_char_refs: bool
+    prompt_prefix: Optional[str]
+
+    def clip_duration(self, requested_seconds: int) -> float:
+        """Actual output duration for a requested clip length."""
+        if self.fixed_duration is not None:
+            return self.fixed_duration
+        return float(requested_seconds)
+
+
+COMFY_VIDEO_SPECS: dict[str, ComfyVideoModelSpec] = {
+    "wan-2.2-i2v": ComfyVideoModelSpec(
+        fps=16,
+        fixed_duration=81 / 16.0,
+        supports_end_frame=False,
+        supports_audio=False,
+        supports_char_refs=False,
+        prompt_prefix=_FRAMING_SAFETY_PREFIX,
+    ),
+    "wan-2.2-flf2v": ComfyVideoModelSpec(
+        fps=16,
+        fixed_duration=81 / 16.0,
+        supports_end_frame=True,
+        supports_audio=False,
+        supports_char_refs=True,
+        prompt_prefix=_FRAMING_SAFETY_PREFIX,
+    ),
+    "ltx-2.3-flf2v": ComfyVideoModelSpec(
+        fps=25,
+        fixed_duration=None,
+        supports_end_frame=True,
+        supports_audio=True,
+        supports_char_refs=False,
+        prompt_prefix=None,
+    ),
+    "seedance-2.0-flf2v": ComfyVideoModelSpec(
+        fps=24,
+        fixed_duration=None,
+        supports_end_frame=True,
+        supports_audio=True,
+        supports_char_refs=False,
+        prompt_prefix=None,
+    ),
+}
+
+
+def _resize_image_bytes(image_bytes: bytes, width: int, height: int) -> bytes:
+    """Resize an image to exact dimensions, returning PNG bytes.
+
+    LTX guide images must match the latent dimensions; the official template
+    does this with ResizeImageMaskNode ("scale dimensions"), which we replicate
+    Python-side to keep the committed workflow graph minimal.
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.size != (width, height):
+        img = img.convert("RGB").resize((width, height), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +200,7 @@ def find_video_output(
                         )
         return None
 
-    # Pattern 1: look for SaveVideo node 108 specifically
+    # Pattern 1: look for SaveVideo node 108 specifically (WAN template)
     node_108 = outputs.get("108", {})
     if isinstance(node_108, dict):
         result = _extract_video(node_108)
@@ -141,39 +256,53 @@ class ComfyUIVideoAdapter:
         seed: int,
         shot_index: int,
         video_model: str,
+        duration_seconds: int = 5,
+        audio_enabled: bool = False,
     ) -> str:
-        """Upload assets, build workflow, and queue prompt.
+        """Upload assets, build the model-specific workflow, and queue prompt.
 
         Args:
             video_prompt: Motion/shot prompt text.
             start_frame_bytes: PNG bytes for the start keyframe.
-            end_frame_bytes: PNG bytes for the end keyframe (None for I2V).
-            char_ref_bytes: List of character reference image bytes (0-2).
-                TODO: Not yet wired into WAN 2.2 I2V workflow — see docs/camera-pan.md Action 3.
+            end_frame_bytes: PNG bytes for the end keyframe; None falls back
+                to first-frame-only generation (even on FLF2V models).
+            char_ref_bytes: Character reference image bytes (0-2). Only wired
+                for models with supports_char_refs (QC passthrough on
+                wan-2.2-flf2v).
             aspect_ratio: "16:9" or "9:16".
             seed: Random seed for reproducibility.
             shot_index: Shot number (for filename prefixes).
-            video_model: Model ID (e.g. "wan-2.2-i2v").
+            video_model: Model ID; must be a key of COMFY_VIDEO_SPECS.
+            duration_seconds: Requested clip duration (ignored by WAN models,
+                which always produce ~5s).
+            audio_enabled: Generate audio (models with supports_audio only).
 
         Returns:
             Operation ID in format "comfyui:{prompt_id}".
         """
-        # Upload start keyframe
-        start_fn = await self.client.upload_image(
-            start_frame_bytes, f"shot_{shot_index}_start.png"
-        )
-        logger.info("Shot %d: uploaded start keyframe as %s", shot_index, start_fn)
+        spec = COMFY_VIDEO_SPECS.get(video_model)
+        if spec is None:
+            raise ValueError(
+                f"Unknown ComfyUI video model {video_model!r}. "
+                f"Known: {sorted(COMFY_VIDEO_SPECS)}"
+            )
 
-        width, height = wan_resolution(aspect_ratio)
+        if spec.prompt_prefix:
+            video_prompt = spec.prompt_prefix + video_prompt
 
-        workflow = build_wan22_i2v_workflow(
-            prompt=video_prompt,
-            negative_prompt=WAN_I2V_NEGATIVE_PROMPT,
-            image_filename=start_fn,
-            width=width,
-            height=height,
-            length=81,  # 81 frames @ 16fps ≈ 5s
+        use_end_frame = end_frame_bytes is not None and spec.supports_end_frame
+        workflow = await self._build_workflow(
+            spec=spec,
+            video_model=video_model,
+            video_prompt=video_prompt,
+            start_frame_bytes=start_frame_bytes,
+            end_frame_bytes=end_frame_bytes if use_end_frame else None,
+            char_ref_bytes=char_ref_bytes if spec.supports_char_refs else [],
+            aspect_ratio=aspect_ratio,
             seed=seed,
+            shot_index=shot_index,
+            duration_seconds=duration_seconds,
+            audio_enabled=audio_enabled and spec.supports_audio,
         )
 
         # Log what we injected into the workflow for diagnostics
@@ -182,6 +311,125 @@ class ComfyUIVideoAdapter:
         prompt_id = await self.client.queue_prompt(workflow)
         logger.info("Shot %d: ComfyUI prompt queued: %s", shot_index, prompt_id)
         return f"comfyui:{prompt_id}"
+
+    async def _build_workflow(
+        self,
+        *,
+        spec: ComfyVideoModelSpec,
+        video_model: str,
+        video_prompt: str,
+        start_frame_bytes: bytes,
+        end_frame_bytes: Optional[bytes],
+        char_ref_bytes: list[bytes],
+        aspect_ratio: str,
+        seed: int,
+        shot_index: int,
+        duration_seconds: int,
+        audio_enabled: bool,
+    ) -> dict:
+        """Upload inputs and build the API workflow for one model."""
+        if video_model in ("wan-2.2-i2v", "wan-2.2-flf2v"):
+            width, height = wan_resolution(aspect_ratio)
+            start_fn = await self.client.upload_image(
+                start_frame_bytes, f"shot_{shot_index}_start.png"
+            )
+            logger.info("Shot %d: uploaded start keyframe as %s", shot_index, start_fn)
+
+            if video_model == "wan-2.2-flf2v" and end_frame_bytes is not None:
+                end_fn = await self.client.upload_image(
+                    end_frame_bytes, f"shot_{shot_index}_end.png"
+                )
+                char_fns: list[Optional[str]] = [None, None]
+                for i, ref in enumerate(char_ref_bytes[:2]):
+                    char_fns[i] = await self.client.upload_image(
+                        ref, f"shot_{shot_index}_charref_{i + 1}.png"
+                    )
+                return build_wan22_flf2v_workflow(
+                    prompt=video_prompt,
+                    start_keyframe_filename=start_fn,
+                    end_keyframe_filename=end_fn,
+                    char_ref_01_filename=char_fns[0],
+                    char_ref_02_filename=char_fns[1],
+                    width=width,
+                    height=height,
+                    length=81,
+                    seed=seed,
+                )
+
+            if video_model == "wan-2.2-flf2v":
+                logger.warning(
+                    "Shot %d: wan-2.2-flf2v has no end keyframe — "
+                    "falling back to I2V workflow",
+                    shot_index,
+                )
+            return build_wan22_i2v_workflow(
+                prompt=video_prompt,
+                negative_prompt=WAN_I2V_NEGATIVE_PROMPT,
+                image_filename=start_fn,
+                width=width,
+                height=height,
+                length=81,
+                seed=seed,
+            )
+
+        if video_model == "ltx-2.3-flf2v":
+            width, height = ltx_resolution(aspect_ratio)
+            # LTX guide images must match the latent dimensions
+            start_fn = await self.client.upload_image(
+                _resize_image_bytes(start_frame_bytes, width, height),
+                f"shot_{shot_index}_start.png",
+            )
+            end_fn = None
+            if end_frame_bytes is not None:
+                end_fn = await self.client.upload_image(
+                    _resize_image_bytes(end_frame_bytes, width, height),
+                    f"shot_{shot_index}_end.png",
+                )
+            else:
+                logger.warning(
+                    "Shot %d: ltx-2.3-flf2v has no end keyframe — "
+                    "using first-frame guide only",
+                    shot_index,
+                )
+            return build_ltx23_flf2v_workflow(
+                prompt=video_prompt,
+                negative_prompt=LTX_NEGATIVE_PROMPT,
+                start_keyframe_filename=start_fn,
+                end_keyframe_filename=end_fn,
+                width=width,
+                height=height,
+                frames=ltx_frames_for_duration(duration_seconds),
+                seed=seed,
+                generate_audio=audio_enabled,
+            )
+
+        if video_model == "seedance-2.0-flf2v":
+            start_fn = await self.client.upload_image(
+                start_frame_bytes, f"shot_{shot_index}_start.png"
+            )
+            end_fn = None
+            if end_frame_bytes is not None:
+                end_fn = await self.client.upload_image(
+                    end_frame_bytes, f"shot_{shot_index}_end.png"
+                )
+            else:
+                logger.warning(
+                    "Shot %d: seedance-2.0-flf2v has no end keyframe — "
+                    "first-frame-only generation",
+                    shot_index,
+                )
+            return build_seedance2_flf2v_workflow(
+                prompt=video_prompt,
+                first_frame_filename=start_fn,
+                last_frame_filename=end_fn,
+                duration=max(4, min(15, duration_seconds)),
+                resolution="720p",
+                aspect_ratio=aspect_ratio,
+                seed=seed,
+                generate_audio=audio_enabled,
+            )
+
+        raise ValueError(f"No workflow builder for ComfyUI model {video_model!r}")
 
     async def poll(self, operation_id: str) -> tuple[str, Optional[str]]:
         """Check job status with normalized status values.
@@ -210,11 +458,24 @@ class ComfyUIVideoAdapter:
             )
             return "running", None
 
-    async def download(self, operation_id: str) -> tuple[bytes, float]:
+    async def download(
+        self,
+        operation_id: str,
+        *,
+        video_model: str = "wan-2.2-i2v",
+        duration_seconds: int = 5,
+    ) -> tuple[bytes, float]:
         """Download the completed video from ComfyUI.
 
         Fetches execution history, locates the video output file,
         and downloads it.
+
+        Args:
+            operation_id: "comfyui:{prompt_id}" operation ID.
+            video_model: Model that produced the job (drives the reported
+                duration). Defaults preserve pre-spec behavior for in-flight
+                jobs submitted before a deploy.
+            duration_seconds: Requested clip duration.
 
         Returns:
             (video_bytes, duration_seconds)
@@ -240,7 +501,10 @@ class ComfyUIVideoAdapter:
             filename, subfolder=subfolder,
         )
 
-        duration = 81 / 16.0  # 81 frames @ 16fps ≈ 5.06s
+        spec = COMFY_VIDEO_SPECS.get(video_model)
+        duration = (
+            spec.clip_duration(duration_seconds) if spec else 81 / 16.0
+        )
         logger.info(
             "ComfyUI %s: downloaded %d bytes (%.1fs duration)",
             prompt_id, len(video_bytes), duration,
@@ -291,7 +555,8 @@ class ComfyUIVideoAdapter:
                 if video_result else None
             )
 
-            # Submitted workflow summary
+            # Submitted workflow summary (WAN node IDs; other models degrade
+            # gracefully to "(not found)" placeholders)
             prompt_wf = prompt_data.get("prompt", {}).get("prompt", {})
             if prompt_wf:
                 # Prompt text (node 93)
@@ -332,36 +597,49 @@ class ComfyUIVideoAdapter:
 # Logging helpers
 # ---------------------------------------------------------------------------
 
+def _summarize_workflow(workflow: dict) -> dict:
+    """Extract loggable key parameters from any of our video workflows."""
+    summary: dict = {}
+    for node_id, node in workflow.items():
+        ct = node.get("class_type", "")
+        inputs = node.get("inputs", {})
+        if ct == "CLIPTextEncode" or ct == "TextEncodeQwenImageEditPlus":
+            key = "positive_prompt" if "positive_prompt" not in summary else "negative_prompt"
+            summary[key] = str(inputs.get("text", inputs.get("prompt", "")))
+        elif ct == "LoadImage":
+            summary.setdefault("images", []).append(inputs.get("image", ""))
+        elif ct in ("WanFirstLastFrameToVideo", "WanImageToVideo", "EmptyLTXVLatentVideo"):
+            summary["dimensions"] = (
+                f"{inputs.get('width', 0)}x{inputs.get('height', 0)}, "
+                f"{inputs.get('length', 0)} frames"
+            )
+        elif ct == "ByteDance2FirstLastFrameNode":
+            summary["positive_prompt"] = str(inputs.get("model.prompt", ""))
+            summary["dimensions"] = (
+                f"{inputs.get('model.resolution')} {inputs.get('model.ratio')} "
+                f"{inputs.get('model.duration')}s audio={inputs.get('model.generate_audio')}"
+            )
+            summary["seed"] = inputs.get("seed")
+        elif ct in ("KSamplerAdvanced", "RandomNoise"):
+            summary["seed"] = inputs.get("noise_seed", summary.get("seed"))
+    return summary
+
+
 def _log_workflow_injection(
     workflow: dict, shot_index: int, video_model: str
 ) -> None:
     """Log key parameters injected into a ComfyUI workflow before submission."""
-    # Positive prompt (node 93)
-    n93_text = workflow.get("93", {}).get("inputs", {}).get("text", "")
-    # Negative prompt (node 89)
-    n89_text = workflow.get("89", {}).get("inputs", {}).get("text", "")
-    # Start image (node 97)
-    n97_image = workflow.get("97", {}).get("inputs", {}).get("image", "")
-    # End image (node 200, FLF2V only)
-    n200_image = workflow.get("200", {}).get("inputs", {}).get("image", "")
-    # Dimensions (node 98)
-    n98 = workflow.get("98", {}).get("inputs", {})
-    # Seed (node 86)
-    n86_seed = workflow.get("86", {}).get("inputs", {}).get("noise_seed", "")
-
+    s = _summarize_workflow(workflow)
+    pos = s.get("positive_prompt", "")
     logger.info(
         "Shot %d [%s] workflow injection:\n"
         "  positive_prompt: %.120s%s\n"
-        "  negative_prompt: %.80s%s\n"
-        "  start_image: %s\n"
-        "  end_image: %s\n"
-        "  dimensions: %dx%d, %d frames\n"
+        "  images: %s\n"
+        "  dimensions: %s\n"
         "  seed: %s",
         shot_index, video_model,
-        n93_text, "..." if len(n93_text) > 120 else "",
-        n89_text, "..." if len(n89_text) > 80 else "",
-        n97_image or "(none)",
-        n200_image or "(none — I2V mode)",
-        n98.get("width", 0), n98.get("height", 0), n98.get("length", 0),
-        n86_seed,
+        pos, "..." if len(pos) > 120 else "",
+        s.get("images", []),
+        s.get("dimensions", "(n/a)"),
+        s.get("seed", "(n/a)"),
     )

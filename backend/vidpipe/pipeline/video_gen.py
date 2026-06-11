@@ -49,9 +49,16 @@ from vidpipe.services.model_catalog import canonical_model_id
 from vidpipe.services import manifest_service
 
 # ---------------------------------------------------------------------------
-# ComfyUI model IDs (routed to ComfyUI instead of Veo)
+# ComfyUI model IDs (routed to ComfyUI instead of Veo).
+# Per-model behavior (fps, end-frame/audio support, workflow builder) lives in
+# COMFY_VIDEO_SPECS in services/comfyui_adapter.py — keep both in sync.
 # ---------------------------------------------------------------------------
-COMFYUI_VIDEO_MODELS = {"wan-2.2-i2v"}
+COMFYUI_VIDEO_MODELS = {
+    "wan-2.2-i2v",
+    "wan-2.2-flf2v",
+    "ltx-2.3-flf2v",
+    "seedance-2.0-flf2v",
+}
 
 
 logger = logging.getLogger(__name__)
@@ -973,9 +980,13 @@ async def _generate_video_comfyui(
     from vidpipe.services.comfyui_client import get_comfyui_client
     from vidpipe.services.comfyui_adapter import ComfyUIVideoAdapter
 
-    is_i2v = video_model == "wan-2.2-i2v"
+    from vidpipe.services.comfyui_adapter import COMFY_VIDEO_SPECS
 
-    # Load keyframes
+    spec = COMFY_VIDEO_SPECS.get(video_model)
+
+    # Load keyframes. Start is always required; a missing end keyframe on an
+    # FLF2V-capable model is a soft degrade (the adapter falls back to
+    # first-frame-only generation), not an error.
     kf_result = await session.execute(
         select(Keyframe)
         .where(Keyframe.shot_id == shot.id)
@@ -984,18 +995,16 @@ async def _generate_video_comfyui(
     keyframes = kf_result.scalars().all()
     start_kf = next((k for k in keyframes if k.position == "start"), None)
     end_kf = next((k for k in keyframes if k.position == "end"), None)
-    if is_i2v:
-        if start_kf is None:
-            raise ValueError(
-                f"Shot {shot.shot_index} missing start keyframe — cannot generate video"
-            )
-    else:
-        if start_kf is None or end_kf is None:
-            missing = [p for p, kf in [("start", start_kf), ("end", end_kf)] if kf is None]
-            raise ValueError(
-                f"Shot {shot.shot_index} missing {' and '.join(missing)} "
-                f"keyframe(s) — cannot generate video"
-            )
+    if start_kf is None:
+        raise ValueError(
+            f"Shot {shot.shot_index} missing start keyframe — cannot generate video"
+        )
+    if end_kf is None and spec is not None and spec.supports_end_frame:
+        logger.warning(
+            "Shot %d: %s supports end-frame conditioning but no end keyframe "
+            "exists — degrading to first-frame-only generation",
+            shot.shot_index, video_model,
+        )
 
     start_frame_bytes = await file_mgr.read_bytes(start_kf.file_path)
     end_frame_bytes = await file_mgr.read_bytes(end_kf.file_path) if end_kf else None
@@ -1043,20 +1052,14 @@ async def _generate_video_comfyui(
         # Fresh submission via adapter
         logger.info("Shot %d: submitting to ComfyUI", shot.shot_index)
 
-        # Load character reference images (if manifest scene)
-        # TODO: char_ref_bytes loaded but not yet wired into WAN 2.2 I2V workflow.
-        # See docs/camera-pan.md Action 3 for the plan to add ref image support.
+        # Load character reference images (if manifest scene). Wired as QC
+        # passthroughs on models with supports_char_refs (wan-2.2-flf2v).
         char_ref_bytes: list[bytes] = []
         if scene.production_bible_id:
             char_ref_bytes = await _load_char_ref_images(session, scene)
 
-        # WAN I2V has no reference images — prepend framing safety to motion prompt
-        video_prompt = (
-            "Keep the subject's face and full head visible in frame throughout the entire clip. "
-            "Maintain consistent character appearance and proportions. "
-            + video_prompt
-        )
-
+        # Framing-safety prompt prefix is applied per-model by the adapter
+        # (COMFY_VIDEO_SPECS.prompt_prefix).
         operation_id = await adapter.submit(
             video_prompt=video_prompt,
             start_frame_bytes=start_frame_bytes,
@@ -1066,6 +1069,8 @@ async def _generate_video_comfyui(
             seed=scene.seed or 0,
             shot_index=shot.shot_index,
             video_model=video_model,
+            duration_seconds=scene.target_clip_duration or 5,
+            audio_enabled=bool(scene.audio_enabled),
         )
 
         # Create/update clip record (persist before polling for crash recovery)
@@ -1098,7 +1103,11 @@ async def _generate_video_comfyui(
         if status == "completed":
             # Download via adapter (handles history parsing + download)
             try:
-                video_bytes, duration = await adapter.download(clip.operation_name)
+                video_bytes, duration = await adapter.download(
+                    clip.operation_name,
+                    video_model=video_model,
+                    duration_seconds=scene.target_clip_duration or 5,
+                )
             except Exception as e:
                 clip.status = "failed"
                 clip.error_message = f"Video download failed: {e}"

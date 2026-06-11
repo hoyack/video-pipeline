@@ -5080,6 +5080,7 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
     from vidpipe.pipeline.keyframes import (
         _generate_image_from_text, _generate_image_conditioned,
         COMFYUI_IMAGE_MODELS, _generate_image_comfyui, _generate_image_comfyui_flux,
+        _generate_image_comfyui_qwen_edit_2509, _generate_image_comfyui_flux2_klein,
     )
     is_comfyui = image_model in COMFYUI_IMAGE_MODELS
     comfy_client = None
@@ -5090,6 +5091,48 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
     else:
         from vidpipe.services.vertex_client import get_vertex_client, location_for_model
         image_client = get_vertex_client(location=location_for_model(image_model))
+
+    async def _generate_multiref_comfyui(
+        prompt: str, *, conditioning_bytes: bytes | None, seed: int,
+    ) -> bytes | None:
+        """Dispatch generation for multi-ref ComfyUI image models.
+
+        Returns None when image_model is not one of them, so callers can fall
+        through to the legacy branches. With conditioning_bytes (prev/start
+        frame), it occupies the first input slot and identity refs fill the
+        rest; without it, refs alone drive generation at the scene aspect.
+        """
+        if image_model == "qwen-image-edit-2509":
+            if conditioning_bytes is not None:
+                return await _generate_image_comfyui_qwen_edit_2509(
+                    comfy_client, prompt, seed=seed,
+                    image_bytes_list=[conditioning_bytes] + ref_image_bytes_list[:2],
+                )
+            from vidpipe.services.comfyui_client import _QWEN_RESOLUTIONS
+            qw, qh = _QWEN_RESOLUTIONS.get(scene.aspect_ratio, (1328, 1328))
+            if ref_image_bytes_list:
+                return await _generate_image_comfyui_qwen_edit_2509(
+                    comfy_client, prompt, seed=seed,
+                    image_bytes_list=ref_image_bytes_list[:3],
+                    output_width=qw, output_height=qh,
+                )
+            # Edit model without any input image: fall back to qwen txt2img
+            return await _generate_image_comfyui(
+                comfy_client, prompt, seed=seed, width=qw, height=qh,
+            )
+        if image_model == "flux-2-klein":
+            from vidpipe.services.comfyui_client import _FLUX2_RESOLUTIONS
+            f2w, f2h = _FLUX2_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
+            refs = (
+                [conditioning_bytes] + ref_image_bytes_list[:3]
+                if conditioning_bytes is not None
+                else ref_image_bytes_list[:4]
+            )
+            return await _generate_image_comfyui_flux2_klein(
+                comfy_client, prompt, seed=seed, width=f2w, height=f2h,
+                reference_image_bytes_list=refs or None,
+            )
+        return None
 
     # Extract edited field values (user edits take priority over stale rewrites)
     edited_start = (shot_edits or {}).get("start_frame_prompt")
@@ -5110,7 +5153,11 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
         if shot.shot_index == 0:
             # Shot 0: text-to-image with style/character enrichment
             enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
-            if is_comfyui and image_model.startswith("flux-"):
+            if (mr := await _generate_multiref_comfyui(
+                enriched_prompt, conditioning_bytes=None, seed=scene.seed,
+            )) is not None:
+                image_bytes = mr
+            elif is_comfyui and image_model.startswith("flux-"):
                 from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
                 fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
                 image_bytes = await _generate_image_comfyui_flux(
@@ -5167,7 +5214,11 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
                         f"- Same {style_label} rendering style\n"
                         f"{character_prefix}"
                     )
-                    if is_comfyui and image_model.startswith("flux-"):
+                    if (mr := await _generate_multiref_comfyui(
+                        conditioning_prompt, conditioning_bytes=prev_end_bytes, seed=scene.seed,
+                    )) is not None:
+                        image_bytes = mr
+                    elif is_comfyui and image_model.startswith("flux-"):
                         from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR2
                         fw2, fh2 = _FR2.get(scene.aspect_ratio, (1024, 1024))
                         image_bytes = await _generate_image_comfyui_flux(
@@ -5188,7 +5239,11 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
             else:
                 # Fallback: no previous end keyframe available, use text-to-image
                 enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
-                if is_comfyui and image_model.startswith("flux-"):
+                if (mr := await _generate_multiref_comfyui(
+                    enriched_prompt, conditioning_bytes=None, seed=scene.seed,
+                )) is not None:
+                    image_bytes = mr
+                elif is_comfyui and image_model.startswith("flux-"):
                     from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR3
                     fw3, fh3 = _FR3.get(scene.aspect_ratio, (1024, 1024))
                     image_bytes = await _generate_image_comfyui_flux(
@@ -5244,7 +5299,12 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
                 f"{character_prefix}"
             )
 
-        if is_comfyui and image_model.startswith("flux-"):
+        if (mr := await _generate_multiref_comfyui(
+            conditioning_prompt, conditioning_bytes=conditioning_bytes,
+            seed=scene.seed + shot.shot_index + 1000,
+        )) is not None:
+            image_bytes = mr
+        elif is_comfyui and image_model.startswith("flux-"):
             from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR4
             fw4, fh4 = _FR4.get(scene.aspect_ratio, (1024, 1024))
             image_bytes = await _generate_image_comfyui_flux(

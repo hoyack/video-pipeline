@@ -16,10 +16,12 @@ IMAGE_MODELS = {
     "gemini-3-pro-image-preview",
     "qwen-fast",
     "qwen-image-edit",
+    "qwen-image-edit-2509",
     "flux-dev",
     "flux-dev-lora",
     "flux-dev-redux",
     "flux-dev-full",
+    "flux-2-klein",
 }
 
 VIDEO_MODELS = {
@@ -75,10 +77,12 @@ IMAGE_MODEL_COST: dict[str, float] = {
     "gemini-3-pro-image-preview": 0.13,
     "qwen-fast": 0.0,
     "qwen-image-edit": 0.0,
+    "qwen-image-edit-2509": 0.0,
     "flux-dev": 0.0,
     "flux-dev-lora": 0.0,
     "flux-dev-redux": 0.0,
     "flux-dev-full": 0.0,
+    "flux-2-klein": 0.0,
 }
 
 VIDEO_MODEL_COST_SILENT: dict[str, float] = {

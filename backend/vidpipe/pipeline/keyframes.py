@@ -57,7 +57,20 @@ def _detect_image_mime(data: bytes) -> str:
 # ---------------------------------------------------------------------------
 # ComfyUI image models (routed to ComfyUI instead of Vertex AI)
 # ---------------------------------------------------------------------------
-COMFYUI_IMAGE_MODELS = {"qwen-fast", "qwen-image-edit", "flux-dev", "flux-dev-lora", "flux-dev-redux", "flux-dev-full"}
+COMFYUI_IMAGE_MODELS = {
+    "qwen-fast",
+    "qwen-image-edit",
+    "qwen-image-edit-2509",
+    "flux-dev",
+    "flux-dev-lora",
+    "flux-dev-redux",
+    "flux-dev-full",
+    "flux-2-klein",
+}
+# ComfyUI models that consume production-bible identity references via the
+# same reference-selection machinery as Nano Banana (face/wardrobe candidate
+# selection, identity policy, emphasis escalation, post-gen verification).
+COMFYUI_MULTIREF_IMAGE_MODELS = {"qwen-image-edit-2509", "flux-2-klein"}
 _NANO_BANANA_MAX_REFERENCE_IMAGES = 13
 
 # ---------------------------------------------------------------------------
@@ -1707,24 +1720,13 @@ async def _verify_keyframe_faces(
         return True, 0.0, f"verification_error: {e}"
 
 
-async def _generate_image_comfyui(
-    comfy_client,
-    prompt: str,
-    seed: int,
-    width: int = 1328,
-    height: int = 1328,
-) -> bytes:
-    """Generate an image via ComfyUI Cloud using the Qwen txt2img workflow.
-
-    Builds the workflow, queues it, polls until success, then downloads
-    the output image.
+async def _run_comfyui_image_job(comfy_client, workflow: dict, label: str) -> bytes:
+    """Queue a ComfyUI image workflow, poll until success, download the output.
 
     Args:
         comfy_client: ComfyUIClient instance
-        prompt: Text description for image generation
-        seed: Random seed for reproducibility
-        width: Image width (default 1328, Qwen native)
-        height: Image height (default 1328, Qwen native)
+        workflow: API-format workflow dict ready to submit
+        label: Human-readable job label for logging
 
     Returns:
         PNG image data as bytes
@@ -1733,16 +1735,10 @@ async def _generate_image_comfyui(
         RuntimeError: On ComfyUI job failure or timeout
         ValueError: If no image output found in history
     """
-    from vidpipe.services.comfyui_client import (
-        build_qwen_txt2img_workflow,
-        find_comfyui_image_output,
-    )
+    from vidpipe.services.comfyui_client import find_comfyui_image_output
 
-    workflow = build_qwen_txt2img_workflow(
-        prompt=prompt, width=width, height=height, seed=seed,
-    )
     prompt_id = await comfy_client.queue_prompt(workflow)
-    logger.info(f"ComfyUI Qwen txt2img queued: prompt_id={prompt_id}")
+    logger.info(f"ComfyUI {label} queued: prompt_id={prompt_id}")
 
     # Poll until completion (check for "success", not "completed")
     max_polls = 120
@@ -1754,12 +1750,12 @@ async def _generate_image_comfyui(
             break
         if status in ("error", "failed", "cancelled"):
             raise RuntimeError(
-                f"ComfyUI job {prompt_id} failed: status={status}, error={error_msg}"
+                f"ComfyUI {label} job {prompt_id} failed: status={status}, error={error_msg}"
             )
         # Still pending/in_progress — keep polling
     else:
         raise RuntimeError(
-            f"ComfyUI job {prompt_id} timed out after {max_polls * poll_interval}s"
+            f"ComfyUI {label} job {prompt_id} timed out after {max_polls * poll_interval}s"
         )
 
     # Fetch history and extract output image
@@ -1767,9 +1763,25 @@ async def _generate_image_comfyui(
     filename, subfolder = find_comfyui_image_output(history, prompt_id)
     image_bytes = await comfy_client.download_output(filename, subfolder)
     logger.info(
-        f"ComfyUI Qwen txt2img complete: {filename} ({len(image_bytes)} bytes)"
+        f"ComfyUI {label} complete: {filename} ({len(image_bytes)} bytes)"
     )
     return image_bytes
+
+
+async def _generate_image_comfyui(
+    comfy_client,
+    prompt: str,
+    seed: int,
+    width: int = 1328,
+    height: int = 1328,
+) -> bytes:
+    """Generate an image via ComfyUI Cloud using the Qwen txt2img workflow."""
+    from vidpipe.services.comfyui_client import build_qwen_txt2img_workflow
+
+    workflow = build_qwen_txt2img_workflow(
+        prompt=prompt, width=width, height=height, seed=seed,
+    )
+    return await _run_comfyui_image_job(comfy_client, workflow, "Qwen txt2img")
 
 
 async def _generate_image_comfyui_edit(
@@ -1780,63 +1792,17 @@ async def _generate_image_comfyui_edit(
 ) -> bytes:
     """Generate an edited image via ComfyUI Cloud using the Qwen Image Edit workflow.
 
-    Uploads the input image, builds the edit workflow, queues it, polls until
-    success, then downloads the output image.
-
-    Args:
-        comfy_client: ComfyUIClient instance
-        prompt: Edit instruction describing what to change
-        input_image_bytes: PNG/JPEG bytes of the image to edit
-        seed: Random seed for reproducibility
-
-    Returns:
-        PNG image data as bytes
-
-    Raises:
-        RuntimeError: On ComfyUI job failure or timeout
-        ValueError: If no image output found in history
+    Uploads the input image, builds the edit workflow, and runs the job.
     """
-    from vidpipe.services.comfyui_client import (
-        build_qwen_image_edit_workflow,
-        find_comfyui_image_output,
-    )
+    from vidpipe.services.comfyui_client import build_qwen_image_edit_workflow
 
-    # Upload the input image to ComfyUI
     input_filename = await comfy_client.upload_image(
         input_image_bytes, "image_qwen_image_edit_input_image.png"
     )
-
     workflow = build_qwen_image_edit_workflow(
         prompt=prompt, input_image_filename=input_filename, seed=seed,
     )
-    prompt_id = await comfy_client.queue_prompt(workflow)
-    logger.info(f"ComfyUI Qwen Image Edit queued: prompt_id={prompt_id}")
-
-    # Poll until completion
-    max_polls = 120
-    poll_interval = 3
-    for attempt in range(max_polls):
-        await asyncio.sleep(poll_interval)
-        status, error_msg = await comfy_client.poll_status(prompt_id)
-        if status == "success":
-            break
-        if status in ("error", "failed", "cancelled"):
-            raise RuntimeError(
-                f"ComfyUI job {prompt_id} failed: status={status}, error={error_msg}"
-            )
-    else:
-        raise RuntimeError(
-            f"ComfyUI job {prompt_id} timed out after {max_polls * poll_interval}s"
-        )
-
-    # Fetch history and extract output image
-    history = await comfy_client.get_history(prompt_id)
-    filename, subfolder = find_comfyui_image_output(history, prompt_id)
-    image_bytes = await comfy_client.download_output(filename, subfolder)
-    logger.info(
-        f"ComfyUI Qwen Image Edit complete: {filename} ({len(image_bytes)} bytes)"
-    )
-    return image_bytes
+    return await _run_comfyui_image_job(comfy_client, workflow, "Qwen Image Edit")
 
 
 async def _generate_image_comfyui_flux(
@@ -1852,32 +1818,10 @@ async def _generate_image_comfyui_flux(
 ) -> bytes:
     """Generate an image via ComfyUI Cloud using the Flux.1 Dev txt2img workflow.
 
-    Builds the workflow with optional LoRA and reference images, queues it,
-    polls until success, then downloads the output image.
-
-    Args:
-        comfy_client: ComfyUIClient instance
-        prompt: Text description for image generation
-        seed: Random seed for reproducibility
-        width: Image width (default 1024)
-        height: Image height (default 1024)
-        lora_filename: Optional LoRA .safetensors filename on ComfyUI server
-        lora_strength: LoRA strength (default 0.8)
-        reference_image_filenames: Optional list of uploaded reference image
-            filenames on the ComfyUI server (max 3)
-        reference_strengths: Optional per-reference conditioning strengths
-
-    Returns:
-        PNG image data as bytes
-
-    Raises:
-        RuntimeError: On ComfyUI job failure or timeout
-        ValueError: If no image output found in history
+    Builds the workflow with optional LoRA and reference images (max 3,
+    pre-uploaded filenames) and runs the job.
     """
-    from vidpipe.services.comfyui_client import (
-        build_flux_txt2img_workflow,
-        find_comfyui_image_output,
-    )
+    from vidpipe.services.comfyui_client import build_flux_txt2img_workflow
 
     workflow = build_flux_txt2img_workflow(
         prompt=prompt,
@@ -1889,35 +1833,85 @@ async def _generate_image_comfyui_flux(
         reference_image_filenames=reference_image_filenames,
         reference_strengths=reference_strengths,
     )
-    prompt_id = await comfy_client.queue_prompt(workflow)
-    logger.info(f"ComfyUI Flux txt2img queued: prompt_id={prompt_id}")
+    return await _run_comfyui_image_job(comfy_client, workflow, "Flux txt2img")
 
-    # Poll until completion
-    max_polls = 120
-    poll_interval = 3
-    for attempt in range(max_polls):
-        await asyncio.sleep(poll_interval)
-        status, error_msg = await comfy_client.poll_status(prompt_id)
-        if status == "success":
-            break
-        if status in ("error", "failed", "cancelled"):
-            raise RuntimeError(
-                f"ComfyUI Flux job {prompt_id} failed: status={status}, error={error_msg}"
-            )
-        # Still pending/in_progress — keep polling
-    else:
-        raise RuntimeError(
-            f"ComfyUI Flux job {prompt_id} timed out after {max_polls * poll_interval}s"
+
+async def _generate_image_comfyui_qwen_edit_2509(
+    comfy_client,
+    prompt: str,
+    seed: int,
+    image_bytes_list: list[bytes],
+    output_width: Optional[int] = None,
+    output_height: Optional[int] = None,
+) -> bytes:
+    """Generate an image via Qwen Image Edit 2509 with 1-3 input images.
+
+    Uploads each input image, builds the multi-ref edit workflow, and runs
+    the job. The first image is image1: in edit mode (no output dims) the
+    output size follows it; in generation mode (output dims given) the output
+    uses the requested dimensions and the images act purely as references.
+
+    Args:
+        comfy_client: ComfyUIClient instance
+        prompt: Edit/composition instruction
+        seed: Random seed for reproducibility
+        image_bytes_list: 1-3 input images as PNG/JPEG bytes
+        output_width: Explicit output width (generation mode)
+        output_height: Explicit output height (generation mode)
+    """
+    from vidpipe.services.comfyui_client import build_qwen_edit_2509_workflow
+
+    filenames = []
+    for i, img_bytes in enumerate(image_bytes_list[:3]):
+        filenames.append(
+            await comfy_client.upload_image(img_bytes, f"qwen2509_image{i + 1}.png")
         )
-
-    # Fetch history and extract output image
-    history = await comfy_client.get_history(prompt_id)
-    filename, subfolder = find_comfyui_image_output(history, prompt_id)
-    image_bytes = await comfy_client.download_output(filename, subfolder)
-    logger.info(
-        f"ComfyUI Flux txt2img complete: {filename} ({len(image_bytes)} bytes)"
+    workflow = build_qwen_edit_2509_workflow(
+        prompt=prompt,
+        image_filenames=filenames,
+        seed=seed,
+        output_width=output_width,
+        output_height=output_height,
     )
-    return image_bytes
+    return await _run_comfyui_image_job(comfy_client, workflow, "Qwen Edit 2509")
+
+
+async def _generate_image_comfyui_flux2_klein(
+    comfy_client,
+    prompt: str,
+    seed: int,
+    width: int = 1024,
+    height: int = 1024,
+    reference_image_bytes_list: Optional[list[bytes]] = None,
+) -> bytes:
+    """Generate an image via FLUX.2 Klein 4B with 0-4 reference images.
+
+    Uploads each reference image, builds the klein workflow (plain txt2img
+    when no references), and runs the job.
+
+    Args:
+        comfy_client: ComfyUIClient instance
+        prompt: Positive prompt text
+        seed: Random seed for reproducibility
+        width: Output width in pixels
+        height: Output height in pixels
+        reference_image_bytes_list: Up to 4 reference images as PNG/JPEG bytes
+    """
+    from vidpipe.services.comfyui_client import build_flux2_klein_workflow
+
+    filenames = []
+    for i, img_bytes in enumerate((reference_image_bytes_list or [])[:4]):
+        filenames.append(
+            await comfy_client.upload_image(img_bytes, f"flux2_ref{i + 1}.png")
+        )
+    workflow = build_flux2_klein_workflow(
+        prompt=prompt,
+        width=width,
+        height=height,
+        seed=seed,
+        reference_image_filenames=filenames or None,
+    )
+    return await _run_comfyui_image_job(comfy_client, workflow, "FLUX.2 Klein")
 
 
 async def generate_keyframes(
@@ -2149,7 +2143,9 @@ async def generate_keyframes(
                             f"(refs: {selected_reference_tags})"
                         )
 
-                    if not is_comfyui and _is_nano_banana_model(image_model):
+                    if (
+                        not is_comfyui and _is_nano_banana_model(image_model)
+                    ) or image_model in COMFYUI_MULTIREF_IMAGE_MODELS:
                         selected_tags = (
                             list(shot_manifest_row.selected_reference_tags or [])
                             if shot_manifest_row and shot_manifest_row.selected_reference_tags
@@ -2367,7 +2363,42 @@ async def generate_keyframes(
                     if start_retry_guidance:
                         prompt_with_emphasis = f"{start_retry_guidance}\n\n{prompt_with_emphasis}"
                     try:
-                        if is_comfyui and image_model.startswith("flux-"):
+                        if image_model == "qwen-image-edit-2509":
+                            # Multi-ref edit model: compose start frame from
+                            # identity references at the scene aspect ratio.
+                            from vidpipe.services.comfyui_client import _QWEN_RESOLUTIONS
+                            qw, qh = _QWEN_RESOLUTIONS.get(scene.aspect_ratio, (1328, 1328))
+                            if attempt_ref_image_bytes:
+                                compose_prompt = (
+                                    "Using the people, characters, and objects shown in the "
+                                    "input images as exact identity references, create a new "
+                                    f"scene: {prompt_with_emphasis}"
+                                )
+                                start_frame_bytes = await _generate_image_comfyui_qwen_edit_2509(
+                                    comfy_client, compose_prompt, seed=base_seed,
+                                    image_bytes_list=attempt_ref_image_bytes[:3],
+                                    output_width=qw, output_height=qh,
+                                )
+                            else:
+                                # Edit model needs input images; without refs
+                                # fall back to qwen txt2img at scene aspect.
+                                logger.info(
+                                    f"Shot {shot.shot_index}: qwen-image-edit-2509 has no "
+                                    "reference images, falling back to qwen txt2img"
+                                )
+                                start_frame_bytes = await _generate_image_comfyui(
+                                    comfy_client, prompt_with_emphasis, seed=base_seed,
+                                    width=qw, height=qh,
+                                )
+                        elif image_model == "flux-2-klein":
+                            from vidpipe.services.comfyui_client import _FLUX2_RESOLUTIONS
+                            f2w, f2h = _FLUX2_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
+                            start_frame_bytes = await _generate_image_comfyui_flux2_klein(
+                                comfy_client, prompt_with_emphasis, seed=base_seed,
+                                width=f2w, height=f2h,
+                                reference_image_bytes_list=attempt_ref_image_bytes[:4] or None,
+                            )
+                        elif is_comfyui and image_model.startswith("flux-"):
                             # Flux model: use binding-based reference resolution
                             flux_lora = None
                             flux_ref_filenames: list[str] = []
@@ -2696,7 +2727,28 @@ async def generate_keyframes(
                     if end_retry_guidance:
                         prompt_with_emphasis = f"{end_retry_guidance}\n\n{prompt_with_emphasis}"
                     try:
-                        if is_comfyui and image_model.startswith("flux-"):
+                        if image_model == "qwen-image-edit-2509":
+                            # Multi-ref edit: image1 = start frame (drives output
+                            # dimensions + visual conditioning), image2/3 = identity refs.
+                            end_frame_bytes = await _generate_image_comfyui_qwen_edit_2509(
+                                comfy_client, prompt_with_emphasis,
+                                seed=base_seed + shot.shot_index + 1000,
+                                image_bytes_list=[start_frame_bytes] + list(attempt_ref_image_bytes[:2]),
+                            )
+                        elif image_model == "flux-2-klein":
+                            # Ref slot 1 = start frame (visual conditioning),
+                            # slots 2-4 = identity refs.
+                            from vidpipe.services.comfyui_client import _FLUX2_RESOLUTIONS as _F2R
+                            ef2w, ef2h = _F2R.get(scene.aspect_ratio, (1024, 1024))
+                            end_frame_bytes = await _generate_image_comfyui_flux2_klein(
+                                comfy_client, prompt_with_emphasis,
+                                seed=base_seed + shot.shot_index + 1000,
+                                width=ef2w, height=ef2h,
+                                reference_image_bytes_list=(
+                                    [start_frame_bytes] + list(attempt_ref_image_bytes[:3])
+                                ),
+                            )
+                        elif is_comfyui and image_model.startswith("flux-"):
                             # Flux model: text-only (no image conditioning), offset seed
                             # Reuse binding-resolved LoRA/refs if available from start frame
                             from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR

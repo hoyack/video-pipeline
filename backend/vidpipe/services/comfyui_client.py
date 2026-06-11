@@ -471,6 +471,13 @@ async def get_comfyui_client(
 # Qwen txt2img workflow builder + image output extractor
 # ---------------------------------------------------------------------------
 
+# Qwen-Image native resolutions (~1.7MP budget) per aspect ratio
+_QWEN_RESOLUTIONS: dict[str, tuple[int, int]] = {
+    "16:9": (1664, 928),
+    "9:16": (928, 1664),
+    "1:1": (1328, 1328),
+}
+
 _QWEN_TEMPLATE_PATH = (
     Path(__file__).resolve().parent / "comfyui_templates" / "qwen-txt2img.json"
 )
@@ -858,6 +865,228 @@ def build_wan22_i2v_workflow(
     workflow["98"]["inputs"]["height"] = height
     workflow["98"]["inputs"]["length"] = length
     workflow["86"]["inputs"]["noise_seed"] = seed
+
+    return workflow
+
+
+# ---------------------------------------------------------------------------
+# Qwen Image Edit 2509 (multi-reference) workflow builder
+# ---------------------------------------------------------------------------
+
+_QWEN_EDIT_2509_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "qwen-edit-2509.json"
+)
+
+_cached_qwen_edit_2509_template: Optional[dict] = None
+
+
+def _load_qwen_edit_2509_template() -> dict:
+    """Load the Qwen Image Edit 2509 API-format workflow template, caching the result."""
+    global _cached_qwen_edit_2509_template
+    if _cached_qwen_edit_2509_template is None:
+        with open(_QWEN_EDIT_2509_TEMPLATE_PATH) as f:
+            _cached_qwen_edit_2509_template = json.load(f)
+        logger.info("Loaded Qwen Edit 2509 template from %s", _QWEN_EDIT_2509_TEMPLATE_PATH)
+    return _cached_qwen_edit_2509_template
+
+
+def build_qwen_edit_2509_workflow(
+    *,
+    prompt: str,
+    image_filenames: list[str],
+    negative_prompt: str = "",
+    seed: int | None = 0,
+    output_width: Optional[int] = None,
+    output_height: Optional[int] = None,
+) -> dict:
+    """Build ComfyUI API-format workflow for Qwen Image Edit 2509 (multi-ref).
+
+    Accepts 1-3 input images via TextEncodeQwenImageEditPlus (image1-3).
+    Two output-size modes (the template KSampler runs at denoise 1.0, so the
+    latent_image input only determines output dimensions, not content):
+
+    - Edit mode (default): output dimensions follow image1 — used for
+      end-keyframe generation where image1 is the start frame.
+    - Generation mode (output_width/output_height given): output uses an
+      EmptySD3LatentImage at the requested dimensions — used for start-frame
+      composition from reference images at the scene aspect ratio.
+
+    Injects runtime parameters into the cached template:
+    - Node 110/111: positive/negative prompt + image1-3 references
+    - Node 10/11/12: LoadImage filenames (unused ref nodes pruned)
+    - Node 3: KSampler seed (+ latent_image source per mode)
+    - Node 107: EmptySD3LatentImage dimensions (generation mode only)
+
+    Args:
+        prompt: Edit/composition instruction.
+        image_filenames: 1-3 uploaded server-side filenames. The first is
+            image1 (drives output size in edit mode).
+        negative_prompt: Negative prompt text (default empty).
+        seed: Random seed for reproducibility.
+        output_width: Explicit output width (enables generation mode).
+        output_height: Explicit output height (enables generation mode).
+
+    Returns:
+        ComfyUI API-format prompt dict (node_id -> node_config).
+
+    Raises:
+        ValueError: If image_filenames is empty or has more than 3 entries.
+    """
+    if not image_filenames:
+        raise ValueError("qwen-image-edit-2509 requires at least one input image")
+    if len(image_filenames) > 3:
+        raise ValueError(
+            f"qwen-image-edit-2509 supports at most 3 input images, got {len(image_filenames)}"
+        )
+
+    workflow = copy.deepcopy(_load_qwen_edit_2509_template())
+
+    workflow["110"]["inputs"]["prompt"] = prompt
+    workflow["111"]["inputs"]["prompt"] = negative_prompt
+    workflow["3"]["inputs"]["seed"] = int(seed or 0)
+
+    # Map filenames to LoadImage nodes 10/11/12; prune unused refs and drop
+    # the corresponding imageN inputs from both text-encode nodes.
+    ref_nodes = ["10", "11", "12"]
+    image_keys = ["image1", "image2", "image3"]
+    for i, node_id in enumerate(ref_nodes):
+        if i < len(image_filenames):
+            workflow[node_id]["inputs"]["image"] = image_filenames[i]
+        else:
+            workflow.pop(node_id, None)
+            workflow["110"]["inputs"].pop(image_keys[i], None)
+            workflow["111"]["inputs"].pop(image_keys[i], None)
+
+    generation_mode = output_width is not None and output_height is not None
+    if generation_mode:
+        workflow["107"]["inputs"]["width"] = output_width
+        workflow["107"]["inputs"]["height"] = output_height
+        workflow["3"]["inputs"]["latent_image"] = ["107", 0]
+    else:
+        # Edit mode: latent follows image1 (template default); drop the
+        # unused empty-latent node.
+        workflow.pop("107", None)
+
+    return workflow
+
+
+# ---------------------------------------------------------------------------
+# FLUX.2 Klein workflow builder + resolution mapping
+# ---------------------------------------------------------------------------
+
+_FLUX2_RESOLUTIONS: dict[str, tuple[int, int]] = {
+    "16:9": (1344, 768),
+    "9:16": (768, 1344),
+    "1:1": (1024, 1024),
+}
+
+
+def flux2_resolution(aspect_ratio: str) -> tuple[int, int]:
+    """Map aspect ratio string to FLUX.2 Klein native resolution (width, height)."""
+    if aspect_ratio not in _FLUX2_RESOLUTIONS:
+        raise ValueError(
+            f"Unsupported aspect ratio for FLUX.2 Klein: {aspect_ratio}. "
+            f"Supported: {list(_FLUX2_RESOLUTIONS.keys())}"
+        )
+    return _FLUX2_RESOLUTIONS[aspect_ratio]
+
+
+_FLUX2_KLEIN_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "flux2-klein.json"
+)
+
+_cached_flux2_klein_template: Optional[dict] = None
+
+
+def _load_flux2_klein_template() -> dict:
+    """Load the FLUX.2 Klein API-format workflow template, caching the result."""
+    global _cached_flux2_klein_template
+    if _cached_flux2_klein_template is None:
+        with open(_FLUX2_KLEIN_TEMPLATE_PATH) as f:
+            _cached_flux2_klein_template = json.load(f)
+        logger.info("Loaded FLUX.2 Klein template from %s", _FLUX2_KLEIN_TEMPLATE_PATH)
+    return _cached_flux2_klein_template
+
+
+# Per-ref-slot node IDs: (LoadImage, ImageScaleToTotalPixels, VAEEncode,
+# positive ReferenceLatent, negative ReferenceLatent)
+_FLUX2_REF_SLOTS: list[tuple[str, str, str, str, str]] = [
+    ("20", "30", "40", "50", "60"),
+    ("21", "31", "41", "51", "61"),
+    ("22", "32", "42", "52", "62"),
+    ("23", "33", "43", "53", "63"),
+]
+
+
+def build_flux2_klein_workflow(
+    *,
+    prompt: str,
+    width: int = 1024,
+    height: int = 1024,
+    seed: int = 0,
+    reference_image_filenames: Optional[list[str]] = None,
+) -> dict:
+    """Build ComfyUI API-format workflow for FLUX.2 Klein 4B (distilled).
+
+    Supports 0-4 reference images. References are chained ReferenceLatent
+    conditioning on both the positive and negative (zeroed) branches, per the
+    official image_flux2_klein_image_edit_4b_distilled template. With zero
+    references the graph reduces to plain text-to-image.
+
+    Injects runtime parameters into the cached template:
+    - Node 74: positive prompt text
+    - Node 73: RandomNoise seed
+    - Node 66/67: latent + scheduler dimensions
+    - Nodes 20-23: reference LoadImage filenames (unused slots pruned)
+    - Node 76: CFGGuider conditioning rewired to the last surviving
+      ReferenceLatent in each chain (or directly to the encoders at 0 refs)
+
+    Args:
+        prompt: Positive prompt text.
+        width: Output width in pixels (multiple of 16).
+        height: Output height in pixels (multiple of 16).
+        seed: Random seed for reproducibility.
+        reference_image_filenames: Up to 4 uploaded server-side filenames.
+
+    Returns:
+        ComfyUI API-format prompt dict (node_id -> node_config).
+
+    Raises:
+        ValueError: If more than 4 reference images are provided.
+    """
+    refs = reference_image_filenames or []
+    if len(refs) > 4:
+        raise ValueError(
+            f"flux-2-klein supports at most 4 reference images, got {len(refs)}"
+        )
+
+    workflow = copy.deepcopy(_load_flux2_klein_template())
+
+    workflow["74"]["inputs"]["text"] = prompt
+    workflow["73"]["inputs"]["noise_seed"] = seed
+    workflow["66"]["inputs"]["width"] = width
+    workflow["66"]["inputs"]["height"] = height
+    workflow["67"]["inputs"]["width"] = width
+    workflow["67"]["inputs"]["height"] = height
+
+    # Fill used ref slots, prune unused ones.
+    for i, (load_id, scale_id, encode_id, pos_rl_id, neg_rl_id) in enumerate(
+        _FLUX2_REF_SLOTS
+    ):
+        if i < len(refs):
+            workflow[load_id]["inputs"]["image"] = refs[i]
+        else:
+            for node_id in (load_id, scale_id, encode_id, pos_rl_id, neg_rl_id):
+                workflow.pop(node_id, None)
+
+    # Rewire CFGGuider conditioning to the end of the surviving chains.
+    if refs:
+        last_slot = _FLUX2_REF_SLOTS[len(refs) - 1]
+        workflow["76"]["inputs"]["positive"] = [last_slot[3], 0]
+        workflow["76"]["inputs"]["negative"] = [last_slot[4], 0]
+    else:
+        workflow["76"]["inputs"]["positive"] = ["74", 0]
+        workflow["76"]["inputs"]["negative"] = ["82", 0]
 
     return workflow
 

@@ -165,3 +165,57 @@ async def test_legacy_model_migration_updates_persisted_scene_and_settings(test_
         assert settings.default_text_model == "gemini-3.1-pro-preview"
         assert settings.default_video_model == "veo-3.1-generate-001"
         assert settings.default_vision_model == "gemini-3.1-pro-preview"
+
+
+# ---------------------------------------------------------------------------
+# Catalog consistency for ComfyUI video models
+# ---------------------------------------------------------------------------
+
+def test_every_video_model_has_durations_and_costs():
+    from vidpipe.services.model_catalog import (
+        VIDEO_MODEL_COST_AUDIO,
+        VIDEO_MODEL_COST_SILENT,
+        VIDEO_MODEL_DURATIONS,
+        VIDEO_MODELS,
+    )
+
+    for model_id in VIDEO_MODELS:
+        assert model_id in VIDEO_MODEL_DURATIONS, f"{model_id} missing durations"
+        assert VIDEO_MODEL_DURATIONS[model_id], f"{model_id} has empty durations"
+        assert model_id in VIDEO_MODEL_COST_SILENT, f"{model_id} missing silent cost"
+        assert model_id in VIDEO_MODEL_COST_AUDIO, f"{model_id} missing audio cost"
+
+
+def test_audio_capability_for_new_models():
+    # AUDIO_CAPABLE_VIDEO_MODELS is computed by set subtraction — new models
+    # are audio-capable unless excluded. Pin the intended membership.
+    from vidpipe.services.model_catalog import AUDIO_CAPABLE_VIDEO_MODELS
+
+    assert "wan-2.2-i2v" not in AUDIO_CAPABLE_VIDEO_MODELS
+    assert "wan-2.2-flf2v" not in AUDIO_CAPABLE_VIDEO_MODELS
+    assert "ltx-2.3-flf2v" in AUDIO_CAPABLE_VIDEO_MODELS
+    assert "seedance-2.0-flf2v" in AUDIO_CAPABLE_VIDEO_MODELS
+
+
+def test_comfyui_routing_matches_adapter_specs():
+    # Every model routed to ComfyUI must have an adapter spec, and all
+    # ComfyUI video models must be registered in the public catalog.
+    from vidpipe.pipeline.video_gen import COMFYUI_VIDEO_MODELS
+    from vidpipe.services.comfyui_adapter import COMFY_VIDEO_SPECS
+    from vidpipe.services.model_catalog import VIDEO_MODELS
+
+    assert set(COMFY_VIDEO_SPECS) == COMFYUI_VIDEO_MODELS
+    assert COMFYUI_VIDEO_MODELS <= VIDEO_MODELS
+
+
+def test_comfyui_image_models_registered():
+    from vidpipe.pipeline.keyframes import (
+        COMFYUI_IMAGE_MODELS,
+        COMFYUI_MULTIREF_IMAGE_MODELS,
+    )
+    from vidpipe.services.model_catalog import IMAGE_MODEL_COST, IMAGE_MODELS
+
+    assert COMFYUI_IMAGE_MODELS <= IMAGE_MODELS
+    assert COMFYUI_MULTIREF_IMAGE_MODELS <= COMFYUI_IMAGE_MODELS
+    for model_id in IMAGE_MODELS:
+        assert model_id in IMAGE_MODEL_COST, f"{model_id} missing image cost"

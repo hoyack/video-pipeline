@@ -190,11 +190,11 @@ Requires Python 3.11+, Node.js 18+, and ffmpeg (`apt-get install ffmpeg` / `brew
 All models are selectable per scene in the UI.
 
 - **Text (screenplay/storyboard):** Gemini 2.5 Flash / Flash Lite / Pro, Gemini 3 Flash / Pro, Ollama-hosted models (e.g. Kimi K2.5 cloud)
-- **Image (keyframes):** Imagen 3 / 4 / 4 Fast / 4 Ultra, Gemini Flash Image, Gemini 3 Pro Image
-- **Video:** Veo 2, Veo 3 / 3 Fast, Veo 3.1 / 3.1 Fast (+ GA variants), WAN 2.2 (via ComfyUI)
+- **Image (keyframes):** Gemini Flash Image (Nano Banana), Gemini 3 Pro Image; via ComfyUI Cloud: Qwen (txt2img, Image Edit, **Edit 2509 multi-ref**), Flux.1 Dev (+LoRA/refs), **FLUX.2 Klein** (up to 4 refs)
+- **Video:** Veo 2, Veo 3 / 3 Fast, Veo 3.1 / 3.1 Fast (+ GA variants); via ComfyUI Cloud: WAN 2.2 (i2v and **start+end keyframe FLF2V**), **LTX 2.3 FLF2V** (25fps, native audio), **Seedance 2.0 FLF2V** (paid, 4–15s, native audio)
 - **Voice & SFX:** ElevenLabs TTS and sound effects
 
-Native clip audio is supported on Veo 3+; WAN clips are silent, with narration and SFX mixed in at the production level. Preview models route automatically to the `global` Vertex AI endpoint.
+Native clip audio is supported on Veo 3+, LTX 2.3, and Seedance 2.0; WAN clips are silent, with narration and SFX mixed in at the production level. Reference-image keyframe generation (character/set identity from the Production Bible) works on Nano Banana, Qwen Edit 2509, and FLUX.2 Klein. Preview models route automatically to the `global` Vertex AI endpoint.
 
 ## Troubleshooting
 

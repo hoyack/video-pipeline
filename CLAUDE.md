@@ -63,7 +63,9 @@ Routing via wouter. State via React hooks (no Redux). Vite dev server proxies `/
 
 ## ComfyUI Routing (CRITICAL)
 
-`COMFYUI_VIDEO_MODELS` in `video_gen.py` is the router (`wan-2.2-i2v`). **Both the main pipeline AND `_regenerate_clip` in `routes.py` must check this set.** Missing the check in either place causes silent routing failures — clips will be sent to Veo instead of ComfyUI (or vice versa) with no error, just wrong output. ComfyUI is actively used in production.
+`COMFYUI_VIDEO_MODELS` in `video_gen.py` is the router (`wan-2.2-i2v`, `wan-2.2-flf2v`, `ltx-2.3-flf2v`, `seedance-2.0-flf2v`). **Both the main pipeline AND `_regenerate_clip` in `routes.py` must check this set.** Missing the check in either place causes silent routing failures — clips will be sent to Veo instead of ComfyUI (or vice versa) with no error, just wrong output. ComfyUI is actively used in production.
+
+Per-model ComfyUI behavior (fps, end-frame/audio support, workflow builder) lives in `COMFY_VIDEO_SPECS` in `services/comfyui_adapter.py` — it must stay in sync with `COMFYUI_VIDEO_MODELS` (a unit test pins this). FLF2V models degrade to first-frame-only generation when the end keyframe is missing. Audio on the ComfyUI path: `ltx-2.3-flf2v` and `seedance-2.0-flf2v` support `generate_audio`; WAN models do not. Seedance is a paid ByteDance partner node and requires Comfy Org account auth beyond the API key.
 
 ## Database (Per Worktree)
 

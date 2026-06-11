@@ -32,6 +32,9 @@ VIDEO_MODELS = {
     "veo-3.1-fast-generate-001",
     "veo-3.1-lite-generate-001",
     "wan-2.2-i2v",
+    "wan-2.2-flf2v",
+    "ltx-2.3-flf2v",
+    "seedance-2.0-flf2v",
 }
 
 LEGACY_MODEL_REPLACEMENTS = {
@@ -48,9 +51,12 @@ GLOBAL_REGION_MODELS = {
     "gemini-3-pro-image-preview",
 }
 
+# NOTE: computed by subtraction — new VIDEO_MODELS entries are audio-capable
+# unless explicitly excluded here.
 AUDIO_CAPABLE_VIDEO_MODELS = VIDEO_MODELS - {
     "veo-2.0-generate-001",
     "wan-2.2-i2v",
+    "wan-2.2-flf2v",
 }
 
 VIDEO_MODEL_DURATIONS: dict[str, list[int]] = {
@@ -61,6 +67,9 @@ VIDEO_MODEL_DURATIONS: dict[str, list[int]] = {
     "veo-3.1-fast-generate-001": [4, 6, 8],
     "veo-3.1-lite-generate-001": [4, 6, 8],
     "wan-2.2-i2v": [5],
+    "wan-2.2-flf2v": [5],
+    "ltx-2.3-flf2v": [4, 6, 8, 10],
+    "seedance-2.0-flf2v": list(range(4, 16)),
 }
 
 TEXT_MODEL_COST: dict[str, float] = {
@@ -85,6 +94,9 @@ IMAGE_MODEL_COST: dict[str, float] = {
     "flux-2-klein": 0.0,
 }
 
+# Seedance 2.0 is a paid ByteDance partner node, token-metered:
+# tokens/s = width*height*24/1024 → 21,600 tokens/s @720p, billed
+# ~$0.01001/1K tokens ≈ $0.216/s (audio included in token price).
 VIDEO_MODEL_COST_SILENT: dict[str, float] = {
     "veo-2.0-generate-001": 0.35,
     "veo-3.0-generate-001": 0.40,
@@ -93,6 +105,9 @@ VIDEO_MODEL_COST_SILENT: dict[str, float] = {
     "veo-3.1-fast-generate-001": 0.10,
     "veo-3.1-lite-generate-001": 0.10,
     "wan-2.2-i2v": 0.0,
+    "wan-2.2-flf2v": 0.0,
+    "ltx-2.3-flf2v": 0.0,
+    "seedance-2.0-flf2v": 0.22,
 }
 
 VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
@@ -103,6 +118,9 @@ VIDEO_MODEL_COST_AUDIO: dict[str, float] = {
     "veo-3.1-fast-generate-001": 0.15,
     "veo-3.1-lite-generate-001": 0.15,
     "wan-2.2-i2v": 0.0,
+    "wan-2.2-flf2v": 0.0,
+    "ltx-2.3-flf2v": 0.0,
+    "seedance-2.0-flf2v": 0.22,
 }
 
 

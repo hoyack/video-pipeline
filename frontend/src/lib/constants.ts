@@ -47,6 +47,8 @@ export const TOTAL_DURATION_STEP = 5;
 // Model catalog types
 // ---------------------------------------------------------------------------
 
+export type ModelProvider = "vertex" | "comfyui";
+
 export interface TextModelOption {
   id: string;
   label: string;
@@ -57,6 +59,7 @@ export interface ImageModelOption {
   id: string;
   label: string;
   costPerImage: number;
+  provider: ModelProvider;
 }
 
 export interface VideoModelOption {
@@ -67,6 +70,7 @@ export interface VideoModelOption {
   supportsAudio: boolean;
   /** Allowed clip durations in seconds for image-to-video */
   allowedDurations: number[];
+  provider: ModelProvider;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,24 +85,29 @@ export const TEXT_MODELS: TextModelOption[] = [
 ];
 
 export const IMAGE_MODELS: ImageModelOption[] = [
-  { id: "gemini-2.5-flash-image", label: "Nano Banana", costPerImage: 0.04 },
-  { id: "gemini-3-pro-image-preview", label: "Nano Banana Pro", costPerImage: 0.13 },
-  { id: "qwen-fast", label: "Qwen Fast", costPerImage: 0.00 },
-  { id: "qwen-image-edit", label: "Qwen Image Edit", costPerImage: 0.00 },
-  { id: "flux-dev", label: "Flux.1 Dev", costPerImage: 0.00 },
-  { id: "flux-dev-lora", label: "Flux.1 Dev + LoRA", costPerImage: 0.00 },
-  { id: "flux-dev-redux", label: "Flux.1 Dev + Refs", costPerImage: 0.00 },
-  { id: "flux-dev-full", label: "Flux.1 Dev Full", costPerImage: 0.00 },
+  { id: "gemini-2.5-flash-image", label: "Nano Banana", costPerImage: 0.04, provider: "vertex" },
+  { id: "gemini-3-pro-image-preview", label: "Nano Banana Pro", costPerImage: 0.13, provider: "vertex" },
+  { id: "qwen-fast", label: "Qwen Fast", costPerImage: 0.00, provider: "comfyui" },
+  { id: "qwen-image-edit", label: "Qwen Image Edit", costPerImage: 0.00, provider: "comfyui" },
+  { id: "qwen-image-edit-2509", label: "Qwen Edit 2509 (multi-ref)", costPerImage: 0.00, provider: "comfyui" },
+  { id: "flux-dev", label: "Flux.1 Dev", costPerImage: 0.00, provider: "comfyui" },
+  { id: "flux-dev-lora", label: "Flux.1 Dev + LoRA", costPerImage: 0.00, provider: "comfyui" },
+  { id: "flux-dev-redux", label: "Flux.1 Dev + Refs", costPerImage: 0.00, provider: "comfyui" },
+  { id: "flux-dev-full", label: "Flux.1 Dev Full", costPerImage: 0.00, provider: "comfyui" },
+  { id: "flux-2-klein", label: "FLUX.2 Klein", costPerImage: 0.00, provider: "comfyui" },
 ];
 
 export const VIDEO_MODELS: VideoModelOption[] = [
-  { id: "veo-2.0-generate-001", label: "Veo 2", costPerSecond: 0.35, costPerSecondAudio: 0.35, supportsAudio: false, allowedDurations: [5, 6, 7, 8] },
-  { id: "veo-3.0-generate-001", label: "Veo 3", costPerSecond: 0.40, costPerSecondAudio: 0.40, supportsAudio: true, allowedDurations: [4, 6, 8] },
-  { id: "veo-3.0-fast-generate-001", label: "Veo 3 Fast", costPerSecond: 0.15, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8] },
-  { id: "veo-3.1-generate-001", label: "Veo 3.1 GA", costPerSecond: 0.40, costPerSecondAudio: 0.40, supportsAudio: true, allowedDurations: [4, 6, 8] },
-  { id: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast GA", costPerSecond: 0.10, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8] },
-  { id: "veo-3.1-lite-generate-001", label: "Veo 3.1 Lite", costPerSecond: 0.10, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8] },
-  { id: "wan-2.2-i2v", label: "Wan 2.2", costPerSecond: 0, costPerSecondAudio: 0, supportsAudio: false, allowedDurations: [5] },
+  { id: "veo-2.0-generate-001", label: "Veo 2", costPerSecond: 0.35, costPerSecondAudio: 0.35, supportsAudio: false, allowedDurations: [5, 6, 7, 8], provider: "vertex" },
+  { id: "veo-3.0-generate-001", label: "Veo 3", costPerSecond: 0.40, costPerSecondAudio: 0.40, supportsAudio: true, allowedDurations: [4, 6, 8], provider: "vertex" },
+  { id: "veo-3.0-fast-generate-001", label: "Veo 3 Fast", costPerSecond: 0.15, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8], provider: "vertex" },
+  { id: "veo-3.1-generate-001", label: "Veo 3.1 GA", costPerSecond: 0.40, costPerSecondAudio: 0.40, supportsAudio: true, allowedDurations: [4, 6, 8], provider: "vertex" },
+  { id: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast GA", costPerSecond: 0.10, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8], provider: "vertex" },
+  { id: "veo-3.1-lite-generate-001", label: "Veo 3.1 Lite", costPerSecond: 0.10, costPerSecondAudio: 0.15, supportsAudio: true, allowedDurations: [4, 6, 8], provider: "vertex" },
+  { id: "wan-2.2-i2v", label: "Wan 2.2", costPerSecond: 0, costPerSecondAudio: 0, supportsAudio: false, allowedDurations: [5], provider: "comfyui" },
+  { id: "wan-2.2-flf2v", label: "Wan 2.2 FLF2V", costPerSecond: 0, costPerSecondAudio: 0, supportsAudio: false, allowedDurations: [5], provider: "comfyui" },
+  { id: "ltx-2.3-flf2v", label: "LTX 2.3 FLF2V", costPerSecond: 0, costPerSecondAudio: 0, supportsAudio: true, allowedDurations: [4, 6, 8, 10], provider: "comfyui" },
+  { id: "seedance-2.0-flf2v", label: "Seedance 2.0 (paid)", costPerSecond: 0.22, costPerSecondAudio: 0.22, supportsAudio: true, allowedDurations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], provider: "comfyui" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -110,22 +119,22 @@ export const VERTEX_TEXT_MODELS = TEXT_MODELS;
 
 /** Vertex Studio image models (Gemini-based) */
 export const VERTEX_IMAGE_MODELS = IMAGE_MODELS.filter(
-  (m) => m.id.startsWith("gemini-"),
+  (m) => m.provider === "vertex",
 );
 
 /** Vertex Studio video models (Veo family) */
 export const VERTEX_VIDEO_MODELS = VIDEO_MODELS.filter(
-  (m) => m.id.startsWith("veo-"),
+  (m) => m.provider === "vertex",
 );
 
-/** ComfyUI video models (Wan family) */
+/** ComfyUI video models (Wan, LTX, Seedance) */
 export const COMFYUI_VIDEO_MODELS_LIST = VIDEO_MODELS.filter(
-  (m) => m.id.startsWith("wan-"),
+  (m) => m.provider === "comfyui",
 );
 
 /** ComfyUI image models */
 export const COMFYUI_IMAGE_MODELS = IMAGE_MODELS.filter(
-  (m) => !m.id.startsWith("gemini-"),
+  (m) => m.provider === "comfyui",
 );
 
 /** Image models that support reference images */
@@ -133,8 +142,10 @@ export const REFERENCE_IMAGE_MODELS = new Set([
   "gemini-2.5-flash-image",
   "gemini-3-pro-image-preview",
   "qwen-image-edit",
+  "qwen-image-edit-2509",
   "flux-dev-redux",
   "flux-dev-full",
+  "flux-2-klein",
 ]);
 
 // ---------------------------------------------------------------------------

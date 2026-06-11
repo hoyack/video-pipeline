@@ -188,11 +188,11 @@
   "94": {
     "class_type": "CreateVideo",
     "inputs": {
+      "fps": 16,
       "images": [
         "87",
         0
-      ],
-      "frame_rate": 16
+      ]
     }
   },
   "108": {

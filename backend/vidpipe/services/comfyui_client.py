@@ -93,7 +93,7 @@ _WIDGET_NAMES: dict[str, list[str]] = {
         "start_at_step", "end_at_step", "return_with_leftover_noise",
     ],
     "VAEDecode": [],
-    "CreateVideo": ["frame_rate"],
+    "CreateVideo": ["fps"],
     "SaveVideo": ["filename_prefix", "format", "codec"],
     "ImageFromBatch": ["batch_index", "length"],
     "SaveImage": ["filename_prefix"],

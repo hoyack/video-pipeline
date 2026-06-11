@@ -1,0 +1,61 @@
+{
+  "1": {
+    "inputs": {
+      "image": "seedance_first.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "First frame"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "seedance_last.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Last frame (optional)"
+    }
+  },
+  "3": {
+    "inputs": {
+      "model": "Seedance 2.0",
+      "model.prompt": "",
+      "model.resolution": "720p",
+      "model.ratio": "16:9",
+      "model.duration": 5,
+      "model.generate_audio": true,
+      "first_frame": [
+        "1",
+        0
+      ],
+      "last_frame": [
+        "2",
+        0
+      ],
+      "first_frame_asset_id": "",
+      "last_frame_asset_id": "",
+      "seed": 0,
+      "watermark": false
+    },
+    "class_type": "ByteDance2FirstLastFrameNode",
+    "_meta": {
+      "title": "Seedance 2.0 First-Last-Frame to Video"
+    }
+  },
+  "4": {
+    "inputs": {
+      "filename_prefix": "video/vidpipe_seedance2",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  }
+}

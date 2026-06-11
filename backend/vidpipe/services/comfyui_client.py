@@ -141,21 +141,39 @@ def _convert_app_to_api(app_workflow: dict) -> dict:
     return api_workflow
 
 
-# Module-level cache for the converted API template
+# Packaged API-format template (pre-converted from docs/video_wan2_2_14B_i2v.json
+# — the docs/ copy is NOT shipped in the Docker image, so the converted graph
+# is committed alongside the package).
+_WAN_FLF2V_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "comfyui_templates" / "wan-flf2v.json"
+)
+
+# Module-level cache for the API template
 _cached_api_template: Optional[dict] = None
 
 
 def _load_api_template() -> dict:
-    """Load and convert the workflow JSON template, caching the result."""
+    """Load the Wan FLF2V API-format workflow template, caching the result.
+
+    Prefers the packaged pre-converted template; falls back to converting the
+    app-format docs/ copy for dev checkouts where it exists.
+    """
     global _cached_api_template
     if _cached_api_template is None:
-        with open(_WORKFLOW_TEMPLATE_PATH) as f:
-            app_workflow = json.load(f)
-        _cached_api_template = _convert_app_to_api(app_workflow)
-        logger.info(
-            "Loaded and converted ComfyUI workflow template from %s",
-            _WORKFLOW_TEMPLATE_PATH,
-        )
+        if _WAN_FLF2V_TEMPLATE_PATH.exists():
+            with open(_WAN_FLF2V_TEMPLATE_PATH) as f:
+                _cached_api_template = json.load(f)
+            logger.info(
+                "Loaded Wan FLF2V template from %s", _WAN_FLF2V_TEMPLATE_PATH,
+            )
+        else:
+            with open(_WORKFLOW_TEMPLATE_PATH) as f:
+                app_workflow = json.load(f)
+            _cached_api_template = _convert_app_to_api(app_workflow)
+            logger.info(
+                "Loaded and converted ComfyUI workflow template from %s",
+                _WORKFLOW_TEMPLATE_PATH,
+            )
     return _cached_api_template
 
 

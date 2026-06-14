@@ -247,20 +247,26 @@ async def create_checkpoint(
 
     parent_sha = scene.head_sha  # None for first checkpoint
 
-    # Skip if snapshot is unchanged (same SHA as current head)
-    if sha == parent_sha:
+    # Idempotent: reuse any existing checkpoint with this exact content SHA for
+    # the scene — not just the current head. Regenerating a scene back to a
+    # previously-checkpointed state (common after repeated regens) produces a SHA
+    # that already exists elsewhere in history; inserting it again violates
+    # uq_checkpoint_scene_sha. Reuse it and move head there instead.
+    existing = (await session.execute(
+        select(SceneCheckpoint).where(
+            SceneCheckpoint.scene_id == scene.id,
+            SceneCheckpoint.sha == sha,
+        )
+    )).scalar_one_or_none()
+    if existing is not None:
+        if scene.head_sha != sha:
+            scene.head_sha = sha
+            await session.flush()
         logger.info(
-            "Checkpoint skipped for scene %s — snapshot unchanged (sha=%s): %s",
+            "Checkpoint reused for scene %s (sha=%s, unchanged content): %s",
             scene.id, sha[:8], message,
         )
-        # Return existing checkpoint so callers don't break
-        existing = await session.execute(
-            select(SceneCheckpoint).where(
-                SceneCheckpoint.scene_id == scene.id,
-                SceneCheckpoint.sha == sha,
-            )
-        )
-        return existing.scalar_one()
+        return existing
 
     checkpoint = SceneCheckpoint(
         scene_id=scene.id,

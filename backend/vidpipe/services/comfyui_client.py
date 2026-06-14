@@ -219,7 +219,7 @@ def build_wan22_flf2v_workflow(
     workflow["98"]["inputs"]["width"] = width
     workflow["98"]["inputs"]["height"] = height
     workflow["98"]["inputs"]["length"] = length
-    workflow["86"]["inputs"]["noise_seed"] = seed
+    workflow["86"]["inputs"]["noise_seed"] = int(seed or 0)  # never None → ComfyUI 400
 
     # Character reference passthroughs (QC only) —
     # inject filename if present, remove nodes entirely if not.
@@ -780,7 +780,7 @@ def build_flux_txt2img_workflow(
     workflow["7"]["inputs"]["text"] = negative_prompt
 
     # Inject seed and dimensions
-    workflow["3"]["inputs"]["seed"] = seed
+    workflow["3"]["inputs"]["seed"] = int(seed or 0)  # never None → ComfyUI 400
     workflow["5"]["inputs"]["width"] = width
     workflow["5"]["inputs"]["height"] = height
 
@@ -882,7 +882,7 @@ def build_wan22_i2v_workflow(
     workflow["98"]["inputs"]["width"] = width
     workflow["98"]["inputs"]["height"] = height
     workflow["98"]["inputs"]["length"] = length
-    workflow["86"]["inputs"]["noise_seed"] = seed
+    workflow["86"]["inputs"]["noise_seed"] = int(seed or 0)  # never None → ComfyUI 400
 
     return workflow
 
@@ -1081,7 +1081,7 @@ def build_flux2_klein_workflow(
     workflow = copy.deepcopy(_load_flux2_klein_template())
 
     workflow["74"]["inputs"]["text"] = prompt
-    workflow["73"]["inputs"]["noise_seed"] = seed
+    workflow["73"]["inputs"]["noise_seed"] = int(seed or 0)  # never None → ComfyUI 400
     workflow["66"]["inputs"]["width"] = width
     workflow["66"]["inputs"]["height"] = height
     workflow["67"]["inputs"]["width"] = width
@@ -1206,7 +1206,7 @@ def build_ltx23_flf2v_workflow(
     workflow["16"]["inputs"]["height"] = height
     workflow["16"]["inputs"]["length"] = frames
     workflow["19"]["inputs"]["frames_number"] = frames
-    workflow["21"]["inputs"]["noise_seed"] = seed
+    workflow["21"]["inputs"]["noise_seed"] = int(seed or 0)  # never None → ComfyUI 400
 
     if end_keyframe_filename is not None:
         workflow["13"]["inputs"]["image"] = end_keyframe_filename

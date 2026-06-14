@@ -1,0 +1,334 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - link "vidpipe" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - navigation [ref=e7]:
+        - link "Dashboard" [ref=e8] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Productions" [ref=e9] [cursor=pointer]:
+          - /url: /productions
+        - link "Scenes" [ref=e10] [cursor=pointer]:
+          - /url: /
+        - link "Production Bibles" [ref=e11] [cursor=pointer]:
+          - /url: /production-bibles
+        - link "Asset Library" [ref=e12] [cursor=pointer]:
+          - /url: /asset-library
+        - link "Settings" [ref=e13] [cursor=pointer]:
+          - /url: /settings
+  - main [ref=e14]:
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - heading "Settings" [level=1] [ref=e17]
+        - paragraph [ref=e18]: Configure enabled models, defaults, and API credentials.
+      - generic [ref=e19]:
+        - heading "Display" [level=2] [ref=e20]
+        - generic [ref=e21]:
+          - generic [ref=e22]:
+            - text: Show Cost Estimates
+            - paragraph [ref=e23]: Display estimated costs on scenes, forms, and dashboard
+          - button [ref=e24]
+      - generic [ref=e26]:
+        - button "Default Models" [ref=e27]:
+          - heading "Default Models" [level=2] [ref=e28]
+          - img [ref=e29]
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: Pre-selected models when creating a new scene. All optional.
+          - generic [ref=e33]:
+            - generic [ref=e34]: Text Model
+            - generic [ref=e35]:
+              - button "None" [ref=e36]
+              - button "Gemini 2.5 Pro" [ref=e37]
+              - button "Gemini 3 Flash" [ref=e38]
+              - button "Gemini 3.1 Pro" [ref=e39]
+              - button "Gemini 3.5 Flash" [ref=e40]
+              - button "qwen3.5:397b-cloud (Ollama)" [ref=e41]
+              - button "kimi-k2.5:cloud (Ollama)" [ref=e42]
+              - button "minimax-m2.7:cloud (Ollama)" [ref=e43]
+          - generic [ref=e44]:
+            - generic [ref=e45]: Image Model
+            - generic [ref=e46]:
+              - button "None" [ref=e47]
+              - button "Nano Banana" [ref=e48]
+              - button "Nano Banana Pro" [ref=e49]
+              - button "Qwen Image Edit" [ref=e50]
+              - button "Qwen Edit 2509 (multi-ref)" [ref=e51]
+              - button "FLUX.2 Klein" [ref=e52]
+          - generic [ref=e53]:
+            - generic [ref=e54]: Video Model
+            - generic [ref=e55]:
+              - button "None" [ref=e56]
+              - button "Veo 3.1 GA" [ref=e57]
+              - button "Veo 3.1 Fast GA" [ref=e58]
+              - button "Veo 3.1 Lite" [ref=e59]
+              - button "Wan 2.2" [ref=e60]
+              - button "Wan 2.2 FLF2V" [ref=e61]
+              - button "LTX 2.3 FLF2V" [ref=e62]
+              - button "Seedance 2.0 (paid)" [ref=e63]
+          - generic [ref=e64]:
+            - generic [ref=e65]: Vision ModelFor image analysis and reverse-prompting
+            - generic [ref=e66]:
+              - button "None" [ref=e67]
+              - button "Gemini 2.5 Pro" [ref=e68]
+              - button "Gemini 3 Flash" [ref=e69]
+              - button "Gemini 3.1 Pro" [ref=e70]
+              - button "Gemini 3.5 Flash" [ref=e71]
+              - button "qwen3.5:397b-cloud (Ollama)" [ref=e72]
+              - button "kimi-k2.5:cloud (Ollama)" [ref=e73]
+              - button "minimax-m2.7:cloud (Ollama)" [ref=e74]
+          - generic [ref=e75]:
+            - generic [ref=e76]: Voice IDElevenLabs
+            - textbox "e.g. EXAVITQu4vr4xnSDxMaL" [ref=e77]: mvsi7032MOMSPunnESTu
+            - paragraph [ref=e78]: Pre-filled when creating new voice profiles on characters and actors.
+      - generic [ref=e79]:
+        - button "Vertex Studio" [ref=e80]:
+          - heading "Vertex Studio" [level=2] [ref=e81]
+          - img [ref=e82]
+        - generic [ref=e84]:
+          - generic [ref=e85]:
+            - heading "API Settings" [level=3] [ref=e86]
+            - generic [ref=e87]:
+              - generic [ref=e88]:
+                - generic [ref=e89]: Project ID
+                - textbox "my-gcp-project" [ref=e90]
+              - generic [ref=e91]:
+                - generic [ref=e92]: Location
+                - textbox "us-central1" [ref=e93]
+            - generic [ref=e94]:
+              - generic [ref=e95]: API Key
+              - textbox "Enter API key" [ref=e96]
+            - generic [ref=e97]:
+              - generic [ref=e98]: Service Account JSON
+              - paragraph [ref=e99]: Upload your GCP service account key file (.json). Project ID and Location will be auto-populated if empty.
+              - generic [ref=e100]:
+                - generic [ref=e101] [cursor=pointer]: Choose file...
+                - generic [ref=e102]: Service account is set
+              - button "Clear service account" [ref=e104]
+          - generic [ref=e105]:
+            - heading "Text Models" [level=3] [ref=e106]
+            - generic [ref=e107]:
+              - generic [ref=e108]:
+                - generic [ref=e109]:
+                  - generic [ref=e110]: Gemini 2.5 Pro
+                  - generic [ref=e111]: gemini-2.5-pro
+                  - generic [ref=e112]: Vision
+                - button [ref=e113]
+              - generic [ref=e115]:
+                - generic [ref=e116]:
+                  - generic [ref=e117]: Gemini 3 Flash
+                  - generic [ref=e118]: gemini-3-flash-preview
+                  - generic [ref=e119]: Vision
+                - button [ref=e120]
+              - generic [ref=e122]:
+                - generic [ref=e123]:
+                  - generic [ref=e124]: Gemini 3.1 Pro
+                  - generic [ref=e125]: gemini-3.1-pro-preview
+                  - generic [ref=e126]: Vision
+                - button [ref=e127]
+              - generic [ref=e129]:
+                - generic [ref=e130]:
+                  - generic [ref=e131]: Gemini 3.5 Flash
+                  - generic [ref=e132]: gemini-3.5-flash
+                  - generic [ref=e133]: Vision
+                - button [ref=e134]
+          - generic [ref=e136]:
+            - heading "Image Models" [level=3] [ref=e137]
+            - generic [ref=e138]:
+              - generic [ref=e139]:
+                - generic [ref=e140]:
+                  - generic [ref=e141]: Nano Banana
+                  - generic [ref=e142]: gemini-2.5-flash-image
+                - button [ref=e143]
+              - generic [ref=e145]:
+                - generic [ref=e146]:
+                  - generic [ref=e147]: Nano Banana Pro
+                  - generic [ref=e148]: gemini-3-pro-image-preview
+                - button [ref=e149]
+          - generic [ref=e151]:
+            - heading "Video Models" [level=3] [ref=e152]
+            - generic [ref=e153]:
+              - generic [ref=e154]:
+                - generic [ref=e155]:
+                  - generic [ref=e156]: Veo 2
+                  - generic [ref=e157]: veo-2.0-generate-001
+                - button [ref=e158]
+              - generic [ref=e160]:
+                - generic [ref=e161]:
+                  - generic [ref=e162]: Veo 3
+                  - generic [ref=e163]: veo-3.0-generate-001
+                - button [ref=e164]
+              - generic [ref=e166]:
+                - generic [ref=e167]:
+                  - generic [ref=e168]: Veo 3 Fast
+                  - generic [ref=e169]: veo-3.0-fast-generate-001
+                - button [ref=e170]
+              - generic [ref=e172]:
+                - generic [ref=e173]:
+                  - generic [ref=e174]: Veo 3.1 GA
+                  - generic [ref=e175]: veo-3.1-generate-001
+                - button [ref=e176]
+              - generic [ref=e178]:
+                - generic [ref=e179]:
+                  - generic [ref=e180]: Veo 3.1 Fast GA
+                  - generic [ref=e181]: veo-3.1-fast-generate-001
+                - button [ref=e182]
+              - generic [ref=e184]:
+                - generic [ref=e185]:
+                  - generic [ref=e186]: Veo 3.1 Lite
+                  - generic [ref=e187]: veo-3.1-lite-generate-001
+                - button [ref=e188]
+      - generic [ref=e190]:
+        - button "ComfyUI" [ref=e191]:
+          - heading "ComfyUI" [level=2] [ref=e192]
+          - img [ref=e193]
+        - generic [ref=e195]:
+          - generic [ref=e196]:
+            - heading "API Settings" [level=3] [ref=e197]
+            - generic [ref=e198]:
+              - generic [ref=e199]: Host URL
+              - textbox "https://api.comfy.org" [ref=e200]: https://cloud.comfy.org
+            - generic [ref=e201]:
+              - generic [ref=e202]: API Key
+              - textbox "API key is set (leave blank to keep)" [ref=e203]
+              - generic [ref=e204]:
+                - generic [ref=e205]: API key is set
+                - button "Clear key" [ref=e206]
+            - generic [ref=e207]:
+              - generic [ref=e208]: Cost per Second ($)
+              - spinbutton [ref=e209]: "0.03"
+              - paragraph [ref=e210]: Leave empty for $0.00. Used for cost estimation in the Generate form.
+          - generic [ref=e211]:
+            - heading "Video Models" [level=3] [ref=e212]
+            - generic [ref=e213]:
+              - generic [ref=e214]:
+                - generic [ref=e215]:
+                  - generic [ref=e216]: Wan 2.2
+                  - generic [ref=e217]: wan-2.2-i2v
+                - button [ref=e218]
+              - generic [ref=e220]:
+                - generic [ref=e221]:
+                  - generic [ref=e222]: Wan 2.2 FLF2V
+                  - generic [ref=e223]: wan-2.2-flf2v
+                - button [ref=e224]
+              - generic [ref=e226]:
+                - generic [ref=e227]:
+                  - generic [ref=e228]: LTX 2.3 FLF2V
+                  - generic [ref=e229]: ltx-2.3-flf2v
+                - button [ref=e230]
+              - generic [ref=e232]:
+                - generic [ref=e233]:
+                  - generic [ref=e234]: Seedance 2.0 (paid)
+                  - generic [ref=e235]: seedance-2.0-flf2v
+                - button [ref=e236]
+          - generic [ref=e238]:
+            - heading "Image Models" [level=3] [ref=e239]
+            - generic [ref=e240]:
+              - generic [ref=e241]:
+                - generic [ref=e242]:
+                  - generic [ref=e243]: Qwen Fast
+                  - generic [ref=e244]: qwen-fast
+                - button [ref=e245]
+              - generic [ref=e247]:
+                - generic [ref=e248]:
+                  - generic [ref=e249]: Qwen Image Edit
+                  - generic [ref=e250]: qwen-image-edit
+                - button [ref=e251]
+              - generic [ref=e253]:
+                - generic [ref=e254]:
+                  - generic [ref=e255]: Qwen Edit 2509 (multi-ref)
+                  - generic [ref=e256]: qwen-image-edit-2509
+                - button [ref=e257]
+              - generic [ref=e259]:
+                - generic [ref=e260]:
+                  - generic [ref=e261]: Flux.1 Dev
+                  - generic [ref=e262]: flux-dev
+                - button [ref=e263]
+              - generic [ref=e265]:
+                - generic [ref=e266]:
+                  - generic [ref=e267]: Flux.1 Dev + LoRA
+                  - generic [ref=e268]: flux-dev-lora
+                - button [ref=e269]
+              - generic [ref=e271]:
+                - generic [ref=e272]:
+                  - generic [ref=e273]: Flux.1 Dev + Refs
+                  - generic [ref=e274]: flux-dev-redux
+                - button [ref=e275]
+              - generic [ref=e277]:
+                - generic [ref=e278]:
+                  - generic [ref=e279]: Flux.1 Dev Full
+                  - generic [ref=e280]: flux-dev-full
+                - button [ref=e281]
+              - generic [ref=e283]:
+                - generic [ref=e284]:
+                  - generic [ref=e285]: FLUX.2 Klein
+                  - generic [ref=e286]: flux-2-klein
+                - button [ref=e287]
+      - generic [ref=e289]:
+        - button "Ollama" [ref=e290]:
+          - heading "Ollama" [level=2] [ref=e291]
+          - img [ref=e292]
+        - generic [ref=e294]:
+          - generic [ref=e295]:
+            - heading "API Settings" [level=3] [ref=e296]
+            - generic [ref=e297]:
+              - generic [ref=e298]: "Mode:"
+              - button "Local" [ref=e299]
+              - button "Cloud" [ref=e300]
+            - generic [ref=e301]:
+              - generic [ref=e302]: API Key
+              - textbox "Key is set (leave blank to keep)" [ref=e303]
+              - text: API key is set
+            - generic [ref=e304]:
+              - generic [ref=e305]: Endpoint URL
+              - textbox "https://ollama.com" [ref=e306]
+              - paragraph [ref=e307]: "Leave empty for default. Local: http://localhost:11434, Cloud: https://ollama.com"
+          - generic [ref=e308]:
+            - heading "Models" [level=3] [ref=e309]
+            - generic [ref=e310]:
+              - textbox "e.g. llama3.2-vision" [ref=e311]
+              - button "Add" [ref=e312]
+            - generic [ref=e313]:
+              - generic [ref=e314]:
+                - generic [ref=e315]:
+                  - generic [ref=e316]: qwen3.5:397b-cloud
+                  - generic [ref=e317]: ollama/qwen3.5:397b-cloud
+                  - button "Vision" [ref=e318]
+                - generic [ref=e319]:
+                  - button [ref=e320]
+                  - button "Remove" [ref=e322]
+              - generic [ref=e323]:
+                - generic [ref=e324]:
+                  - generic [ref=e325]: kimi-k2.5:cloud
+                  - generic [ref=e326]: ollama/kimi-k2.5:cloud
+                  - button "Vision" [ref=e327]
+                - generic [ref=e328]:
+                  - button [ref=e329]
+                  - button "Remove" [ref=e331]
+              - generic [ref=e332]:
+                - generic [ref=e333]:
+                  - generic [ref=e334]: gemma3:27b-cloud
+                  - generic [ref=e335]: ollama/gemma3:27b-cloud
+                  - button "Vision" [ref=e336]
+                - generic [ref=e337]:
+                  - button [ref=e338]
+                  - button "Remove" [ref=e340]
+              - generic [ref=e341]:
+                - generic [ref=e342]:
+                  - generic [ref=e343]: gpt-oss:120b-cloud
+                  - generic [ref=e344]: ollama/gpt-oss:120b-cloud
+                  - button "Vision" [ref=e345]
+                - generic [ref=e346]:
+                  - button [ref=e347]
+                  - button "Remove" [ref=e349]
+              - generic [ref=e350]:
+                - generic [ref=e351]:
+                  - generic [ref=e352]: minimax-m2.7:cloud
+                  - generic [ref=e353]: ollama/minimax-m2.7:cloud
+                  - button "Vision" [ref=e354]
+                - generic [ref=e355]:
+                  - button [ref=e356]
+                  - button "Remove" [ref=e358]
+      - button "ElevenLabs" [ref=e360]:
+        - heading "ElevenLabs" [level=2] [ref=e361]
+        - img [ref=e362]
+      - button "Save Settings" [ref=e364]

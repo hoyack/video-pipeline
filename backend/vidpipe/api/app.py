@@ -1,5 +1,6 @@
 """FastAPI application setup with lifespan and exception handlers."""
 
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
@@ -26,6 +27,7 @@ from vidpipe.api.asset_library import asset_library_router
 from vidpipe.api.editor_images import editor_images_router
 from vidpipe.api.production_master import production_master_router
 from vidpipe.api.sound_deck import sound_deck_router
+from vidpipe.api.upscale_routes import upscale_router
 
 # Configure root logger so application logs (pipeline stages, S3, etc.) reach stdout
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -50,12 +52,24 @@ async def lifespan(app: FastAPI):
     await init_database()
     await load_vertex_credentials_from_db()
     await load_comfyui_credentials_from_db()
+
+    # Resume scenes orphaned in in-flight statuses by a previous restart
+    # (e.g. container rebuild mid-pipeline). Runs in the background so
+    # startup is not blocked.
+    recovery_task = None
+    from vidpipe.config import settings
+    if settings.pipeline.auto_resume_on_startup:
+        from vidpipe.orchestrator.recovery import recover_orphaned_scenes
+        recovery_task = asyncio.create_task(recover_orphaned_scenes())
+
     logger.info("API startup complete")
 
     yield
 
     # Shutdown
     logger.info("Shutting down Video Pipeline API...")
+    if recovery_task is not None and not recovery_task.done():
+        recovery_task.cancel()
     await close_comfyui_client()
     await shutdown()
     logger.info("API shutdown complete")
@@ -91,6 +105,7 @@ app.include_router(asset_library_router)
 app.include_router(editor_images_router)
 app.include_router(production_master_router)
 app.include_router(sound_deck_router)
+app.include_router(upscale_router)
 
 # Serve frontend static files in production (after API routes take priority)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"

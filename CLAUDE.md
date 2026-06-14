@@ -147,6 +147,15 @@ The app runs in Docker containers. **Code changes are not live until containers 
 - **`docker-compose.yml`** — Production: static frontend build (nginx), PostgreSQL via Supabase pooler (port 6543), S3 storage
 - **`docker-compose.dev.yml`** — Development: Vite dev server with HMR, backend `--reload`, SQLite, volume-mounted source code (changes auto-reload)
 
+### Supabase Dependency & Safe Startup (CRITICAL)
+
+The production stack depends on an **external self-hosted Supabase** project (sibling dir, e.g. `../supabase-project/`) for PostgreSQL and object storage. Prefer **`./scripts/start-stack.sh`** to bring everything up — it starts Supabase + app in order and auto-repairs the WSL2 failure modes below. Do not `docker compose down -v` the Supabase stack.
+
+- **Always run Supabase with BOTH compose files:** `docker compose -f docker-compose.yml -f docker-compose.s3.yml ...` (for `up` and `down`). The base file sets storage `STORAGE_BACKEND=file` and omits the `minio` service; the `docker-compose.s3.yml` overlay switches storage to `s3 → http://minio:9000`. Objects live in **MinIO**; the backend reaches it via `S3_ENDPOINT=http://supabase-kong:8000/storage/v1`. Bringing the stack up with the base file alone makes all media GETs fail with `EISDIR`/500.
+- **Recreate, don't restart, on stale-mount crashes:** after a Docker Desktop / WSL restart, containers may `Exit(127)` with `OCI runtime create failed ... not a directory` — a stale Docker Desktop WSL bind-mount cache, not a config error. `docker restart` reuses the broken spec and loops; `down` + `up` (with both files) re-resolves the mounts.
+- **MinIO can format an empty pool:** MinIO (`/data`) and `supabase-storage` (`/var/lib/storage`) bind-mount the *same* host dir. If MinIO's cached view goes empty after a restart it logs `Formatting 1st pool` and serves a blank bucket (media 400s). The objects are NOT lost — recover with `docker compose -f ... -f docker-compose.s3.yml up -d --force-recreate --no-deps minio`. Confirm with `du -sh /data` inside the minio container vs `/var/lib/storage` inside storage.
+- `supabase-storage` reporting `(unhealthy)` is cosmetic (healthcheck probes IPv6 `localhost`; service is on IPv4). It still serves.
+
 ### Rebuilding After Code Changes (CRITICAL)
 
 **Production mode (`docker-compose.yml`):** Source code is COPIED into images at build time. After modifying backend Python or frontend TypeScript/React code, you **must rebuild** for changes to take effect:

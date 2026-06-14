@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    gpus: all
+    gpus: all  # RTX 4070 Ti via nvidia runtime — GPU face restoration + 4x upscale (torch)
     env_file: .env
     environment:
       - VIDPIPE_STORAGE__DATABASE_URL=${VIDPIPE_STORAGE__DATABASE_URL}
@@ -16,6 +16,11 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./tmp:/app/tmp
+      # Persist InsightFace models (inswapper_128.onnx for face-swap + buffalo_l)
+      # across rebuilds. Drop inswapper_128.onnx into ./models/insightface/.
+      - ./models/insightface:/root/.insightface/models
+      # CodeFormer + RealESRGAN weights for GPU face restoration / upscaling.
+      - ./models/restore:/models/restore:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS:-./.gcp-credentials.json}:/app/credentials.json:ro
     ports:
       - "${VIDPIPE_PORT:-8100}:8000"

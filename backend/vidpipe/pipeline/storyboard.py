@@ -234,8 +234,14 @@ VIDEO MOTION PROMPT FORMAT (video_motion_prompt):
 Describe ONLY motion and camera movement. Do NOT re-describe characters, setting, or style.
 The keyframe images already provide the visual context — the motion prompt controls what moves.
 Focus on: camera movement (pan, dolly, track, crane), subject animation, environmental animation.
-Good example: "Slow dolly forward as the subject turns to face the camera, hair gently blowing in the breeze"
+Good example: "Camera tracks alongside the subject as he strides forward through the crowd, pedestrians streaming past in both directions, rain streaking through neon light and steam billowing from vents"
 Bad example: "A blonde woman in anime style turns around in a congressional hearing room" (re-describes visuals)
+
+MOTION ENERGY (CRITICAL — the video model renders exactly the energy you describe):
+Every video_motion_prompt MUST describe continuous, clearly visible motion that is already in progress at the first frame. Combine at least two of: subject action (walking, turning, reaching, gesturing), environmental animation (crowd movement, rain, steam, flickering signs, traffic), and camera movement (tracking, dolly, pan).
+- The video models take motion language literally. Words like "slowly", "static", "still", "subtle", "gentle", "steady", "motionless" produce frozen, lifeless clips — DO NOT use them, especially never for a scene's opening shot.
+- Prefer active, present-tense verbs: "strides", "tracks", "sweeps", "rushes", "turns sharply", "pushes through".
+- A held emotional beat can still have motion: keep the camera or environment moving even when the subject is relatively still (e.g. "the subject holds his position as the camera slowly circles and rain pours around him" — circling + rain still reads as alive).
 
 FRAMING-MOTION SAFETY:
 Camera movement must be compatible with subject positioning in the start keyframe.
@@ -243,9 +249,8 @@ Camera movement must be compatible with subject positioning in the start keyfram
 - If camera PANS DOWN or TILTS DOWN: position the subject in the UPPER half of the start keyframe
 - If camera DOLLIES IN: ensure subject face is clearly visible and centered in start keyframe
 - NEVER generate motion that would push the primary subject's head out of frame
-- PREFER subtle camera movements (slow dolly, gentle tracking) over dramatic pans/tilts
-  when the subject must remain recognizable throughout
-- When in doubt, use a STATIC or SLOW DOLLY camera — these preserve character identity best
+- To keep the subject recognizable during strong motion, use TRACKING or ORBITING camera moves
+  (which follow the subject) rather than fully static framing — motion and identity are NOT in conflict
 
 GOAL: Ensure all shots maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 
@@ -1175,8 +1180,14 @@ VIDEO MOTION PROMPT FORMAT (video_motion_prompt):
 Describe ONLY motion and camera movement. Do NOT re-describe characters, setting, or style.
 The keyframe images already provide the visual context — the motion prompt controls what moves.
 Focus on: camera movement (pan, dolly, track, crane), subject animation, environmental animation.
-Good example: "Slow dolly forward as the subject turns to face the camera, hair gently blowing in the breeze"
+Good example: "Camera tracks alongside the subject as he strides forward through the crowd, pedestrians streaming past in both directions, rain streaking through neon light and steam billowing from vents"
 Bad example: "A blonde woman in anime style turns around in a congressional hearing room" (re-describes visuals)
+
+MOTION ENERGY (CRITICAL — the video model renders exactly the energy you describe):
+Every video_motion_prompt MUST describe continuous, clearly visible motion that is already in progress at the first frame. Combine at least two of: subject action (walking, turning, reaching, gesturing), environmental animation (crowd movement, rain, steam, flickering signs, traffic), and camera movement (tracking, dolly, pan).
+- The video models take motion language literally. Words like "slowly", "static", "still", "subtle", "gentle", "steady", "motionless" produce frozen, lifeless clips — DO NOT use them, especially never for a scene's opening shot.
+- Prefer active, present-tense verbs: "strides", "tracks", "sweeps", "rushes", "turns sharply", "pushes through".
+- A held emotional beat can still have motion: keep the camera or environment moving even when the subject is relatively still (e.g. "the subject holds his position as the camera slowly circles and rain pours around him" — circling + rain still reads as alive).
 
 FRAMING-MOTION SAFETY:
 Camera movement must be compatible with subject positioning in the start keyframe.
@@ -1184,9 +1195,8 @@ Camera movement must be compatible with subject positioning in the start keyfram
 - If camera PANS DOWN or TILTS DOWN: position the subject in the UPPER half of the start keyframe
 - If camera DOLLIES IN: ensure subject face is clearly visible and centered in start keyframe
 - NEVER generate motion that would push the primary subject's head out of frame
-- PREFER subtle camera movements (slow dolly, gentle tracking) over dramatic pans/tilts
-  when the subject must remain recognizable throughout
-- When in doubt, use a STATIC or SLOW DOLLY camera — these preserve character identity best
+- To keep the subject recognizable during strong motion, use TRACKING or ORBITING camera moves
+  (which follow the subject) rather than fully static framing — motion and identity are NOT in conflict
 
 GOAL: Ensure all shots maintain visual coherence in {style} style while telling a compelling story. Preserve the original script's specific terminology, names, and details — do not reduce domain-specific content to generic visual metaphors."""
 

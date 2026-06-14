@@ -156,3 +156,32 @@ class PropMetadataOutput(BaseModel):
         "wear/condition, distinctive details, lighting interaction (reflective, matte, etc.), "
         "viewing angle. ~80-120 words."
     )
+
+
+class IdentityReferenceRating(BaseModel):
+    """Per-image rating for identity-reference suitability."""
+
+    index: int = Field(description="Zero-based index of the image panel being rated")
+    face_clearly_visible: bool = Field(
+        description="True if a human face is clearly visible (not from behind, not tiny)"
+    )
+    eyes_unobstructed: bool = Field(
+        description="True if the eyes are visible and NOT hidden by sunglasses, shadow, or other occlusion"
+    )
+    suitability: float = Field(
+        description="0-10 score for how suitable this image is as an identity reference "
+        "for image generation (frontal, sharp, unobstructed face scores high)"
+    )
+
+
+class IdentityReferenceQualificationOutput(BaseModel):
+    """Structured output ranking candidate identity reference images.
+
+    Used by keyframes.py to pick the best character references for
+    multi-reference ComfyUI image models (occluded/sunglasses references
+    dilute identity conditioning).
+    """
+
+    ratings: list[IdentityReferenceRating] = Field(
+        description="One rating per numbered image panel, in panel order"
+    )

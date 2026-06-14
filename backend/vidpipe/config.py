@@ -68,6 +68,23 @@ class PipelineConfig(BaseModel):
     retry_max_attempts: int
     retry_base_delay: int
     video_transient_retries: int = 3
+    # Degenerate-clip detection (ComfyUI Cloud occasionally returns corrupted
+    # MP4s on successful jobs) — validate downloads and retry with a new job.
+    clip_validation_enabled: bool = True
+    clip_corrupt_retry_max: int = 2
+    # Near-static ComfyUI/LTX clips (frozen openings from "slow/steady" motion
+    # prompts) — minimum mean frame-diff to accept without escalation, and how
+    # many times to resubmit with a motion-amplified prompt. Frozen clips
+    # measure < 5; lively clips measure 7-37.
+    clip_min_motion: float = 5.0
+    clip_motion_retry_max: int = 1
+    # Max seconds a ComfyUI job may sit in a queue state ("queued_limited"
+    # under account concurrency limits) before we give up. Queue time does
+    # not count against execution poll timeouts.
+    comfy_queue_timeout: int = 1800
+    # Resume scenes orphaned in in-flight statuses when the server restarts
+    # (e.g. container rebuild mid-pipeline).
+    auto_resume_on_startup: bool = True
 
 
 class StorageConfig(BaseModel):
@@ -110,6 +127,28 @@ class CVAnalysisConfig(BaseModel):
     max_video_file_size_mb: int = 200
 
 
+class FaceSwapConfig(BaseModel):
+    """Post-generation face-swap configuration.
+
+    Pastes a character's real reference face onto generated keyframes
+    (InsightFace inswapper) to lock exact identity regardless of the image
+    model. Opt-in: existing productions are unaffected until enabled.
+    """
+
+    enabled: bool = False  # feature flag (opt-in)
+    min_det_score: float = 0.50  # skip swap when the target face detects below this
+    # Post-swap face restoration (CodeFormer via spandrel, GPU). Re-renders the
+    # soft 128px swapped face at 512px with realistic detail, then pastes back.
+    restore: bool = False
+    restore_weight: float = 0.9  # CodeFormer fidelity (→1.0 preserves identity; →0 max restoration)
+    restore_model_dir: str = "/models/restore"  # codeformer.pth + RealESRGAN_x4plus.pth live here
+    # Optional 4x super-resolution (RealESRGAN, GPU, tiled). Produces a separate
+    # *_4k still artifact — it does NOT replace the keyframe that feeds video gen
+    # (the video model downsamples; a 4K input would only bloat the cloud upload).
+    upscale_keyframes: bool = False
+    upscale_scale: int = 4
+
+
 class Settings(BaseSettings):
     """Main application settings with YAML and environment variable support.
 
@@ -133,6 +172,7 @@ class Settings(BaseSettings):
     storage: StorageConfig
     server: ServerConfig
     cv_analysis: CVAnalysisConfig = Field(default_factory=CVAnalysisConfig)
+    face_swap: FaceSwapConfig = Field(default_factory=FaceSwapConfig)
 
     @classmethod
     def settings_customise_sources(

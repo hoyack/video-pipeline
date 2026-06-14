@@ -54,8 +54,12 @@ WAN_I2V_NEGATIVE_PROMPT = (
     "inconsistent face, cropped head, decapitated framing"
 )
 
-# Generic video negative prompt for LTX (no model-specific tuning yet)
+# Generic video negative prompt for LTX. The static/motionless terms matter:
+# LTX FLF2V interprets gentle motion prompts very literally and can produce a
+# near-still clip (measured frame-diff 0.79 vs 30+ for the same keyframes/seed
+# with motion-forward prompting).
 LTX_NEGATIVE_PROMPT = (
+    "static, still image, frozen, motionless scene, no movement, "
     "blurry, out of focus, overexposed, underexposed, low contrast, "
     "washed out colors, excessive noise, grainy texture, poor lighting, "
     "flickering, motion blur, distorted proportions, unnatural skin tones, "
@@ -65,11 +69,61 @@ LTX_NEGATIVE_PROMPT = (
     "unnatural transitions, tilted camera, AI artifacts"
 )
 
+# Motion-forward prefix for LTX — without it, FLF2V conditioning eases in so
+# conservatively that the first seconds of a clip can be effectively frozen.
+_LTX_MOTION_PREFIX = (
+    "Continuous visible motion from the very first frame, with the subject "
+    "and environment in clear movement throughout the clip. "
+)
+
 # Framing-safety prefix for models without reference-image support
 _FRAMING_SAFETY_PREFIX = (
     "Keep the subject's face and full head visible in frame throughout the entire clip. "
     "Maintain consistent character appearance and proportions. "
 )
+
+# Freeze-word substitutions for motion escalation. Order matters: longer,
+# multi-word phrases first so they win over single-word replacements.
+_MOTION_FREEZE_SUBSTITUTIONS: tuple[tuple[str, str], ...] = (
+    ("remains static", "moves dynamically"),
+    ("remains still", "keeps moving"),
+    ("stays still", "keeps moving"),
+    ("static camera", "actively moving camera"),
+    ("smooth, steady", "fast, energetic"),
+    ("smooth and steady", "fast and energetic"),
+    ("slow dolly", "fast dolly"),
+    ("slowly", "continuously and energetically"),
+    ("gently", "vigorously"),
+    ("subtle", "pronounced"),
+    ("steady", "sweeping"),
+    ("motionless", "in constant motion"),
+    ("barely moving", "moving briskly"),
+)
+
+# Strong override sentence prepended on motion escalation.
+_MOTION_ESCALATION_PREFIX = (
+    "HIGH MOTION: every part of the frame must be in obvious, continuous "
+    "movement from the very first frame — the subject moving briskly, the "
+    "camera tracking dynamically, and the environment (crowd, rain, steam, "
+    "lights, traffic) all visibly animated. Avoid any static or frozen moment. "
+)
+
+
+def escalate_motion_prompt(prompt: str) -> str:
+    """Rewrite a motion prompt to force visible motion from an LTX/ComfyUI model.
+
+    Used when a generated clip measured near-static: replaces freeze-inducing
+    language ("slowly", "steady", "remains static", ...) with energetic
+    equivalents and prepends a strong high-motion override. Pure function so it
+    can be unit-tested and reused by the regen path. Case-insensitive matching;
+    replacements use the energetic form's casing.
+    """
+    import re
+
+    rewritten = prompt
+    for needle, replacement in _MOTION_FREEZE_SUBSTITUTIONS:
+        rewritten = re.sub(re.escape(needle), replacement, rewritten, flags=re.IGNORECASE)
+    return _MOTION_ESCALATION_PREFIX + rewritten
 
 _VIDEO_OUTPUT_KEYS = ("videos", "video", "gifs", "images")
 _VIDEO_EXTENSIONS = (".mp4", ".webm", ".avi", ".mov", ".mkv")
@@ -77,6 +131,10 @@ _VIDEO_EXTENSIONS = (".mp4", ".webm", ".avi", ".mov", ".mkv")
 # Status normalization sets
 _COMPLETED_STATUSES = frozenset({"completed", "success", "done"})
 _FAILED_STATUSES = frozenset({"failed", "error", "cancelled"})
+# Comfy Cloud holds jobs in queue states (observed: "queued_limited" when the
+# account concurrency limit is hit) before any execution starts. Time spent
+# queued must not count against execution timeouts.
+QUEUED_STATUSES = frozenset({"queued", "queued_limited", "pending"})
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +194,7 @@ COMFY_VIDEO_SPECS: dict[str, ComfyVideoModelSpec] = {
         supports_end_frame=True,
         supports_audio=True,
         supports_char_refs=False,
-        prompt_prefix=None,
+        prompt_prefix=_LTX_MOTION_PREFIX,
     ),
     "seedance-2.0-flf2v": ComfyVideoModelSpec(
         fps=24,
@@ -436,7 +494,7 @@ class ComfyUIVideoAdapter:
 
         Returns:
             (status, error_message) where status is one of:
-            "completed", "running", "failed".
+            "completed", "running", "queued", "failed".
         """
         prompt_id = operation_id.removeprefix("comfyui:")
         raw_status, error_msg = await self.client.poll_status(prompt_id)
@@ -452,6 +510,11 @@ class ComfyUIVideoAdapter:
                 prompt_id, raw_status, error_msg,
             )
             return "failed", error_msg or f"ComfyUI job {raw_status}"
+        elif raw_status in QUEUED_STATUSES:
+            logger.debug(
+                "ComfyUI %s: raw_status=%r → queued", prompt_id, raw_status,
+            )
+            return "queued", None
         else:
             logger.debug(
                 "ComfyUI %s: raw_status=%r → running", prompt_id, raw_status,

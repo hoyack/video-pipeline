@@ -43,6 +43,10 @@ env/
 # Temporary files
 tmp/
 
+# Local model weights (e.g. InsightFace inswapper_128.onnx, buffalo_l) — large,
+# gated/licensed; mounted into the backend container, never committed.
+models/
+
 # Credentials
 *.json
 !config.json

@@ -263,6 +263,16 @@ async def run_pipeline(
         await session.commit()
         logger.info(f"Scene {scene.id}: transitioned from previous status to {resume_step}")
 
+    # Normalize the transient keyframes→video status. generate_keyframes sets
+    # "generating_video" and the orchestrator usually renames it to "video_gen"
+    # right after — but a crash/restart between the two leaves the scene
+    # stranded in a status no step block matches, so the pipeline would
+    # otherwise no-op straight to "completed successfully".
+    if scene.status == "generating_video":
+        scene.status = "video_gen"
+        await session.commit()
+        logger.info(f"Scene {scene.id}: normalized generating_video → video_gen")
+
     try:
         # Step 1: Storyboard generation
         if scene.status == "pending":

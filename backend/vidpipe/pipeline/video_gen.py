@@ -21,6 +21,7 @@ Usage:
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -38,12 +39,12 @@ from tenacity import (
 )
 
 from vidpipe.config import settings
-from vidpipe.db.models import Scene, Shot, Keyframe, VideoClip, GenerationCandidate
+from vidpipe.db.models import DEFAULT_USER_ID, Scene, Shot, Keyframe, UserSettings, VideoClip, GenerationCandidate
 from vidpipe.services.candidate_scoring import CandidateScoringService
 from vidpipe.services.cv_analysis_service import CVAnalysisService
 from vidpipe.services.entity_extraction import identify_new_entities, extract_and_register_new_entities
 from vidpipe.services.file_manager import FileManager
-from vidpipe.services.llm import LLMAdapter
+from vidpipe.services.llm import LLMAdapter, get_adapter
 from vidpipe.services.vertex_client import get_vertex_client, location_for_model
 from vidpipe.services.model_catalog import canonical_model_id
 from vidpipe.services import manifest_service
@@ -599,6 +600,7 @@ async def _handle_quality_mode_candidates(
     has_refs: bool = False,
     scoring_service: Optional[CandidateScoringService] = None,
     cv_service: Optional[CVAnalysisService] = None,
+    vision_adapter: Optional[LLMAdapter] = None,
 ) -> None:
     """Save all candidate videos, score them, and auto-select the best one.
 
@@ -707,7 +709,14 @@ async def _handle_quality_mode_candidates(
 
     # Step 8: Run CV analysis on selected candidate only
     await _run_post_generation_analysis(
-        session, shot, clip, scene, shot_manifest_row, file_mgr, cv_service=cv_service
+        session,
+        shot,
+        clip,
+        scene,
+        shot_manifest_row,
+        file_mgr,
+        cv_service=cv_service,
+        vision_adapter=vision_adapter,
     )
 
 
@@ -722,6 +731,7 @@ async def _run_post_generation_analysis(
     shot_manifest_row,  # ShotManifest | None (imported inline to avoid circular)
     file_mgr: FileManager,
     cv_service: Optional[CVAnalysisService] = None,
+    vision_adapter: Optional[LLMAdapter] = None,
 ) -> None:
     """Run CV analysis on completed video clip for progressive enrichment.
 
@@ -787,6 +797,7 @@ async def _run_post_generation_analysis(
                     shot_manifest_row.manifest_json if shot_manifest_row else None
                 ),
                 existing_assets=all_assets,
+                vision_adapter=vision_adapter,
             )
 
             # Step 6: Track appearances — persist AssetAppearance records
@@ -804,6 +815,7 @@ async def _run_post_generation_analysis(
                     shot.shot_index,
                     new_entities,
                     source="CLIP_EXTRACT",
+                    vision_adapter=vision_adapter,
                 )
 
             # Step 8: Persist analysis results to ShotManifest (exclude raw embeddings)
@@ -856,6 +868,14 @@ async def generate_videos(
     is_comfyui = video_model in COMFYUI_VIDEO_MODELS
     client = None if is_comfyui else get_vertex_client(location=location_for_model(video_model))
     file_mgr = FileManager()
+
+    if vision_adapter is None:
+        user_settings_result = await session.execute(
+            select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+        )
+        user_settings = user_settings_result.scalar_one_or_none()
+        vision_model_id = scene.vision_model or scene.text_model or settings.models.storyboard_llm
+        vision_adapter = get_adapter(vision_model_id, user_settings=user_settings)
 
     # Instantiate per-call services with vision_adapter instead of adapter-unaware singletons
     cv_service = CVAnalysisService(vision_adapter=vision_adapter)
@@ -917,7 +937,13 @@ async def generate_videos(
         try:
             if is_comfyui:
                 await _generate_video_comfyui(
-                    session, shot, file_mgr, scene, video_model,
+                    session,
+                    shot,
+                    file_mgr,
+                    scene,
+                    video_model,
+                    cv_service=cv_service,
+                    vision_adapter=vision_adapter,
                 )
             else:
                 await _generate_video_for_shot(
@@ -925,6 +951,7 @@ async def generate_videos(
                     cv_service=cv_service,
                     scoring_service=scoring_service,
                     text_adapter=text_adapter,
+                    vision_adapter=vision_adapter,
                 )
 
             # Clear generation_status after successful generation (VGED-05)
@@ -943,6 +970,35 @@ async def generate_videos(
             await session.commit()
             event_bus.emit(scene.id, "error", phase="clips", shot_index=shot.shot_index, message=str(e))
             raise
+
+    # No silent partial scenes: every shot must have reached video_done
+    # before stitching. A timed-out/failed shot used to fall through here
+    # and the stitcher would happily stitch the remaining clips, marking a
+    # truncated scene "complete".
+    result = await session.execute(
+        select(Shot)
+        .where(Shot.scene_id == scene.id)
+        .order_by(Shot.shot_index)
+    )
+    all_shots = result.scalars().all()
+    incomplete = [s for s in all_shots if s.status != "video_done"]
+    if incomplete:
+        details = []
+        for s in incomplete:
+            clip_result = await session.execute(
+                select(VideoClip).where(VideoClip.shot_id == s.id)
+            )
+            failed_clip = clip_result.scalar_one_or_none()
+            reason = (
+                failed_clip.error_message
+                if failed_clip and failed_clip.error_message
+                else s.status
+            )
+            details.append(f"shot {s.shot_index}: {reason}")
+        raise RuntimeError(
+            f"Video generation incomplete for {len(incomplete)} of "
+            f"{len(all_shots)} shot(s) — " + "; ".join(details)
+        )
 
     # Update scene status
     scene.status = "stitching"
@@ -964,6 +1020,8 @@ async def _generate_video_comfyui(
     file_mgr: FileManager,
     scene: Scene,
     video_model: str,
+    cv_service: Optional[CVAnalysisService] = None,
+    vision_adapter: Optional[LLMAdapter] = None,
 ) -> None:
     """Generate video clip for a single shot via ComfyUI Cloud.
 
@@ -1042,6 +1100,33 @@ async def _generate_video_comfyui(
     comfy_client = await get_comfyui_client(host=comfy_host, api_key=comfy_key)
     adapter = ComfyUIVideoAdapter(comfy_client)
 
+    # Load character reference images (if manifest scene). Wired as QC
+    # passthroughs on models with supports_char_refs (wan-2.2-flf2v).
+    # Loaded up-front so corrupted-clip retries can resubmit.
+    char_ref_bytes: list[bytes] = []
+    if scene.production_bible_id:
+        char_ref_bytes = await _load_char_ref_images(session, scene)
+
+    async def _submit_fresh(attempt: int, *, prompt_override: str | None = None) -> str:
+        """Submit a new ComfyUI job. ``attempt`` perturbs the seed so a retry
+        cannot hit ComfyUI's node cache and receive the same corrupted encode.
+        ``prompt_override`` replaces the motion prompt (used by motion escalation).
+        """
+        # Framing-safety prompt prefix is applied per-model by the adapter
+        # (COMFY_VIDEO_SPECS.prompt_prefix).
+        return await adapter.submit(
+            video_prompt=prompt_override or video_prompt,
+            start_frame_bytes=start_frame_bytes,
+            end_frame_bytes=end_frame_bytes,
+            char_ref_bytes=char_ref_bytes,
+            aspect_ratio=scene.aspect_ratio,
+            seed=(scene.seed or 0) + attempt * 1000003,
+            shot_index=shot.shot_index,
+            video_model=video_model,
+            duration_seconds=scene.target_clip_duration or 5,
+            audio_enabled=bool(scene.audio_enabled),
+        )
+
     # If clip exists with comfyui: prefix and is polling, resume poll
     if clip and clip.status == "polling" and clip.operation_name and clip.operation_name.startswith("comfyui:"):
         logger.info(
@@ -1051,27 +1136,7 @@ async def _generate_video_comfyui(
     else:
         # Fresh submission via adapter
         logger.info("Shot %d: submitting to ComfyUI", shot.shot_index)
-
-        # Load character reference images (if manifest scene). Wired as QC
-        # passthroughs on models with supports_char_refs (wan-2.2-flf2v).
-        char_ref_bytes: list[bytes] = []
-        if scene.production_bible_id:
-            char_ref_bytes = await _load_char_ref_images(session, scene)
-
-        # Framing-safety prompt prefix is applied per-model by the adapter
-        # (COMFY_VIDEO_SPECS.prompt_prefix).
-        operation_id = await adapter.submit(
-            video_prompt=video_prompt,
-            start_frame_bytes=start_frame_bytes,
-            end_frame_bytes=end_frame_bytes,
-            char_ref_bytes=char_ref_bytes,
-            aspect_ratio=scene.aspect_ratio,
-            seed=scene.seed or 0,
-            shot_index=shot.shot_index,
-            video_model=video_model,
-            duration_seconds=scene.target_clip_duration or 5,
-            audio_enabled=bool(scene.audio_enabled),
-        )
+        operation_id = await _submit_fresh(0)
 
         # Create/update clip record (persist before polling for crash recovery)
         if clip is None:
@@ -1095,72 +1160,237 @@ async def _generate_video_comfyui(
     # --- Poll loop (adapter normalizes status to "completed"/"failed"/"running") ---
     poll_interval = settings.pipeline.video_poll_interval
     max_polls = settings.pipeline.video_poll_max
+    max_corrupt_retries = (
+        settings.pipeline.clip_corrupt_retry_max
+        if settings.pipeline.clip_validation_enabled
+        else 0
+    )
+    max_motion_retries = (
+        settings.pipeline.clip_motion_retry_max
+        if settings.pipeline.clip_validation_enabled
+        else 0
+    )
+    corruption_attempt = 0
+    motion_attempt = 0
 
-    for poll_attempt in range(clip.poll_count, max_polls):
-        status, error_msg = await adapter.poll(clip.operation_name)
-        clip.poll_count = poll_attempt + 1
+    while True:
+        video_bytes = None
+        duration = None
 
-        if status == "completed":
-            # Download via adapter (handles history parsing + download)
-            try:
-                video_bytes, duration = await adapter.download(
-                    clip.operation_name,
-                    video_model=video_model,
-                    duration_seconds=scene.target_clip_duration or 5,
-                )
-            except Exception as e:
+        queue_deadline = time.monotonic() + settings.pipeline.comfy_queue_timeout
+
+        while True:
+            status, error_msg = await adapter.poll(clip.operation_name)
+
+            if status == "completed":
+                # Download via adapter (handles history parsing + download)
+                try:
+                    video_bytes, duration = await adapter.download(
+                        clip.operation_name,
+                        video_model=video_model,
+                        duration_seconds=scene.target_clip_duration or 5,
+                    )
+                except Exception as e:
+                    clip.status = "failed"
+                    clip.error_message = f"Video download failed: {e}"
+                    shot.status = "failed"
+                    await session.commit()
+                    logger.error("Shot %d: ComfyUI download failed: %s", shot.shot_index, e)
+                    return
+                break
+
+            elif status == "failed":
                 clip.status = "failed"
-                clip.error_message = f"Video download failed: {e}"
+                clip.error_message = error_msg or "ComfyUI job failed"
                 shot.status = "failed"
                 await session.commit()
-                logger.error("Shot %d: ComfyUI download failed: %s", shot.shot_index, e)
+                logger.error("Shot %d: ComfyUI job failed: %s", shot.shot_index, error_msg)
                 return
 
-            # Save clip
-            clip_stored_path = await file_mgr.save_clip_async(
-                scene.id, shot.shot_index, video_bytes,
-            )
-            clip.local_path = clip_stored_path
-            clip.status = "complete"
-            clip.duration_seconds = duration
-            clip.source = "generated"
-            shot.status = "video_done"
+            elif status == "queued":
+                # Held under Comfy Cloud concurrency limits ("queued_limited")
+                # — queue time does not consume the execution poll budget.
+                if time.monotonic() > queue_deadline:
+                    clip.status = "timed_out"
+                    clip.error_message = (
+                        f"ComfyUI job stayed queued for more than "
+                        f"{settings.pipeline.comfy_queue_timeout} seconds"
+                    )
+                    shot.status = "timed_out"
+                    await session.commit()
+                    logger.error("Shot %d: ComfyUI queue wait timed out", shot.shot_index)
+                    return
+
+            else:
+                # Executing — consume execution poll budget
+                clip.poll_count += 1
+                if clip.poll_count >= max_polls:
+                    clip.status = "timed_out"
+                    clip.error_message = (
+                        f"ComfyUI operation did not complete after "
+                        f"{max_polls * poll_interval} seconds of execution"
+                    )
+                    shot.status = "timed_out"
+                    await session.commit()
+                    logger.error("Shot %d: ComfyUI poll timed out", shot.shot_index)
+                    return
+
+            # Still waiting — sleep and continue
             await session.commit()
+            await asyncio.sleep(poll_interval)
 
-            # Post-generation CV analysis (reuse existing)
-            await _run_post_generation_analysis(
-                session, shot, clip, scene, shot_manifest_row, file_mgr,
+            # Check for user-requested stop
+            await session.refresh(scene)
+            if scene.status == "stopped":
+                from vidpipe.orchestrator.pipeline import PipelineStopped
+                raise PipelineStopped("Pipeline stopped by user")
+
+        # Degenerate-clip gate: ComfyUI Cloud has returned corrupted MP4s on
+        # jobs that report success (noise frames between the conditioning
+        # frames). Validate before accepting; resubmit with a perturbed seed
+        # on failure so the corrupted encode cannot be served from cache.
+        if settings.pipeline.clip_validation_enabled:
+            from vidpipe.services.clip_validation import validate_clip_integrity
+
+            validation = await asyncio.to_thread(
+                validate_clip_integrity,
+                video_bytes,
+                start_frame_bytes=start_frame_bytes,
+                end_frame_bytes=end_frame_bytes,
+            )
+            if not validation.ok:
+                logger.warning(
+                    "Shot %d: downloaded clip failed integrity check (%s) — "
+                    "attempt %d of %d",
+                    shot.shot_index, validation.detail,
+                    corruption_attempt + 1, max_corrupt_retries + 1,
+                )
+                if corruption_attempt < max_corrupt_retries:
+                    corruption_attempt += 1
+                    from vidpipe.services.event_bus import emit_task_log
+
+                    emit_task_log(
+                        scene.id,
+                        summary=(
+                            f"Shot {shot.shot_index + 1}: corrupted clip from "
+                            f"ComfyUI — regenerating (retry {corruption_attempt})"
+                        ),
+                        detail=validation.detail,
+                        phase="clips",
+                        shot_index=shot.shot_index,
+                        kind="clip.corrupted_retry",
+                        source="clip_validation",
+                    )
+                    clip.operation_name = await _submit_fresh(corruption_attempt)
+                    clip.status = "polling"
+                    clip.poll_count = 0
+                    clip.error_message = None
+                    await session.commit()
+                    continue
+
+                clip.status = "failed"
+                clip.error_message = (
+                    f"Corrupted video from ComfyUI after "
+                    f"{corruption_attempt + 1} attempt(s): {validation.detail}"
+                )
+                shot.status = "failed"
+                await session.commit()
+                raise RuntimeError(
+                    f"Shot {shot.shot_index}: {clip.error_message}"
+                )
+            logger.info(
+                "Shot %d: clip integrity OK (%s)", shot.shot_index, validation.detail,
             )
 
-            logger.info("Shot %d: ComfyUI video complete", shot.shot_index)
-            return
+            # Motion gate: LTX/ComfyUI FLF2V can render a near-static clip when
+            # the storyboard motion prompt uses freeze language ("slowly",
+            # "steady", "remains static"). Escalate the prompt and resubmit.
+            if validation.motion_mean < settings.pipeline.clip_min_motion:
+                from vidpipe.services.event_bus import emit_task_log
 
-        elif status == "failed":
-            clip.status = "failed"
-            clip.error_message = error_msg or "ComfyUI job failed"
-            shot.status = "failed"
-            await session.commit()
-            logger.error("Shot %d: ComfyUI job failed: %s", shot.shot_index, error_msg)
-            return
+                if motion_attempt < max_motion_retries:
+                    motion_attempt += 1
+                    from vidpipe.services.comfyui_adapter import escalate_motion_prompt
 
-        # Still running — sleep and continue
+                    escalated = escalate_motion_prompt(video_prompt)
+                    logger.warning(
+                        "Shot %d: clip near-static (motion=%.2f < %.1f) — "
+                        "regenerating with motion-amplified prompt (retry %d of %d)",
+                        shot.shot_index, validation.motion_mean,
+                        settings.pipeline.clip_min_motion,
+                        motion_attempt, max_motion_retries,
+                    )
+                    emit_task_log(
+                        scene.id,
+                        summary=(
+                            f"Shot {shot.shot_index + 1}: near-static clip "
+                            f"(motion {validation.motion_mean:.1f}) — regenerating "
+                            f"with stronger motion (retry {motion_attempt})"
+                        ),
+                        detail=validation.detail,
+                        phase="clips",
+                        shot_index=shot.shot_index,
+                        kind="clip.low_motion_retry",
+                        source="clip_validation",
+                    )
+                    # Motion attempts use a distinct seed-salt range (100+) so
+                    # they never collide with corruption-retry seeds.
+                    clip.operation_name = await _submit_fresh(
+                        100 + motion_attempt, prompt_override=escalated
+                    )
+                    clip.status = "polling"
+                    clip.poll_count = 0
+                    clip.error_message = None
+                    await session.commit()
+                    continue
+
+                # Retries exhausted (or disabled) — accept with a warning rather
+                # than fail the scene; a static clip is usable, just not ideal.
+                logger.warning(
+                    "Shot %d: accepting near-static clip (motion=%.2f) after "
+                    "%d motion retry(ies)",
+                    shot.shot_index, validation.motion_mean, motion_attempt,
+                )
+                if max_motion_retries > 0:
+                    emit_task_log(
+                        scene.id,
+                        summary=(
+                            f"Shot {shot.shot_index + 1}: clip still low-motion "
+                            f"(motion {validation.motion_mean:.1f}) — accepted with warning"
+                        ),
+                        detail=validation.detail,
+                        phase="clips",
+                        shot_index=shot.shot_index,
+                        kind="clip.low_motion_accepted",
+                        source="clip_validation",
+                        level="warning",
+                    )
+
+        # Save clip
+        clip_stored_path = await file_mgr.save_clip_async(
+            scene.id, shot.shot_index, video_bytes,
+        )
+        clip.local_path = clip_stored_path
+        clip.status = "complete"
+        clip.duration_seconds = duration
+        clip.source = "generated"
+        shot.status = "video_done"
         await session.commit()
-        await asyncio.sleep(poll_interval)
 
-        # Check for user-requested stop
-        await session.refresh(scene)
-        if scene.status == "stopped":
-            from vidpipe.orchestrator.pipeline import PipelineStopped
-            raise PipelineStopped("Pipeline stopped by user")
+        # Post-generation CV analysis (reuse existing)
+        await _run_post_generation_analysis(
+            session,
+            shot,
+            clip,
+            scene,
+            shot_manifest_row,
+            file_mgr,
+            cv_service=cv_service,
+            vision_adapter=vision_adapter,
+        )
 
-    # Timed out
-    clip.status = "timed_out"
-    clip.error_message = (
-        f"ComfyUI operation did not complete after {max_polls * poll_interval} seconds"
-    )
-    shot.status = "timed_out"
-    await session.commit()
-    logger.error("Shot %d: ComfyUI poll timed out", shot.shot_index)
+        logger.info("Shot %d: ComfyUI video complete", shot.shot_index)
+        return
 
 
 async def _load_char_ref_images(
@@ -1248,6 +1478,7 @@ async def _generate_video_for_shot(
     cv_service: Optional[CVAnalysisService] = None,
     scoring_service: Optional[CandidateScoringService] = None,
     text_adapter: Optional[LLMAdapter] = None,
+    vision_adapter: Optional[LLMAdapter] = None,
 ) -> None:
     """Generate video clip for a single shot with escalating content-policy
     remediation and transient-error retry.
@@ -1447,6 +1678,7 @@ async def _generate_video_for_shot(
                     has_refs=bool(selected_refs),
                     scoring_service=scoring_service,
                     cv_service=cv_service,
+                    vision_adapter=vision_adapter,
                 )
                 return
             elif poll_result != "content_policy":
@@ -1465,7 +1697,14 @@ async def _generate_video_for_shot(
                 if poll_result == "complete":
                     # Phase 9: Post-generation CV analysis for progressive enrichment
                     await _run_post_generation_analysis(
-                        session, shot, clip, scene, shot_manifest_row, file_mgr, cv_service=cv_service,
+                        session,
+                        shot,
+                        clip,
+                        scene,
+                        shot_manifest_row,
+                        file_mgr,
+                        cv_service=cv_service,
+                        vision_adapter=vision_adapter,
                     )
                 return  # complete, failed, or timed_out
             # Content policy → fall through to escalation loop
@@ -1640,11 +1879,19 @@ async def _generate_video_for_shot(
                         has_refs=bool(veo_ref_images),
                         scoring_service=scoring_service,
                         cv_service=cv_service,
+                        vision_adapter=vision_adapter,
                     )
                 else:
                     # Standard mode: Phase 9 post-generation CV analysis
                     await _run_post_generation_analysis(
-                        session, shot, clip, scene, shot_manifest_row, file_mgr, cv_service=cv_service,
+                        session,
+                        shot,
+                        clip,
+                        scene,
+                        shot_manifest_row,
+                        file_mgr,
+                        cv_service=cv_service,
+                        vision_adapter=vision_adapter,
                     )
                 return
             elif poll_result == "content_policy":

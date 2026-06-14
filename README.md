@@ -87,21 +87,33 @@ The app runs as two containers (FastAPI backend + nginx-served React frontend) a
 - **ElevenLabs API key** (optional) — needed for narration TTS and SFX generation
 - **ComfyUI** (optional) — needed only for WAN video models (`wan-2.2-i2v`)
 
+### Recommended: one-command safe start
+
+`scripts/start-stack.sh` brings up Supabase **and** the app in the right order, with the S3 overlay, and automatically detects and repairs the two Docker Desktop + WSL2 failure modes described in [Troubleshooting](#troubleshooting) (stale bind mounts and MinIO formatting an empty pool):
+
+```bash
+./scripts/start-stack.sh          # bring everything up safely (idempotent)
+./scripts/start-stack.sh --build  # also rebuild the app images
+# SUPABASE_DIR=/path/to/supabase-project ./scripts/start-stack.sh   # non-sibling layout
+```
+
+It never passes `down -v`, so your database and object storage are never wiped. The manual steps below are what the script automates.
+
 ### 2. Start Supabase with the S3 overlay
 
-Supabase Storage **must** run with the S3 compose overlay so it talks to MinIO over HTTP. Without it, storage defaults to `STORAGE_BACKEND=file` and every asset request fails with a 500 (`EISDIR`):
+Supabase Storage **must** run with the S3 compose overlay so it talks to MinIO over HTTP. Without it, storage defaults to `STORAGE_BACKEND=file` and every asset request fails with a 500 (`EISDIR`), because MinIO stores objects in a directory-based format the file backend can't read:
 
 ```bash
 cd ../supabase-project
 
-# Correct — includes the S3 overlay
+# Correct — includes the S3 overlay (always pass BOTH files)
 docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
 
 # WRONG — storage defaults to file backend, all asset GETs return 500
 # docker compose up -d
 ```
 
-Remember the overlay every time you restart Supabase. Verify with:
+Always pass **both** compose files for every `up` **and** `down`. The base file alone also omits the `minio` service entirely, so MinIO never gets refreshed. Verify with:
 
 ```bash
 docker exec supabase-storage env | grep STORAGE_BACKEND
@@ -198,15 +210,41 @@ Native clip audio is supported on Veo 3+, LTX 2.3, and Seedance 2.0; WAN clips a
 
 ## Troubleshooting
 
-**All images/assets return 500; backend logs show `FileNotFoundError: S3 GET failed: 500`.**
-Supabase Storage is running with the file backend instead of S3. Restart it with the overlay:
+> The fastest fix for all three issues below is to re-run `./scripts/start-stack.sh`, which detects and repairs them automatically.
+
+**All images/assets return 500; backend logs show `FileNotFoundError: S3 GET failed: 500` (`EISDIR`).**
+Supabase Storage is running with the file backend instead of S3, so it tries to read MinIO's directory-format objects as plain files. Bring it back up with the overlay:
 
 ```bash
 cd ../supabase-project
 docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d storage
 ```
 
-`docker compose down` preserves volumes and bind-mounted data (MinIO `./volumes/storage/`, PostgreSQL `./volumes/db/data/`) — just remember the S3 overlay when bringing services back up.
+**Supabase containers crash-loop with `Exited (127)` after a Docker Desktop / WSL restart.**
+`docker inspect` shows `OCI runtime create failed ... not a directory: Are you trying to mount a directory onto a file?`. This is a **stale Docker Desktop WSL2 bind-mount cache** (under `/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/`), not a bad config — the host source files are fine. A plain `docker restart` reuses the broken mount spec and keeps looping. **Recreate** instead so Docker re-resolves the mounts:
+
+```bash
+cd ../supabase-project
+docker compose -f docker-compose.yml -f docker-compose.s3.yml down   # never -v
+docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d
+cd ../video-pipeline && docker compose restart backend               # reconnect to the DB
+```
+
+**Assets return 400 and MinIO logs show `Formatting 1st pool`.**
+MinIO and `supabase-storage` bind-mount the **same** host dir (`./volumes/storage`). After a restart, the WSL bind-mount cache can give MinIO an empty view of that dir, so it declares the drive unreadable and formats a fresh, empty pool. **Your objects are not lost** — they're still on the host (visible to `supabase-storage`, which mounts the same dir). Force-recreate just MinIO so its `/data` mount re-resolves to the real objects:
+
+```bash
+cd ../supabase-project
+docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d --force-recreate --no-deps minio
+# verify it sees the real data again:
+docker exec "$(docker compose -f docker-compose.yml -f docker-compose.s3.yml ps -q minio)" du -sh /data
+```
+
+If MinIO still sees an empty `/data` after recreating, fully restart Docker Desktop to rebuild its bind-mount cache — the on-disk objects under `./volumes/storage` remain intact.
+
+**`supabase-storage` shows `(unhealthy)` but assets load fine.** Cosmetic: its healthcheck probes `localhost:5000` (resolves to IPv6 `[::1]`, refused) while the server listens on IPv4. Real traffic via `storage:5000` works; nothing depends on its health status.
+
+`docker compose down` (without `-v`) preserves volumes and bind-mounted data (MinIO `./volumes/storage/`, PostgreSQL `./volumes/db/data/`) — just remember to pass **both** compose files when bringing services back up.
 
 ## License
 

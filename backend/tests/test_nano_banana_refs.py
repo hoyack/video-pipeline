@@ -18,11 +18,14 @@ from vidpipe.db.models import (
     Base,
     CastBinding,
     CastLook,
+    DEFAULT_USER_ID,
     LibrarySet,
     LibrarySetRef,
     ProductionBible,
     SetBinding,
     Shot,
+    User,
+    UserSettings,
 )
 from vidpipe.pipeline.keyframes import (
     _GeneratedKeyframeAttempt,
@@ -42,6 +45,8 @@ from vidpipe.pipeline.keyframes import (
     _build_retry_reference_candidates,
     _select_best_effort_attempt,
     _verify_generated_keyframe,
+    _verify_keyframe_characters_with_vision,
+    _uses_comfyui_vision_primary,
 )
 from vidpipe.services.file_manager import FileManager
 from vidpipe.services.ref_prequalification import QualifiedRef
@@ -158,6 +163,102 @@ async def session_factory():
         yield factory
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_vision_verifier_uses_user_settings_for_ollama_cloud(
+    session_factory,
+    monkeypatch,
+):
+    captured: dict[str, object] = {}
+    tiny_png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
+        b"\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff?\x00\x05"
+        b"\xfe\x02\xfeA\xcf\xd0\xe5\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    class FakeVisionAdapter:
+        async def analyze_image(self, *args, **kwargs):
+            del args, kwargs
+            return SimpleNamespace(
+                passed=True,
+                character_visible=True,
+                identity_match=True,
+                wardrobe_match=True,
+                identity_score=9.0,
+                wardrobe_score=9.0,
+                issues=[],
+            )
+
+    def fake_get_adapter(model_id, user_settings=None):
+        captured["model_id"] = model_id
+        captured["user_settings"] = user_settings
+        return FakeVisionAdapter()
+
+    def fake_crop_plan(_keyframe_bytes, _targets):
+        return _CharacterCropPlan(
+            selections={
+                "BRANDON_CROSS": _CharacterCropSelection(
+                    tag="BRANDON_CROSS",
+                    image_bytes=tiny_png,
+                    bbox=[0, 0, 10, 10],
+                    used_full_frame=False,
+                )
+            },
+            detected_face_count=1,
+            detected_person_count=1,
+            detected_object_count=1,
+        )
+
+    monkeypatch.setattr("vidpipe.pipeline.keyframes.get_adapter", fake_get_adapter)
+    monkeypatch.setattr(
+        "vidpipe.pipeline.keyframes._select_character_candidate_boxes",
+        fake_crop_plan,
+    )
+
+    async with session_factory() as session:
+        session.add(User(id=DEFAULT_USER_ID, name="default"))
+        session.add(
+            UserSettings(
+                user_id=DEFAULT_USER_ID,
+                ollama_use_cloud=True,
+                ollama_endpoint="https://ollama.com",
+                ollama_api_key="test-key",
+            )
+        )
+        await session.commit()
+
+        report = await _verify_keyframe_characters_with_vision(
+            session=session,
+            scene=SimpleNamespace(
+                vision_model="ollama/kimi-k2.5:cloud",
+                text_model="ollama/kimi-k2.5:cloud",
+            ),
+            shot=SimpleNamespace(shot_index=0),
+            shot_manifest_json={
+                "placements": [{"asset_tag": "BRANDON_CROSS", "position": "center"}]
+            },
+            keyframe_bytes=b"frame",
+            selected_candidates=[
+                _ReferenceCandidate(
+                    tag="BRANDON_CROSS",
+                    image_url="face",
+                    image_bytes=tiny_png,
+                    asset_type="CHARACTER",
+                    source="binding",
+                    identity_type="HUMAN",
+                    reference_kind="face",
+                )
+            ],
+            identity_types_by_tag={"BRANDON_CROSS": "HUMAN"},
+        )
+
+    assert report.passed is True
+    assert captured["model_id"] == "ollama/kimi-k2.5:cloud"
+    assert captured["user_settings"] is not None
+    assert captured["user_settings"].ollama_use_cloud is True
+    assert captured["user_settings"].ollama_api_key == "test-key"
 
 
 @pytest.mark.asyncio
@@ -804,6 +905,7 @@ async def test_crowded_human_verification_uses_vision_as_authority(monkeypatch):
     )
 
     report = await _verify_generated_keyframe(
+        session=SimpleNamespace(),
         scene=SimpleNamespace(vision_model="gemini", text_model="gemini"),
         shot=SimpleNamespace(shot_index=1),
         position="end",
@@ -886,6 +988,7 @@ async def test_single_human_verification_stays_strict(monkeypatch):
     )
 
     report = await _verify_generated_keyframe(
+        session=SimpleNamespace(),
         scene=SimpleNamespace(vision_model="gemini", text_model="gemini"),
         shot=SimpleNamespace(shot_index=1),
         position="end",
@@ -910,6 +1013,179 @@ async def test_single_human_verification_stays_strict(monkeypatch):
     assert report.passed is False
     assert report.verification_mode == "strict_face_and_vision"
     assert report.face_results[0].advisory is False
+
+
+@pytest.mark.asyncio
+async def test_single_human_near_threshold_face_can_use_strong_vision(monkeypatch):
+    async def fake_vision_report(**kwargs):
+        del kwargs
+        return _VisionVerificationReport(
+            passed=True,
+            detail="vision ok",
+            results=[
+                _CharacterVisionVerificationResult(
+                    tag="BRANDON_CROSS",
+                    passed=True,
+                    character_visible=True,
+                    identity_match=True,
+                    wardrobe_match=True,
+                    identity_score=8.5,
+                    wardrobe_score=8.0,
+                    issues=[],
+                    used_full_frame=False,
+                )
+            ],
+        )
+
+    def fake_crop_plan(_keyframe_bytes, _targets):
+        return _CharacterCropPlan(
+            selections={
+                "BRANDON_CROSS": _CharacterCropSelection(
+                    tag="BRANDON_CROSS",
+                    image_bytes=b"crop",
+                    bbox=[0, 0, 10, 10],
+                    used_full_frame=False,
+                )
+            },
+            detected_face_count=1,
+            detected_person_count=1,
+            detected_object_count=1,
+        )
+
+    async def fake_verify_target_face(_crop_bytes, _ref_embeddings, threshold=None):
+        del threshold
+        return False, 0.383, "best_sim=0.383 threshold=0.450 refs_checked=1"
+
+    monkeypatch.setattr(
+        "vidpipe.pipeline.keyframes._verify_keyframe_characters_with_vision",
+        fake_vision_report,
+    )
+    monkeypatch.setattr(
+        "vidpipe.pipeline.keyframes._select_character_candidate_boxes",
+        fake_crop_plan,
+    )
+    monkeypatch.setattr(
+        "vidpipe.pipeline.keyframes._verify_target_face",
+        fake_verify_target_face,
+    )
+
+    report = await _verify_generated_keyframe(
+        session=SimpleNamespace(),
+        scene=SimpleNamespace(vision_model="gemini", text_model="gemini"),
+        shot=SimpleNamespace(shot_index=1),
+        position="start",
+        keyframe_bytes=b"frame",
+        shot_manifest_json={"placements": [{"asset_tag": "BRANDON_CROSS", "position": "left"}]},
+        selected_candidates=[
+            _ReferenceCandidate(
+                tag="BRANDON_CROSS",
+                image_url="face",
+                image_bytes=b"face",
+                asset_type="CHARACTER",
+                source="binding",
+                identity_type="HUMAN",
+                reference_kind="face",
+            )
+        ],
+        identity_types_by_tag={"BRANDON_CROSS": "HUMAN"},
+        placed_char_assets=[],
+        prequalified_ref_embeddings_by_tag={"BRANDON_CROSS": [np.ones(4, dtype=np.float32)]},
+    )
+
+    assert report.passed is True
+    assert report.verification_mode == "strict_face_and_vision"
+    assert report.face_results[0].advisory is False
+    assert "vision_corroborated_near_threshold_face=@BRANDON_CROSS" in report.detail
+
+
+@pytest.mark.asyncio
+async def test_comfyui_multiref_single_human_uses_vision_primary(monkeypatch):
+    async def fake_vision_report(**kwargs):
+        del kwargs
+        return _VisionVerificationReport(
+            passed=True,
+            detail="vision ok",
+            results=[
+                _CharacterVisionVerificationResult(
+                    tag="BRANDON_CROSS",
+                    passed=True,
+                    character_visible=True,
+                    identity_match=True,
+                    wardrobe_match=True,
+                    identity_score=8.5,
+                    wardrobe_score=8.0,
+                    issues=[],
+                    used_full_frame=False,
+                )
+            ],
+        )
+
+    def fail_crop_plan(_keyframe_bytes, _targets):
+        raise AssertionError("ComfyUI multi-ref verification should use full-frame crops")
+
+    async def fail_verify_target_face(_crop_bytes, _ref_embeddings, threshold=None):
+        del threshold
+        raise AssertionError("ComfyUI multi-ref verification should not load face embeddings")
+
+    monkeypatch.setattr(
+        "vidpipe.pipeline.keyframes._verify_keyframe_characters_with_vision",
+        fake_vision_report,
+    )
+    monkeypatch.setattr(
+        "vidpipe.pipeline.keyframes._select_character_candidate_boxes",
+        fail_crop_plan,
+    )
+    monkeypatch.setattr(
+        "vidpipe.pipeline.keyframes._verify_target_face",
+        fail_verify_target_face,
+    )
+
+    report = await _verify_generated_keyframe(
+        session=SimpleNamespace(),
+        scene=SimpleNamespace(
+            image_model="qwen-image-edit-2509",
+            vision_model="ollama/kimi-k2.5:cloud",
+            text_model="ollama/kimi-k2.5:cloud",
+        ),
+        shot=SimpleNamespace(shot_index=1),
+        position="start",
+        keyframe_bytes=b"frame",
+        shot_manifest_json={"placements": [{"asset_tag": "BRANDON_CROSS", "position": "left"}]},
+        selected_candidates=[
+            _ReferenceCandidate(
+                tag="BRANDON_CROSS",
+                image_url="face",
+                image_bytes=b"face",
+                asset_type="CHARACTER",
+                source="binding",
+                identity_type="HUMAN",
+                reference_kind="face",
+            )
+        ],
+        identity_types_by_tag={"BRANDON_CROSS": "HUMAN"},
+        placed_char_assets=[],
+        prequalified_ref_embeddings_by_tag={"BRANDON_CROSS": [np.ones(4, dtype=np.float32)]},
+    )
+
+    assert report.passed is True
+    assert report.verification_mode == "vision_primary_face_advisory"
+    assert report.face_results[0].passed is False
+    assert report.face_results[0].advisory is True
+
+
+def test_comfyui_vision_primary_policy_covers_multiref_models():
+    assert _uses_comfyui_vision_primary(
+        SimpleNamespace(image_model="qwen-image-edit-2509")
+    )
+    assert _uses_comfyui_vision_primary(
+        SimpleNamespace(image_model="flux-2-klein")
+    )
+    assert not _uses_comfyui_vision_primary(
+        SimpleNamespace(image_model="qwen-fast")
+    )
+    assert not _uses_comfyui_vision_primary(
+        SimpleNamespace(image_model="gemini-2.5-flash-image")
+    )
 
 
 def test_best_effort_selection_prefers_visible_identity_match():

@@ -114,6 +114,7 @@ class CVAnalysisService:
         clip_path: Optional[str],
         shot_manifest_json: Optional[dict],
         existing_assets: list[Asset],
+        vision_adapter: Optional[LLMAdapter] = None,
     ) -> CVAnalysisResult:
         """Orchestrate full CV analysis on a generated shot.
 
@@ -315,7 +316,7 @@ class CVAnalysisService:
                 detections=frame_detections,
                 shot_manifest_json=shot_manifest_json,
                 face_matches=face_matches,
-                vision_adapter=self._vision_adapter,
+                vision_adapter=vision_adapter or self._vision_adapter,
             )
             result.semantic_analysis = semantic
 

@@ -39,6 +39,9 @@ RESUMABLE_STATES = {
     "storyboarding",
     "keyframing",
     "video_gen",
+    # Transient status set by generate_keyframes; a crash/restart before the
+    # orchestrator normalizes it to "video_gen" leaves scenes stranded here.
+    "generating_video",
     "stitching",
 }
 
@@ -94,7 +97,7 @@ def get_resume_step(status: str, completed_steps: Dict[str, bool]) -> str:
         return "pending"
     elif status == "keyframing":
         return "keyframing"
-    elif status == "video_gen":
+    elif status in ("video_gen", "generating_video"):
         return "video_gen"
     elif status == "stitching":
         return "stitching"

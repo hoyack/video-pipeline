@@ -13,6 +13,8 @@ services:
       - ./backend:/app/backend
       - ./config.yaml:/app/config.yaml
       - ./.env:/app/.env:ro
+      # Persist InsightFace models (inswapper_128.onnx for face-swap + buffalo_l).
+      - ./models/insightface:/root/.insightface/models
       - ${GOOGLE_APPLICATION_CREDENTIALS:-./.gcp-credentials.json}:/app/credentials.json:ro
     ports:
       - "${VIDPIPE_PORT:-8000}:8000"

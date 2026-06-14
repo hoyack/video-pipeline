@@ -244,6 +244,8 @@ async def _run_migrations(conn) -> None:
         "ALTER TABLE keyframes ADD COLUMN verification_status VARCHAR(64)",
         "ALTER TABLE keyframes ADD COLUMN verification_attempts INTEGER DEFAULT 0",
         "ALTER TABLE keyframes ADD COLUMN verification_summary TEXT",
+        # Post-generation face-swap pass marker (idempotent resume)
+        "ALTER TABLE keyframes ADD COLUMN face_swapped BOOLEAN DEFAULT false",
     ]
     blob_type = "BLOB" if is_sqlite else "BYTEA"
 

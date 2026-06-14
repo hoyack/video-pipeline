@@ -31,7 +31,7 @@ from tenacity import (
 )
 
 from vidpipe.config import settings
-from vidpipe.db.models import Asset, Scene, Shot, Keyframe
+from vidpipe.db.models import DEFAULT_USER_ID, Asset, Scene, Shot, Keyframe, UserSettings
 from vidpipe.schemas.llm_vision import CharacterKeyframeVerificationOutput
 from vidpipe.services.event_bus import emit_task_log
 from vidpipe.services.file_manager import FileManager
@@ -72,6 +72,11 @@ COMFYUI_IMAGE_MODELS = {
 # selection, identity policy, emphasis escalation, post-gen verification).
 COMFYUI_MULTIREF_IMAGE_MODELS = {"qwen-image-edit-2509", "flux-2-klein"}
 _NANO_BANANA_MAX_REFERENCE_IMAGES = 13
+
+
+def _uses_comfyui_vision_primary(scene: object) -> bool:
+    return getattr(scene, "image_model", None) in COMFYUI_MULTIREF_IMAGE_MODELS
+
 
 # ---------------------------------------------------------------------------
 # Identity emphasis escalation prefixes for face verification retry
@@ -253,6 +258,10 @@ class _CharacterVerificationTarget:
     tag: str
     identity_type: str
     expected_position: str | None = None
+    # Authoritative wardrobe for this shot (from the manifest placement).
+    # When set, wardrobe is judged against this text — NOT against the
+    # clothing worn in the identity reference photos.
+    expected_wardrobe: str | None = None
     face_candidates: list[_ReferenceCandidate] = field(default_factory=list)
     wardrobe_candidates: list[_ReferenceCandidate] = field(default_factory=list)
     fallback_candidates: list[_ReferenceCandidate] = field(default_factory=list)
@@ -393,10 +402,13 @@ def _build_character_verification_targets(
     identity_types_by_tag: dict[str, str],
 ) -> list[_CharacterVerificationTarget]:
     positions_by_tag: dict[str, str | None] = {}
+    wardrobe_by_tag: dict[str, str | None] = {}
     for placement in (shot_manifest_json or {}).get("placements", []):
         tag = _normalize_reference_tag(placement.get("asset_tag"))
         if tag and tag not in positions_by_tag:
             positions_by_tag[tag] = placement.get("position")
+        if tag and placement.get("wardrobe_note") and tag not in wardrobe_by_tag:
+            wardrobe_by_tag[tag] = placement.get("wardrobe_note")
 
     targets: dict[str, _CharacterVerificationTarget] = {}
     for candidate in selected_candidates:
@@ -408,6 +420,7 @@ def _build_character_verification_targets(
                 tag=candidate.tag,
                 identity_type=identity_types_by_tag.get(candidate.tag, candidate.identity_type or "HUMAN"),
                 expected_position=positions_by_tag.get(candidate.tag),
+                expected_wardrobe=wardrobe_by_tag.get(candidate.tag),
             ),
         )
         if candidate.reference_kind == "face":
@@ -630,6 +643,135 @@ def _passes_partial_visibility_human_check(
     if result.wardrobe_score < 6.0:
         return False
     return _issues_indicate_visibility_limited_identity(result.issues)
+
+
+def _vision_can_corroborate_near_threshold_face(
+    *,
+    face_result: _HumanFaceVerificationResult,
+    vision_result: _CharacterVisionVerificationResult | None,
+) -> bool:
+    if face_result.passed or face_result.advisory:
+        return False
+    if vision_result is None:
+        return False
+    if not (
+        vision_result.passed
+        and vision_result.character_visible
+        and vision_result.identity_match
+        and vision_result.wardrobe_match
+    ):
+        return False
+    if vision_result.identity_score < 8.0 or vision_result.wardrobe_score < 7.0:
+        return False
+
+    threshold = settings.cv_analysis.keyframe_face_match_threshold
+    # Historical references and generated documentary frames often miss the
+    # embedding threshold on expression/pose while the multimodal verifier still
+    # sees a clean identity match. Keep the band narrow enough to reject weak
+    # matches, but wide enough to avoid burning repeated provider calls on
+    # clean 8+/10 vision passes.
+    near_threshold_margin = max(0.07, threshold * 0.15)
+    return face_result.similarity >= threshold - near_threshold_margin
+
+
+def _compose_numbered_reference_board(image_bytes_list: list[bytes]) -> bytes:
+    """Compose candidate reference images into one numbered horizontal board."""
+    from PIL import Image, ImageDraw
+
+    panel = 320
+    tiles = []
+    for raw in image_bytes_list:
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        img.thumbnail((panel, panel))
+        tiles.append(img)
+    board = Image.new("RGB", (panel * len(tiles), panel + 28), (16, 16, 16))
+    draw = ImageDraw.Draw(board)
+    for i, tile in enumerate(tiles):
+        board.paste(tile, (i * panel, 28))
+        draw.text((i * panel + 6, 4), f"IMAGE {i}", fill=(255, 255, 0))
+    buf = io.BytesIO()
+    board.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def _qualify_multiref_identity_candidates(
+    *,
+    session: AsyncSession,
+    scene: Scene,
+    candidates: list,
+    max_character_refs: int = 2,
+) -> tuple[list, str]:
+    """Pick the best CHARACTER reference images for multi-ref ComfyUI models.
+
+    Occluded references (sunglasses, faces turned away) dilute identity
+    conditioning in reference-latent models — observed: a lead character
+    rendered as a different person when sunglasses selfies were mixed into
+    the reference set. One vision call rates each candidate; the top
+    ``max_character_refs`` clear-face references are kept. Non-character
+    candidates pass through untouched. Any failure falls back to capping
+    the character refs in their original order.
+    """
+    from vidpipe.schemas.llm_vision import IdentityReferenceQualificationOutput
+
+    char_candidates = [c for c in candidates if c.asset_type == "CHARACTER"]
+    other_candidates = [c for c in candidates if c.asset_type != "CHARACTER"]
+    if len(char_candidates) <= max_character_refs:
+        return candidates, "qualification_skipped: at or under character ref cap"
+
+    fallback = char_candidates[:max_character_refs] + other_candidates
+
+    try:
+        vision_model_id = scene.vision_model or scene.text_model or settings.models.storyboard_llm
+        user_settings = None
+        if vision_model_id.startswith("ollama/"):
+            result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+            )
+            user_settings = result.scalar_one_or_none()
+        vision_adapter = get_adapter(vision_model_id, user_settings=user_settings)
+
+        board = _compose_numbered_reference_board(
+            [c.image_bytes for c in char_candidates]
+        )
+        result = await vision_adapter.analyze_image(
+            board,
+            (
+                f"The board contains {len(char_candidates)} numbered photos of the same "
+                "person, candidates for use as identity reference images in image "
+                "generation. Rate each numbered panel for identity-reference "
+                "suitability. Penalize sunglasses, occluded or averted faces, and "
+                "blur. Reward sharp, frontal, unobstructed faces."
+            ),
+            IdentityReferenceQualificationOutput,
+            mime_type="image/png",
+            temperature=0.1,
+            max_retries=2,
+        )
+        rated = {
+            r.index: r for r in result.ratings if 0 <= r.index < len(char_candidates)
+        }
+        if not rated:
+            return fallback, "qualification_fallback: vision returned no usable ratings"
+
+        def _rank_key(i: int) -> tuple:
+            r = rated.get(i)
+            if r is None:
+                return (0, 0, 0.0)
+            return (int(r.face_clearly_visible), int(r.eyes_unobstructed), r.suitability)
+
+        order = sorted(range(len(char_candidates)), key=_rank_key, reverse=True)
+        keep = sorted(order[:max_character_refs])
+        detail = "; ".join(
+            f"img{i}: visible={rated[i].face_clearly_visible} "
+            f"eyes={rated[i].eyes_unobstructed} score={rated[i].suitability:.1f}"
+            f"{' KEPT' if i in keep else ''}"
+            for i in sorted(rated)
+        )
+        selected = [char_candidates[i] for i in keep] + other_candidates
+        return selected, f"qualification_ok: {detail}"
+    except Exception as exc:
+        logger.warning("Identity ref qualification failed (non-fatal): %s", exc)
+        return fallback, f"qualification_fallback: {exc}"
 
 
 def _pack_mandatory_reference_candidates(
@@ -1119,6 +1261,26 @@ def _select_character_candidate_boxes(
     return plan
 
 
+def _full_frame_character_crop_plan(
+    keyframe_bytes: bytes,
+    targets: list[_CharacterVerificationTarget],
+) -> _CharacterCropPlan:
+    return _CharacterCropPlan(
+        selections={
+            target.tag: _CharacterCropSelection(
+                tag=target.tag,
+                image_bytes=keyframe_bytes,
+                bbox=None,
+                used_full_frame=True,
+            )
+            for target in targets
+        },
+        detected_face_count=0,
+        detected_person_count=0,
+        detected_object_count=0,
+    )
+
+
 def _compose_verification_board(
     subject_bytes: bytes,
     references: list[tuple[str, bytes]],
@@ -1161,6 +1323,7 @@ def _compose_verification_board(
 
 async def _verify_keyframe_characters_with_vision(
     *,
+    session: AsyncSession,
     scene: Scene,
     shot: Shot,
     shot_manifest_json: dict | None,
@@ -1178,7 +1341,13 @@ async def _verify_keyframe_characters_with_vision(
 
     try:
         vision_model_id = scene.vision_model or scene.text_model or settings.models.storyboard_llm
-        vision_adapter = get_adapter(vision_model_id)
+        user_settings = None
+        if vision_model_id.startswith("ollama/"):
+            result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+            )
+            user_settings = result.scalar_one_or_none()
+        vision_adapter = get_adapter(vision_model_id, user_settings=user_settings)
     except Exception as exc:
         logger.warning("Vision verifier unavailable (non-fatal): %s", exc)
         return _VisionVerificationReport(
@@ -1186,7 +1355,10 @@ async def _verify_keyframe_characters_with_vision(
             detail=f"vision_adapter_unavailable: {exc}",
         )
 
-    crop_plan = _select_character_candidate_boxes(keyframe_bytes, targets)
+    if _uses_comfyui_vision_primary(scene):
+        crop_plan = _full_frame_character_crop_plan(keyframe_bytes, targets)
+    else:
+        crop_plan = _select_character_candidate_boxes(keyframe_bytes, targets)
     detail_lines: list[str] = []
     overall_pass = True
     results: list[_CharacterVisionVerificationResult] = []
@@ -1210,11 +1382,25 @@ async def _verify_keyframe_characters_with_vision(
 
         board_bytes = _compose_verification_board(crop.image_bytes, references)
         expected_position = target.expected_position or "unspecified"
+        if target.expected_wardrobe and not target.wardrobe_candidates:
+            # Scene-specific costume: the identity photos establish WHO the
+            # person is, not what they wear in this shot. Without this, the
+            # verifier fails correct costumes for not matching the street
+            # clothes in the reference photos.
+            wardrobe_clause = (
+                f"Expected wardrobe for this shot (authoritative): "
+                f"'{target.expected_wardrobe}'. Judge wardrobe against that "
+                "description ONLY — the reference photos establish identity, "
+                "and the clothing worn in them is NOT the expected wardrobe. "
+            )
+        else:
+            wardrobe_clause = "Judge wardrobe/look fidelity against the reference images. "
         prompt = (
             f"Verify a generated keyframe crop for @{target.tag}. "
             f"Expected position: {expected_position}. "
             f"Identity type: {target.identity_type}. "
-            f"Judge only this character's identity/species/markings and wardrobe/look fidelity. "
+            f"Judge this character's identity/species/markings against the reference images. "
+            f"{wardrobe_clause}"
             f"Ignore camera angle, pose, lighting, and composition changes unless they hide the character completely. "
             f"The left panel is the generated crop. The right panels are reference images."
         )
@@ -1372,6 +1558,7 @@ def _build_retry_correction_prompt(report: _KeyframeVerificationReport) -> str:
 
 async def _verify_generated_keyframe(
     *,
+    session: AsyncSession,
     scene: Scene,
     shot: Shot,
     position: str,
@@ -1388,8 +1575,13 @@ async def _verify_generated_keyframe(
         selected_candidates=selected_candidates,
         identity_types_by_tag=identity_types_by_tag,
     )
-    crop_plan = _select_character_candidate_boxes(keyframe_bytes, targets)
+    comfyui_multiref_vision_primary = _uses_comfyui_vision_primary(scene)
+    if comfyui_multiref_vision_primary:
+        crop_plan = _full_frame_character_crop_plan(keyframe_bytes, targets)
+    else:
+        crop_plan = _select_character_candidate_boxes(keyframe_bytes, targets)
     vision_report = await _verify_keyframe_characters_with_vision(
+        session=session,
         scene=scene,
         shot=shot,
         shot_manifest_json=shot_manifest_json,
@@ -1413,6 +1605,7 @@ async def _verify_generated_keyframe(
             ).used_full_frame
             for target in human_targets
         )
+        or comfyui_multiref_vision_primary
     )
     verification_mode = (
         "vision_primary_face_advisory" if crowded else "strict_face_and_vision"
@@ -1430,10 +1623,15 @@ async def _verify_generated_keyframe(
             target.tag,
             _CharacterCropSelection(target.tag, keyframe_bytes, None, True),
         )
-        face_pass, sim, face_detail = await _verify_target_face(
-            crop.image_bytes,
-            reference_face_embeddings_by_tag.get(target.tag, []),
-        )
+        if comfyui_multiref_vision_primary:
+            face_pass = False
+            sim = 0.0
+            face_detail = "skipped_for_comfyui_vision_primary"
+        else:
+            face_pass, sim, face_detail = await _verify_target_face(
+                crop.image_bytes,
+                reference_face_embeddings_by_tag.get(target.tag, []),
+            )
         advisory = crowded or crop.used_full_frame
         if not advisory:
             face_gate_pass = face_gate_pass and face_pass
@@ -1459,6 +1657,35 @@ async def _verify_generated_keyframe(
         )
 
     checks.append(f"vision_check={vision_report.passed} {vision_report.detail}")
+    vision_results_by_tag = {
+        result.tag: result
+        for result in (vision_report.results if vision_report else [])
+    }
+    corroborated_face_tags = [
+        face_result.tag
+        for face_result in face_results
+        if _vision_can_corroborate_near_threshold_face(
+            face_result=face_result,
+            vision_result=vision_results_by_tag.get(face_result.tag),
+        )
+    ]
+    if not face_gate_pass and corroborated_face_tags:
+        blocking_face_tags = [
+            face_result.tag
+            for face_result in face_results
+            if (
+                not face_result.passed
+                and not face_result.advisory
+                and face_result.tag not in corroborated_face_tags
+            )
+        ]
+        if not blocking_face_tags:
+            face_gate_pass = True
+            checks.append(
+                "vision_corroborated_near_threshold_face="
+                + ",".join(f"@{tag}" for tag in corroborated_face_tags)
+            )
+
     overall_pass = bool(vision_report.passed and face_gate_pass)
 
     detail = " || ".join(checks) if checks else "no_checks"
@@ -1470,6 +1697,55 @@ async def _verify_generated_keyframe(
         face_results=face_results,
         vision_report=vision_report,
     )
+
+
+_ASPECT_RATIOS: dict[str, float] = {
+    "16:9": 16 / 9,
+    "9:16": 9 / 16,
+    "1:1": 1.0,
+    "4:3": 4 / 3,
+    "3:4": 3 / 4,
+    "21:9": 21 / 9,
+}
+
+
+def _coerce_image_aspect(image_bytes: bytes, aspect_ratio: str) -> bytes:
+    """Crop a generated image to the requested aspect ratio if it deviates.
+
+    Safety net for image models that occasionally ignore the aspect config
+    (observed: portrait keyframes for a 16:9 scene, later squashed into the
+    video resolution — the "fisheye" look). Crops are biased toward the top
+    of the frame when trimming height, since faces sit in the upper half.
+    """
+    target = _ASPECT_RATIOS.get(aspect_ratio)
+    if target is None:
+        return image_bytes
+
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(image_bytes))
+    actual = img.width / img.height
+    if abs(actual - target) / target < 0.05:
+        return image_bytes
+
+    logger.warning(
+        "Generated image aspect %.3f deviates from requested %s (%.3f) — cropping",
+        actual, aspect_ratio, target,
+    )
+    if actual > target:
+        # Too wide — trim width, centered
+        new_w = int(img.height * target)
+        x0 = (img.width - new_w) // 2
+        img = img.crop((x0, 0, x0 + new_w, img.height))
+    else:
+        # Too tall — trim height, biased toward the top (faces live there)
+        new_h = int(img.width / target)
+        y0 = min(int((img.height - new_h) * 0.25), img.height - new_h)
+        img = img.crop((0, y0, img.width, y0 + new_h))
+
+    out = io.BytesIO()
+    img.convert("RGB").save(out, format="PNG")
+    return out.getvalue()
 
 
 @retry(
@@ -1529,12 +1805,16 @@ async def _generate_image_from_text(
         contents=contents,
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
+            # Without an explicit aspect ratio, Gemini image models follow the
+            # aspect of the reference images (a portrait selfie produced
+            # portrait keyframes that were then squashed into 16:9 video).
+            image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
         ),
     )
 
     for part in response.candidates[0].content.parts:
         if part.inline_data:
-            return part.inline_data.data
+            return _coerce_image_aspect(part.inline_data.data, aspect_ratio)
 
     raise ValueError("No image generated in response")
 
@@ -1598,13 +1878,16 @@ async def _generate_image_conditioned(
         contents=contents,
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
+            # See _generate_image_from_text — explicit aspect ratio prevents
+            # the model from following the reference images' aspect.
+            image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
         ),
     )
 
     # Extract image bytes from response
     for part in response.candidates[0].content.parts:
         if part.inline_data:
-            return part.inline_data.data
+            return _coerce_image_aspect(part.inline_data.data, aspect_ratio)
 
     raise ValueError("No image generated in response")
 
@@ -1735,15 +2018,22 @@ async def _run_comfyui_image_job(comfy_client, workflow: dict, label: str) -> by
         RuntimeError: On ComfyUI job failure or timeout
         ValueError: If no image output found in history
     """
+    import time as _time
+
+    from vidpipe.services.comfyui_adapter import QUEUED_STATUSES
     from vidpipe.services.comfyui_client import find_comfyui_image_output
 
     prompt_id = await comfy_client.queue_prompt(workflow)
     logger.info(f"ComfyUI {label} queued: prompt_id={prompt_id}")
 
-    # Poll until completion (check for "success", not "completed")
+    # Poll until completion (check for "success", not "completed").
+    # Time spent in Comfy Cloud queue states ("queued_limited" under account
+    # concurrency limits) does not count against the execution timeout.
     max_polls = 120
     poll_interval = 3
-    for attempt in range(max_polls):
+    polls_used = 0
+    queue_deadline = _time.monotonic() + settings.pipeline.comfy_queue_timeout
+    while True:
         await asyncio.sleep(poll_interval)
         status, error_msg = await comfy_client.poll_status(prompt_id)
         if status == "success":
@@ -1752,11 +2042,20 @@ async def _run_comfyui_image_job(comfy_client, workflow: dict, label: str) -> by
             raise RuntimeError(
                 f"ComfyUI {label} job {prompt_id} failed: status={status}, error={error_msg}"
             )
-        # Still pending/in_progress — keep polling
-    else:
-        raise RuntimeError(
-            f"ComfyUI {label} job {prompt_id} timed out after {max_polls * poll_interval}s"
-        )
+        if status in QUEUED_STATUSES:
+            if _time.monotonic() > queue_deadline:
+                raise RuntimeError(
+                    f"ComfyUI {label} job {prompt_id} stayed queued for more than "
+                    f"{settings.pipeline.comfy_queue_timeout}s"
+                )
+            continue
+        # Executing — consume execution poll budget
+        polls_used += 1
+        if polls_used >= max_polls:
+            raise RuntimeError(
+                f"ComfyUI {label} job {prompt_id} timed out after "
+                f"{max_polls * poll_interval}s of execution"
+            )
 
     # Fetch history and extract output image
     history = await comfy_client.get_history(prompt_id)
@@ -2145,7 +2444,7 @@ async def generate_keyframes(
 
                     if (
                         not is_comfyui and _is_nano_banana_model(image_model)
-                    ) or image_model in COMFYUI_MULTIREF_IMAGE_MODELS:
+                    ) or _uses_comfyui_vision_primary(scene):
                         selected_tags = (
                             list(shot_manifest_row.selected_reference_tags or [])
                             if shot_manifest_row and shot_manifest_row.selected_reference_tags
@@ -2252,7 +2551,43 @@ async def generate_keyframes(
                 if candidate.asset_type == "CHARACTER"
             ] if ref_image_bytes_list else []
 
-            if ref_image_bytes_list:
+            if ref_image_bytes_list and _uses_comfyui_vision_primary(scene):
+                logger.info(
+                    "Shot %s: skipping local face prequalification for ComfyUI multi-ref model %s",
+                    shot.shot_index,
+                    scene.image_model,
+                )
+                # Occluded refs (sunglasses, averted faces) dilute identity
+                # conditioning in reference-latent models — qualify the
+                # character refs and keep only the clearest faces.
+                qualified_candidates, qualification_detail = (
+                    await _qualify_multiref_identity_candidates(
+                        session=session,
+                        scene=scene,
+                        candidates=list(getattr(ref_context, "selected_candidates", [])),
+                    )
+                )
+                ref_context.selected_candidates = list(qualified_candidates)
+                ref_image_bytes_list = [c.image_bytes for c in qualified_candidates]
+                emit_task_log(
+                    scene.id,
+                    summary=(
+                        f"Shot {shot.shot_index + 1}: qualified "
+                        f"{len(ref_image_bytes_list)} reference image(s) for "
+                        "ComfyUI multi-ref generation"
+                    ),
+                    detail=(
+                        "Local face prequalification was skipped for this ComfyUI "
+                        "multi-reference image model; vision verification runs "
+                        "against the generated frame after image generation.\n"
+                        f"Identity ref qualification: {qualification_detail}"
+                    ),
+                    phase="keyframes",
+                    shot_index=shot.shot_index,
+                    kind="keyframe.identity_policy",
+                    source="identity_policy",
+                )
+            elif ref_image_bytes_list:
                 # HUMAN face refs are converted to face crops; non-human and wardrobe refs pass through.
                 try:
                     filtered_candidates, _prequalified_ref_embeddings_by_tag, policy_report = (
@@ -2362,6 +2697,14 @@ async def generate_keyframes(
                     )
                     if start_retry_guidance:
                         prompt_with_emphasis = f"{start_retry_guidance}\n\n{prompt_with_emphasis}"
+                    # ComfyUI reference-latent models treat refs as a weak hint;
+                    # the feature-anchored identity text measurably improves
+                    # likeness, so include it in the prompt for those branches.
+                    comfy_identity_prompt = (
+                        f"{prompt_with_emphasis}\n{identity_instr}"
+                        if identity_instr and _uses_comfyui_vision_primary(scene)
+                        else prompt_with_emphasis
+                    )
                     try:
                         if image_model == "qwen-image-edit-2509":
                             # Multi-ref edit model: compose start frame from
@@ -2372,7 +2715,7 @@ async def generate_keyframes(
                                 compose_prompt = (
                                     "Using the people, characters, and objects shown in the "
                                     "input images as exact identity references, create a new "
-                                    f"scene: {prompt_with_emphasis}"
+                                    f"scene: {comfy_identity_prompt}"
                                 )
                                 start_frame_bytes = await _generate_image_comfyui_qwen_edit_2509(
                                     comfy_client, compose_prompt, seed=base_seed,
@@ -2394,7 +2737,7 @@ async def generate_keyframes(
                             from vidpipe.services.comfyui_client import _FLUX2_RESOLUTIONS
                             f2w, f2h = _FLUX2_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
                             start_frame_bytes = await _generate_image_comfyui_flux2_klein(
-                                comfy_client, prompt_with_emphasis, seed=base_seed,
+                                comfy_client, comfy_identity_prompt, seed=base_seed,
                                 width=f2w, height=f2h,
                                 reference_image_bytes_list=attempt_ref_image_bytes[:4] or None,
                             )
@@ -2512,6 +2855,7 @@ async def generate_keyframes(
                     )
                     if should_verify:
                         verification_report = await _verify_generated_keyframe(
+                            session=session,
                             scene=scene,
                             shot=shot,
                             position="start",
@@ -2726,12 +3070,19 @@ async def generate_keyframes(
                     )
                     if end_retry_guidance:
                         prompt_with_emphasis = f"{end_retry_guidance}\n\n{prompt_with_emphasis}"
+                    # Feature-anchored identity text for ComfyUI reference models
+                    # (see start-frame block).
+                    comfy_identity_prompt = (
+                        f"{prompt_with_emphasis}\n{end_identity_instr}"
+                        if end_identity_instr and _uses_comfyui_vision_primary(scene)
+                        else prompt_with_emphasis
+                    )
                     try:
                         if image_model == "qwen-image-edit-2509":
                             # Multi-ref edit: image1 = start frame (drives output
                             # dimensions + visual conditioning), image2/3 = identity refs.
                             end_frame_bytes = await _generate_image_comfyui_qwen_edit_2509(
-                                comfy_client, prompt_with_emphasis,
+                                comfy_client, comfy_identity_prompt,
                                 seed=base_seed + shot.shot_index + 1000,
                                 image_bytes_list=[start_frame_bytes] + list(attempt_ref_image_bytes[:2]),
                             )
@@ -2741,7 +3092,7 @@ async def generate_keyframes(
                             from vidpipe.services.comfyui_client import _FLUX2_RESOLUTIONS as _F2R
                             ef2w, ef2h = _F2R.get(scene.aspect_ratio, (1024, 1024))
                             end_frame_bytes = await _generate_image_comfyui_flux2_klein(
-                                comfy_client, prompt_with_emphasis,
+                                comfy_client, comfy_identity_prompt,
                                 seed=base_seed + shot.shot_index + 1000,
                                 width=ef2w, height=ef2h,
                                 reference_image_bytes_list=(
@@ -2834,6 +3185,7 @@ async def generate_keyframes(
                     )
                     if should_verify:
                         verification_report = await _verify_generated_keyframe(
+                            session=session,
                             scene=scene,
                             shot=shot,
                             position="end",
@@ -2962,6 +3314,11 @@ async def generate_keyframes(
             await session.commit()
             raise
 
+    # Restore exact character identity via post-generation face swap (opt-in).
+    # Runs after all keyframes are generated/verified and before video generation
+    # so the swapped frames are what FLF2V/clip generation consumes.
+    await apply_scene_face_swaps(session, scene)
+
     # Update scene status after all keyframes generated
     scene.status = "generating_video"
     await session.commit()
@@ -2971,3 +3328,196 @@ async def generate_keyframes(
         phase="keyframes",
         message="Keyframe generation complete",
     )
+
+
+async def _resolve_primary_source_face(
+    session: AsyncSession,
+    scene: Scene,
+    shot: Shot,
+    file_mgr: FileManager,
+    svc,
+) -> tuple[Optional[bytes], Optional[str]]:
+    """Resolve the clearest real human face image to use as the swap source.
+
+    Looks at the shot's on-screen characters, resolves each to its bound actor
+    references, and returns the clearest real face for the first human character
+    that has a usable reference. Returns ``(None, None)`` when the shot has no
+    on-screen human character with a real reference (e.g. non-human characters,
+    synthetic-only refs, or no production bible) — the caller then skips the shot.
+
+    Resolution is derived purely from the DB (not the live generation loop's
+    in-memory state), so it works on resume.
+    """
+    if not scene.production_bible_id:
+        return None, None
+    tags = _ordered_unique_tags(normalize_json_list(shot.characters_present))
+    if not tags:
+        return None, None
+
+    from vidpipe.services.tag_resolver import (
+        canonicalize_character_tags,
+        resolve_tags_with_assets,
+    )
+
+    aliases = await canonicalize_character_tags(tags, scene.production_bible_id, session)
+    canonical_tags = _ordered_unique_tags([aliases.get(t, t) for t in tags])
+
+    for tag in canonical_tags:
+        resolved = await resolve_tags_with_assets(
+            f"@{tag}", scene.production_bible_id, session
+        )
+        for ref in resolved.asset_refs:
+            if ref.asset_type != "CHARACTER":
+                continue
+            if not _is_human_identity_type(getattr(ref, "identity_type", None)):
+                continue
+            # Prefer explicit face/identity refs; fall back to generic refs.
+            urls = list(getattr(ref, "face_reference_image_urls", []) or [])
+            if not urls:
+                urls = list(getattr(ref, "reference_image_urls", []) or [])
+            candidates: list[bytes] = []
+            for url in urls:
+                try:
+                    candidates.append(await file_mgr.read_bytes(url))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "Face-swap: failed to read source ref %s — %s", url, e
+                    )
+            if not candidates:
+                continue
+            best = await asyncio.to_thread(svc.pick_clearest, candidates)
+            if best is not None:
+                return best, (_normalize_reference_tag(ref.tag) or tag)
+    return None, None
+
+
+async def apply_scene_face_swaps(session: AsyncSession, scene: Scene) -> None:
+    """Swap each on-screen character's real face onto the scene's keyframes.
+
+    Opt-in (``settings.face_swap.enabled``), idempotent, and resume-safe: each
+    keyframe is marked ``face_swapped`` and committed individually, so a crash
+    mid-pass resumes at the first un-swapped keyframe and re-runs never double
+    swap. The swapped image overwrites the keyframe in place (so video
+    generation transparently consumes it) and the pre-swap original is archived
+    as a ``_preswap`` sibling for threshold/restoration tuning.
+    """
+    if not settings.face_swap.enabled:
+        return
+
+    from vidpipe.services.face_restore_service import get_face_restore_service
+    from vidpipe.services.face_swap_service import get_face_swap_service
+
+    svc = get_face_swap_service()
+    if not await asyncio.to_thread(svc.available):
+        logger.warning(
+            "Face-swap enabled but service unavailable (inswapper model missing?); "
+            "leaving keyframes un-swapped for scene %s",
+            scene.id,
+        )
+        return
+
+    file_mgr = FileManager()
+    result = await session.execute(
+        select(Shot).where(Shot.scene_id == scene.id).order_by(Shot.shot_index)
+    )
+    shots = result.scalars().all()
+
+    # Cache resolved source face per identical character-tag set (avoids
+    # re-detecting the source ref for every shot sharing the same cast).
+    source_cache: dict[tuple, tuple[Optional[bytes], Optional[str]]] = {}
+    swapped_count = 0
+
+    for shot in shots:
+        cache_key = tuple(
+            _ordered_unique_tags(normalize_json_list(shot.characters_present))
+        )
+        if cache_key in source_cache:
+            source_png, source_tag = source_cache[cache_key]
+        else:
+            source_png, source_tag = await _resolve_primary_source_face(
+                session, scene, shot, file_mgr, svc
+            )
+            source_cache[cache_key] = (source_png, source_tag)
+        if source_png is None:
+            continue
+
+        kfs_result = await session.execute(
+            select(Keyframe).where(Keyframe.shot_id == shot.id)
+        )
+        for kf in kfs_result.scalars().all():
+            if kf.face_swapped:
+                continue
+            # Inherited start frames are byte-identical aliases of the previous
+            # shot's end frame — swap the shared pixels once on the owning row.
+            if kf.source == "inherited":
+                continue
+            try:
+                target_png = await file_mgr.read_bytes(kf.file_path)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Face-swap: cannot read keyframe %s — %s", kf.file_path, e
+                )
+                continue
+
+            swapped, sim = await asyncio.to_thread(
+                svc.swap_face_with_score, target_png, source_png
+            )
+            if swapped is None:
+                # No detectable target face (e.g. stylised render) — keep the
+                # generated frame but mark done so we don't retry every resume.
+                kf.face_swapped = True
+                kf.verification_summary = (
+                    (kf.verification_summary or "") + " || face_swap=skipped_no_target_face"
+                )
+                await session.commit()
+                continue
+
+            # Post-swap quality: restore the soft 128px face (CodeFormer, GPU) so
+            # it matches the keyframe's native sharpness. This restored frame is
+            # what feeds video generation.
+            final_png = swapped
+            note = ""
+            if settings.face_swap.restore:
+                rsvc = get_face_restore_service()
+                if await asyncio.to_thread(rsvc.has_restore):
+                    restored = await asyncio.to_thread(
+                        rsvc.restore_primary_face, final_png
+                    )
+                    if restored is not None:
+                        final_png = restored
+                        note += f" restore=w{settings.face_swap.restore_weight}"
+
+            # Archive the pre-swap original (tuning/QA) then save the final
+            # (swapped + restored) keyframe in place.
+            await file_mgr.save_keyframe_async(
+                scene.id, shot.shot_index, f"{kf.position}_preswap", target_png
+            )
+            await file_mgr.save_keyframe_async(
+                scene.id, shot.shot_index, kf.position, final_png
+            )
+
+            # Optional: a separate 4K still artifact (does NOT feed video gen).
+            if settings.face_swap.upscale_keyframes:
+                rsvc = get_face_restore_service()
+                if await asyncio.to_thread(rsvc.has_upscale):
+                    up = await asyncio.to_thread(
+                        rsvc.upscale, final_png, settings.face_swap.upscale_scale
+                    )
+                    if up is not None:
+                        await file_mgr.save_keyframe_async(
+                            scene.id, shot.shot_index, f"{kf.position}_4k", up
+                        )
+                        note += f" upscale={settings.face_swap.upscale_scale}x"
+
+            kf.face_swapped = True
+            kf.verification_summary = (
+                (kf.verification_summary or "")
+                + f" || face_swap=ok src=@{source_tag} sim={sim:.3f}{note}"
+            )
+            await session.commit()
+            swapped_count += 1
+
+    if swapped_count:
+        logger.info(
+            "Face-swap: swapped %d keyframe(s) for scene %s", swapped_count, scene.id
+        )

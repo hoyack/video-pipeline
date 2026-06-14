@@ -26,6 +26,7 @@ Manifest = ProductionBible
 from vidpipe.services.clip_embedding_service import CLIPEmbeddingService
 from vidpipe.services.cv_analysis_service import CVAnalysisResult, FaceMatchResult
 from vidpipe.services.face_matching import FaceMatchingService
+from vidpipe.services.llm import LLMAdapter
 from vidpipe.services.reverse_prompt_service import ReversePromptService
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,7 @@ async def extract_and_register_new_entities(
     shot_index: int,
     new_entities: list[NewEntityDetection],
     source: str = "CLIP_EXTRACT",
+    vision_adapter: Optional[LLMAdapter] = None,
 ) -> list[Asset]:
     """Reverse-prompt, quality-gate, and register new entities as assets.
 
@@ -246,7 +248,7 @@ async def extract_and_register_new_entities(
     from vidpipe.services.manifest_service import TAG_PREFIX_MAP
 
     semaphore = asyncio.Semaphore(3)
-    reverse_service = ReversePromptService()
+    reverse_service = ReversePromptService(vision_adapter=vision_adapter)
     face_service = FaceMatchingService()
     clip_service = CLIPEmbeddingService()
 

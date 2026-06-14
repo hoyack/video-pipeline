@@ -1168,6 +1168,11 @@ class Keyframe(Base):
     verification_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     verification_attempts: Mapped[int] = mapped_column(Integer, default=0)
     verification_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Post-generation face-swap pass marker (idempotent resume): True once the
+    # face-swap pass has finalized this keyframe (swapped or deliberately skipped).
+    face_swapped: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

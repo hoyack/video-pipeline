@@ -1507,7 +1507,10 @@ async def stop_scene(scene_id: uuid.UUID):
 
     Returns 409 if scene is already in a terminal state (complete/failed/stopped).
     """
-    ACTIVE_STATUSES = {"pending", "storyboarding", "keyframing", "video_gen", "stitching"}
+    ACTIVE_STATUSES = {
+        "pending", "storyboarding", "keyframing",
+        "video_gen", "generating_video", "stitching",
+    }
 
     async with async_session() as session:
         result = await session.execute(
@@ -5030,6 +5033,12 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
     if image_model.startswith("imagen-"):
         image_model = app_settings.models.image_gen
 
+    # scene.seed may be None (scenes created via screenplay→generate-scenes never
+    # set it). Passing None as a ComfyUI seed fails: FLUX RandomNoise rejects a
+    # null noise_seed (HTTP 400), and the offset paths raise "NoneType + int".
+    # Match the main pipeline (int(scene.seed or 0)) so regeneration works.
+    regen_seed = int(scene.seed or 0)
+
     # Build character bible prefix from storyboard data
     character_prefix = ""
     if scene.storyboard_raw and "characters" in scene.storyboard_raw:
@@ -5159,22 +5168,22 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
             # Shot 0: text-to-image with style/character enrichment
             enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
             if (mr := await _generate_multiref_comfyui(
-                enriched_prompt, conditioning_bytes=None, seed=scene.seed,
+                enriched_prompt, conditioning_bytes=None, seed=regen_seed,
             )) is not None:
                 image_bytes = mr
             elif is_comfyui and image_model.startswith("flux-"):
                 from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS
                 fw, fh = _FLUX_RESOLUTIONS.get(scene.aspect_ratio, (1024, 1024))
                 image_bytes = await _generate_image_comfyui_flux(
-                    comfy_client, enriched_prompt, seed=scene.seed,
+                    comfy_client, enriched_prompt, seed=regen_seed,
                     width=fw, height=fh,
                 )
             elif is_comfyui:
-                image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=scene.seed)
+                image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=regen_seed)
             else:
                 image_bytes = await _generate_image_from_text(
                     image_client, enriched_prompt, scene.aspect_ratio, image_model,
-                    seed=scene.seed,
+                    seed=regen_seed,
                     reference_images=ref_image_bytes_list or None,
                 )
         else:
@@ -5220,18 +5229,18 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
                         f"{character_prefix}"
                     )
                     if (mr := await _generate_multiref_comfyui(
-                        conditioning_prompt, conditioning_bytes=prev_end_bytes, seed=scene.seed,
+                        conditioning_prompt, conditioning_bytes=prev_end_bytes, seed=regen_seed,
                     )) is not None:
                         image_bytes = mr
                     elif is_comfyui and image_model.startswith("flux-"):
                         from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR2
                         fw2, fh2 = _FR2.get(scene.aspect_ratio, (1024, 1024))
                         image_bytes = await _generate_image_comfyui_flux(
-                            comfy_client, conditioning_prompt, seed=scene.seed,
+                            comfy_client, conditioning_prompt, seed=regen_seed,
                             width=fw2, height=fh2,
                         )
                     elif is_comfyui:
-                        image_bytes = await _generate_image_comfyui(comfy_client, conditioning_prompt, seed=scene.seed)
+                        image_bytes = await _generate_image_comfyui(comfy_client, conditioning_prompt, seed=regen_seed)
                     else:
                         image_bytes = await _generate_image_conditioned(
                             image_client, prev_end_bytes, conditioning_prompt,
@@ -5245,22 +5254,22 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
                 # Fallback: no previous end keyframe available, use text-to-image
                 enriched_prompt = f"{style_prefix}{character_prefix}{base_prompt}" if not prompt_override else base_prompt
                 if (mr := await _generate_multiref_comfyui(
-                    enriched_prompt, conditioning_bytes=None, seed=scene.seed,
+                    enriched_prompt, conditioning_bytes=None, seed=regen_seed,
                 )) is not None:
                     image_bytes = mr
                 elif is_comfyui and image_model.startswith("flux-"):
                     from vidpipe.services.comfyui_client import _FLUX_RESOLUTIONS as _FR3
                     fw3, fh3 = _FR3.get(scene.aspect_ratio, (1024, 1024))
                     image_bytes = await _generate_image_comfyui_flux(
-                        comfy_client, enriched_prompt, seed=scene.seed,
+                        comfy_client, enriched_prompt, seed=regen_seed,
                         width=fw3, height=fh3,
                     )
                 elif is_comfyui:
-                    image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=scene.seed)
+                    image_bytes = await _generate_image_comfyui(comfy_client, enriched_prompt, seed=regen_seed)
                 else:
                     image_bytes = await _generate_image_from_text(
                         image_client, enriched_prompt, scene.aspect_ratio, image_model,
-                        seed=scene.seed,
+                        seed=regen_seed,
                         reference_images=ref_image_bytes_list or None,
                     )
 
@@ -5306,7 +5315,7 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
 
         if (mr := await _generate_multiref_comfyui(
             conditioning_prompt, conditioning_bytes=conditioning_bytes,
-            seed=scene.seed + shot.shot_index + 1000,
+            seed=regen_seed + shot.shot_index + 1000,
         )) is not None:
             image_bytes = mr
         elif is_comfyui and image_model.startswith("flux-"):
@@ -5314,13 +5323,13 @@ async def _regenerate_keyframe(session, scene, shot, position, file_mgr, prompt_
             fw4, fh4 = _FR4.get(scene.aspect_ratio, (1024, 1024))
             image_bytes = await _generate_image_comfyui_flux(
                 comfy_client, conditioning_prompt,
-                seed=scene.seed + shot.shot_index + 1000,
+                seed=regen_seed + shot.shot_index + 1000,
                 width=fw4, height=fh4,
             )
         elif is_comfyui:
             image_bytes = await _generate_image_comfyui(
                 comfy_client, conditioning_prompt,
-                seed=scene.seed + shot.shot_index + 1000,
+                seed=regen_seed + shot.shot_index + 1000,
             )
         else:
             image_bytes = await _generate_image_conditioned(
@@ -5436,34 +5445,84 @@ async def _regenerate_clip(session, scene, shot, file_mgr, prompt_override=None,
             from vidpipe.pipeline.video_gen import _load_char_ref_images
             char_ref_bytes = await _load_char_ref_images(session, scene)
 
-        operation_id = await adapter.submit(
-            video_prompt=video_prompt,
-            start_frame_bytes=start_bytes,
-            end_frame_bytes=end_bytes if end_kf else None,
-            char_ref_bytes=char_ref_bytes,
-            aspect_ratio=scene.aspect_ratio,
-            seed=scene.seed or 0,
-            shot_index=shot.shot_index,
-            video_model=video_model,
-            duration_seconds=scene.target_clip_duration or 5,
-            audio_enabled=bool(scene.audio_enabled),
-        )
+        async def _submit_comfy(attempt: int) -> str:
+            # ``attempt`` perturbs the seed so a corrupted-clip retry cannot
+            # hit ComfyUI's node cache and receive the same corrupted encode.
+            return await adapter.submit(
+                video_prompt=video_prompt,
+                start_frame_bytes=start_bytes,
+                end_frame_bytes=end_bytes if end_kf else None,
+                char_ref_bytes=char_ref_bytes,
+                aspect_ratio=scene.aspect_ratio,
+                seed=(scene.seed or 0) + attempt * 1000003,
+                shot_index=shot.shot_index,
+                video_model=video_model,
+                duration_seconds=scene.target_clip_duration or 5,
+                audio_enabled=bool(scene.audio_enabled),
+            )
 
-        # Poll ComfyUI
-        for _ in range(max_polls):
-            status, error_msg = await adapter.poll(operation_id)
-            if status == "completed":
-                video_bytes, _duration = await adapter.download(
-                    operation_id,
-                    video_model=video_model,
-                    duration_seconds=scene.target_clip_duration or 5,
-                )
+        operation_id = await _submit_comfy(0)
+
+        corrupt_retry_max = (
+            app_settings.pipeline.clip_corrupt_retry_max
+            if app_settings.pipeline.clip_validation_enabled
+            else 0
+        )
+        import time as _time
+
+        for corruption_attempt in range(corrupt_retry_max + 1):
+            # Poll ComfyUI. Queue time (Comfy Cloud "queued_limited" under
+            # account concurrency limits) does not consume the poll budget.
+            polls_used = 0
+            queue_deadline = _time.monotonic() + app_settings.pipeline.comfy_queue_timeout
+            while True:
+                status, error_msg = await adapter.poll(operation_id)
+                if status == "completed":
+                    video_bytes, _duration = await adapter.download(
+                        operation_id,
+                        video_model=video_model,
+                        duration_seconds=scene.target_clip_duration or 5,
+                    )
+                    break
+                elif status == "failed":
+                    raise RuntimeError(f"ComfyUI job failed: {error_msg}")
+                elif status == "queued":
+                    if _time.monotonic() > queue_deadline:
+                        raise TimeoutError(
+                            f"ComfyUI job stayed queued too long for shot {shot.shot_index}"
+                        )
+                else:
+                    polls_used += 1
+                    if polls_used >= max_polls:
+                        raise TimeoutError(f"ComfyUI timed out for shot {shot.shot_index}")
+                await asyncio.sleep(poll_interval)
+
+            # Degenerate-clip gate (ComfyUI Cloud can return corrupted MP4s
+            # on jobs that report success)
+            if not app_settings.pipeline.clip_validation_enabled:
                 break
-            elif status == "failed":
-                raise RuntimeError(f"ComfyUI job failed: {error_msg}")
-            await asyncio.sleep(poll_interval)
-        else:
-            raise TimeoutError(f"ComfyUI timed out for shot {shot.shot_index}")
+            from vidpipe.services.clip_validation import validate_clip_integrity
+
+            validation = await asyncio.to_thread(
+                validate_clip_integrity,
+                video_bytes,
+                start_frame_bytes=start_bytes,
+                end_frame_bytes=end_bytes if end_kf else None,
+            )
+            if validation.ok:
+                break
+            logger.warning(
+                "Shot %d: regenerated clip failed integrity check (%s) — "
+                "attempt %d of %d",
+                shot.shot_index, validation.detail,
+                corruption_attempt + 1, corrupt_retry_max + 1,
+            )
+            if corruption_attempt >= corrupt_retry_max:
+                raise RuntimeError(
+                    f"Corrupted video from ComfyUI after "
+                    f"{corruption_attempt + 1} attempt(s): {validation.detail}"
+                )
+            operation_id = await _submit_comfy(corruption_attempt + 1)
     else:
         # ---- Veo / Vertex path ----
         from vidpipe.pipeline.video_gen import _submit_video_job

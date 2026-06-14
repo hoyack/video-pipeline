@@ -197,6 +197,41 @@ uvicorn vidpipe.api.app:app --host 0.0.0.0 --port 8000
 
 Requires Python 3.11+, Node.js 18+, and ffmpeg (`apt-get install ffmpeg` / `brew install ffmpeg`). See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md) for development details, tests, and CLI usage.
 
+## Testing
+
+The suite is offline and fast by default — the paid cloud E2E tests skip unless explicitly enabled:
+
+```bash
+pytest backend/          # full suite (cloud E2E tests skip without their flags)
+ruff check backend/      # lint
+```
+
+### End-to-end test (opt-in, paid cloud)
+
+`backend/tests/test_cyberpunk_seedance_e2e.py` builds a **complete narrated short** against a running stack — bible, cast (lead + a voice-only narrator), sets/props, screenplay, scenes (storyboard → keyframes → video), narration, sound deck, and a rendered master — then asserts the master has real (non-silent) audio. It spends real provider credits, so it's gated behind an env flag and skipped by default.
+
+**Prerequisites** (checked by the test's preflight):
+
+- The app stack running, backend reachable at `http://localhost:8100`
+- **ComfyUI** host + API key and an **ElevenLabs** key + a **default voice**, set in the Settings UI
+- The asset-library actor **"Brandon"** present (reused as the lead)
+
+**Run it:**
+
+```bash
+# The test defaults to seedance-2.0-flf2v, a gated ByteDance partner node. Unless
+# your ComfyUI Cloud account has partner-node (API node) access, override to LTX —
+# otherwise every video job fails with "Unauthorized: Please login first…".
+VIDPIPE_RUN_CYBERPUNK_E2E=1 \
+VIDPIPE_CYBERPUNK_E2E_VIDEO_MODEL=ltx-2.3-flf2v \
+pytest backend/tests/test_cyberpunk_seedance_e2e.py -q -s
+```
+
+It prints `PRODUCTION_ID=…` on success; view the result at
+`http://localhost/api/productions/<id>/master-video`.
+
+**Useful overrides** (all optional): `VIDPIPE_E2E_API_BASE` (`http://localhost:8100`), `VIDPIPE_CYBERPUNK_E2E_IMAGE_MODEL` (`flux-2-klein`), `VIDPIPE_CYBERPUNK_E2E_SCENE_COUNT` (`3`), `VIDPIPE_CYBERPUNK_E2E_SHOTS_PER_SCENE` (`2`), `VIDPIPE_CYBERPUNK_E2E_CLIP_DURATION` (`10`), `VIDPIPE_CYBERPUNK_E2E_TEXT_MODEL` (`gemini-3.5-flash`). A sibling `test_nasa_documentary_e2e.py` follows the same shape with a documentary screenplay.
+
 ## Supported models
 
 All models are selectable per scene in the UI.

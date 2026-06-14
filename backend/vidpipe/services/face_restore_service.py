@@ -93,6 +93,20 @@ class FaceRestoreService:
     def available(self) -> bool:
         return self._load()
 
+    def release(self) -> None:
+        """Free torch's cached (reserved-but-unused) GPU memory after a heavy job.
+
+        Releases the caching-allocator blocks the 4x upscale balloons to (5K
+        tiles); the model weights stay resident for reuse. Safe no-op on CPU.
+        """
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+
     def has_restore(self) -> bool:
         return self._load() and self._cf is not None
 

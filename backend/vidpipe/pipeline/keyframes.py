@@ -3521,3 +3521,7 @@ async def apply_scene_face_swaps(session: AsyncSession, scene: Scene) -> None:
         logger.info(
             "Face-swap: swapped %d keyframe(s) for scene %s", swapped_count, scene.id
         )
+    # Release the torch GPU cache used by per-keyframe restoration/upscale so the
+    # reserved pool doesn't linger between scenes (model weights stay resident).
+    if settings.face_swap.restore or settings.face_swap.upscale_keyframes:
+        get_face_restore_service().release()

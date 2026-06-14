@@ -55,6 +55,9 @@ def _process_video(src_path: str, out_path: str, scale: int) -> int:
                 up = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
             if proc is None:
                 h, w = up.shape[:2]
+                # Memory-safe encode: the default lookahead holds dozens of raw
+                # ~43MB 5K frames in RAM and OOM-killed ffmpeg (broken pipe).
+                # veryfast + a small rc-lookahead caps that buffer.
                 proc = subprocess.Popen(
                     [
                         "ffmpeg", "-y",
@@ -62,13 +65,18 @@ def _process_video(src_path: str, out_path: str, scale: int) -> int:
                         "-s", f"{w}x{h}", "-r", str(fps), "-i", "pipe:0",
                         "-i", src_path,
                         "-map", "0:v:0", "-map", "1:a:0?",
-                        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                        "-x264-params", "rc-lookahead=10:sync-lookahead=0:bframes=0:threads=4",
                         "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
                         out_path,
                     ],
-                    stdin=subprocess.PIPE,
+                    stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 )
-            proc.stdin.write(up.tobytes())
+            try:
+                proc.stdin.write(up.tobytes())
+            except BrokenPipeError:
+                logger.error("upscale: ffmpeg closed the pipe at frame %d (encoder died)", i)
+                break
             i += 1
             if i % 12 == 0:
                 logger.info("upscale: %d/%d frames (%.1fs/frame)", i, total, (time.time() - t0) / i)
@@ -93,6 +101,7 @@ async def _upscale_video_job(scene_id: uuid.UUID, scale: int) -> None:
             src.write_bytes(data)
 
         n = await asyncio.to_thread(_process_video, str(src), str(out), scale)
+        get_face_restore_service().release()  # free the 5K-tile cache balloon
         if n == 0 or not out.exists():
             logger.error("upscale: produced no output for scene %s", scene_id)
             return

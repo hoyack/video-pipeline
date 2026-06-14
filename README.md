@@ -68,6 +68,7 @@ Production
 | Doc | What's in it |
 |-----|--------------|
 | **[API: Creating a Full Production](docs/api-production-workflow.md)** | Step-by-step API guide from empty database to finished master MP4 — bible, screenplay, scenes, narration, SFX, master render, with curl examples and a full endpoint reference |
+| [MCP server](docs/mcp-server.md) | MCP tools for letting Codex or another MCP client create, continue, produce, and inspect full Vidpipe productions |
 | [Backend docs](docs/backend-docs.md) | Backend architecture, services, and pipeline internals |
 | [Frontend docs](docs/frontend-docs.md) | React SPA structure, components, and API client |
 | [Backend README](backend/README.md) | Backend setup, CLI usage, and development |

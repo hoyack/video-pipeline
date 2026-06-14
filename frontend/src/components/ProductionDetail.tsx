@@ -47,6 +47,16 @@ function formatDuration(seconds: number | null): string {
   return `${minutes}:${remaining.toString().padStart(2, "0")}`;
 }
 
+function compareProductionScenes(a: SceneListItem, b: SceneListItem): number {
+  const max = Number.MAX_SAFE_INTEGER;
+  return (
+    (a.scene_order ?? max) - (b.scene_order ?? max) ||
+    (a.screenplay_breakdown_index ?? max) - (b.screenplay_breakdown_index ?? max) ||
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+    a.scene_id.localeCompare(b.scene_id)
+  );
+}
+
 export function ProductionDetail({ productionId, onViewScene }: ProductionDetailProps) {
   const [production, setProduction] = useState<ProductionResponse | null>(null);
   const [master, setMaster] = useState<ProductionMasterResponse | null>(null);
@@ -86,7 +96,11 @@ export function ProductionDetail({ productionId, onViewScene }: ProductionDetail
       setSoundDeck(soundData);
       setEditName(prod.name);
       setEditDesc(prod.description || "");
-      setScenes(scenesData.items.filter((s) => s.production_id === productionId));
+      setScenes(
+        scenesData.items
+          .filter((s) => s.production_id === productionId)
+          .sort(compareProductionScenes),
+      );
       setSequences(seqs);
       setError(null);
       setMasterError(null);

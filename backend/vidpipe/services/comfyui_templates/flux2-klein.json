@@ -11,7 +11,7 @@
   },
   "71": {
     "inputs": {
-      "clip_name": "qwen_3_4b.safetensors",
+      "clip_name": "qwen_3_4b_fp4_flux2.safetensors",
       "type": "flux2",
       "device": "default"
     },

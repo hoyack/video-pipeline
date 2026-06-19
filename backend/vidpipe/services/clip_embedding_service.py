@@ -58,7 +58,15 @@ class CLIPEmbeddingService:
             )
             self._processor = CLIPProcessor.from_pretrained(self.model_name)
             self._model = CLIPModel.from_pretrained(self.model_name)
-            self._model = self._model.to(self.device)
+            try:
+                self._model = self._model.to(self.device)
+            except Exception as exc:
+                if self.device != "cpu" and "out of memory" in str(exc).lower():
+                    logger.warning("CLIP CUDA load ran out of memory; retrying on CPU")
+                    self.device = "cpu"
+                    self._model = self._model.to(self.device)
+                else:
+                    raise
             self._model.eval()
             logger.info("CLIP model loaded successfully")
         except Exception as e:

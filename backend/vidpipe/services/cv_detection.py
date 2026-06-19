@@ -13,16 +13,28 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
+def _default_device() -> str:
+    """Pick a YOLO inference device that exists in the current runtime."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda:0"
+    except Exception:
+        pass
+    return "cpu"
+
+
 class CVDetectionService:
     """YOLO object and face detection service with lazy model loading."""
 
-    def __init__(self, device: str = "cuda:0"):
+    def __init__(self, device: str | None = None):
         """Initialize service with device specification.
 
         Args:
             device: Device for inference ("cuda:0" or "cpu")
         """
-        self.device = device
+        self.device = device or _default_device()
         self._model = None
 
     def _load_models(self):
@@ -67,10 +79,23 @@ class CVDetectionService:
 
         results = {"objects": [], "faces": []}
 
-        # Run YOLO detection
-        yolo_results = self._model.predict(
-            image_path, conf=confidence_threshold, device=self.device, verbose=False
-        )[0]
+        # Run YOLO detection. If ComfyUI/video generation owns VRAM, CUDA
+        # inference can fail even though CUDA exists; fall back to CPU once.
+        try:
+            yolo_results = self._model.predict(
+                image_path, conf=confidence_threshold, device=self.device, verbose=False
+            )[0]
+        except Exception as exc:
+            if self.device != "cpu" and "out of memory" in str(exc).lower():
+                logger.warning("YOLO CUDA inference ran out of memory; retrying on CPU")
+                self.device = "cpu"
+                self._model = None
+                self._load_models()
+                yolo_results = self._model.predict(
+                    image_path, conf=confidence_threshold, device=self.device, verbose=False
+                )[0]
+            else:
+                raise
 
         for box in yolo_results.boxes:
             cls_id = int(box.cls[0])

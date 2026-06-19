@@ -8,12 +8,14 @@ services:
     environment:
       - VIDPIPE_STORAGE__DATABASE_URL=${VIDPIPE_STORAGE__DATABASE_URL}
       - VIDPIPE_STORAGE__TMP_DIR=/app/tmp
-      - VIDPIPE_STORAGE__STORAGE_BACKEND=s3
-      - VIDPIPE_STORAGE__S3_ENDPOINT=http://supabase-kong:8000/storage/v1
-      - VIDPIPE_STORAGE__S3_BUCKET=vidpipe-master
-      - VIDPIPE_STORAGE__S3_SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - VIDPIPE_STORAGE__STORAGE_BACKEND=${VIDPIPE_STORAGE__STORAGE_BACKEND:-local}
+      - VIDPIPE_STORAGE__S3_ENDPOINT=${VIDPIPE_STORAGE__S3_ENDPOINT:-http://supabase-kong:8000/storage/v1}
+      - VIDPIPE_STORAGE__S3_BUCKET=${VIDPIPE_STORAGE__S3_BUCKET:-vidpipe-master}
+      - VIDPIPE_STORAGE__S3_SERVICE_KEY=${VIDPIPE_STORAGE__S3_SERVICE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./tmp:/app/tmp
       # Persist InsightFace models (inswapper_128.onnx for face-swap + buffalo_l)
@@ -24,9 +26,6 @@ services:
       - ${GOOGLE_APPLICATION_CREDENTIALS:-./.gcp-credentials.json}:/app/credentials.json:ro
     ports:
       - "${VIDPIPE_PORT:-8100}:8000"
-    networks:
-      - default
-      - supabase_default
     healthcheck:
       test:
         [
@@ -58,7 +57,3 @@ services:
       retries: 6
       start_period: 10s
     restart: unless-stopped
-
-networks:
-  supabase_default:
-    external: true

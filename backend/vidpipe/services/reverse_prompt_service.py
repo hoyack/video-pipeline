@@ -5,6 +5,7 @@ recreation prompts and visual descriptions suitable for video generation.
 """
 
 import logging
+import asyncio
 from pathlib import Path
 from typing import Optional
 
@@ -59,18 +60,65 @@ class ReversePromptService:
             f"User-provided name: {user_name}" if user_name else "No name provided."
         )
 
-        # Use adapter (fall back to a low-latency Vertex model for backward compat)
-        adapter = self._adapter or get_adapter("gemini-3.5-flash")
-        result = await adapter.analyze_image(
-            image_bytes=image_bytes,
-            prompt=f"{system_prompt}\n\n{user_context}",
-            schema=ReversePromptOutput,
-            mime_type=mime_type,
-            temperature=0.4,
-            max_retries=3,
-        )
+        adapter = self._adapter or await self._default_adapter()
+        try:
+            result = await asyncio.wait_for(
+                adapter.analyze_image(
+                    image_bytes=image_bytes,
+                    prompt=f"{system_prompt}\n\n{user_context}",
+                    schema=ReversePromptOutput,
+                    mime_type=mime_type,
+                    temperature=0.4,
+                    max_retries=1,
+                ),
+                timeout=90,
+            )
+            return result.model_dump()
+        except Exception as exc:
+            logger.warning(
+                "Reverse prompt failed for %s (%s); using fallback description",
+                image_path,
+                exc,
+            )
+            return self._fallback_prompt(asset_type, user_name)
 
-        return result.model_dump()
+    async def _default_adapter(self) -> LLMAdapter:
+        """Load the configured vision/text adapter for reverse prompting."""
+        from sqlalchemy import select
+
+        from vidpipe.config import settings
+        from vidpipe.db import async_session
+        from vidpipe.db.models import DEFAULT_USER_ID, UserSettings
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == DEFAULT_USER_ID)
+            )
+            user_settings = result.scalar_one_or_none()
+
+        model_id = None
+        if user_settings is not None:
+            model_id = user_settings.default_vision_model or user_settings.default_text_model
+        model_id = model_id or settings.models.storyboard_llm
+        return get_adapter(model_id, user_settings=user_settings)
+
+    def _fallback_prompt(self, asset_type: str, user_name: str) -> dict:
+        """Return a conservative prompt when vision reverse-prompting is unavailable."""
+        name = user_name or asset_type.title()
+        return {
+            "reverse_prompt": (
+                f"{name}, {asset_type.lower()} reference image. Preserve the visible "
+                "silhouette, proportions, color palette, distinctive facial or surface "
+                "features, wardrobe/material details, lighting direction, and camera angle."
+            ),
+            "visual_description": (
+                f"{name} is a production bible {asset_type.lower()} reference. Keep its "
+                "core shape, identifying marks, colors, materials, and framing consistent "
+                "across generated shots."
+            ),
+            "quality_score": 5.0,
+            "suggested_name": name,
+        }
 
     def _get_system_prompt(self, asset_type: str) -> str:
         """Return type-specific system prompt for reverse-prompting.

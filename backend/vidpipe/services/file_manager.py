@@ -253,6 +253,16 @@ class FileManager:
         For local backend with absolute paths, reads directly from disk.
         For S3 or relative keys, reads via the backend.
         """
+        if isinstance(self.backend, LocalStorageBackend):
+            asset_match = re.fullmatch(r"/api/assets/([0-9a-f-]{36})/image", path_or_key)
+            if asset_match:
+                asset_id = asset_match.group(1)
+                for subdir in ("uploads", "crops"):
+                    matches = list((self.base_dir / "manifests").glob(f"*/{subdir}/{asset_id}_*"))
+                    if matches:
+                        return matches[0].read_bytes()
+                raise FileNotFoundError(f"Local asset image not found: {path_or_key}")
+
         # Absolute path — legacy local file
         if path_or_key.startswith("/"):
             p = Path(path_or_key)

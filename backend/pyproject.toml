@@ -38,6 +38,8 @@ dependencies = [
     "ultralytics>=8.3.0",
     "insightface>=0.7.3",
     "onnxruntime-gpu>=1.18.0",
+    "rembg>=2.0.60",
+    "transformers>=4.45.0",
     # GPU face restoration (CodeFormer) + super-resolution (RealESRGAN) loaders.
     # spandrel runs these PyTorch models without the legacy basicsr/facexlib deps.
     "spandrel>=0.4.0",

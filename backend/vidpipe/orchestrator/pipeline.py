@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Callable, Dict, Optional
 
+import httpx
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +44,44 @@ class PipelineStopped(Exception):
 
 class PipelineStaged(Exception):
     """Raised when the pipeline reaches a user-requested stage boundary."""
+
+
+async def _unload_local_ollama_models(
+    user_settings: Optional[UserSettings],
+    *model_ids: Optional[str],
+) -> None:
+    """Ask local Ollama to unload models before ComfyUI needs VRAM."""
+    if user_settings is not None and user_settings.ollama_use_cloud:
+        return
+
+    endpoint = (
+        user_settings.ollama_endpoint
+        if user_settings is not None and user_settings.ollama_endpoint
+        else "http://localhost:11434"
+    )
+    ollama_models = {
+        model_id.removeprefix("ollama/")
+        for model_id in model_ids
+        if model_id and model_id.startswith("ollama/")
+    }
+    if not ollama_models:
+        return
+
+    async with httpx.AsyncClient(base_url=endpoint, timeout=20.0) as client:
+        for model in sorted(ollama_models):
+            try:
+                await client.post(
+                    "/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": "",
+                        "stream": False,
+                        "keep_alive": 0,
+                    },
+                )
+                logger.info("Requested Ollama unload for %s", model)
+            except Exception as exc:
+                logger.warning("Could not unload Ollama model %s: %s", model, exc)
 
 
 async def _generate_expansion_if_needed(
@@ -292,6 +331,12 @@ async def run_pipeline(
             step_log["storyboard"] = step_duration
             logger.info(f"Storyboard step completed in {step_duration:.2f}s")
 
+            await _unload_local_ollama_models(
+                user_settings,
+                text_model_id,
+                vision_model_id,
+            )
+
             if await _check_stage_boundary(session, scene):
                 raise PipelineStaged()
 
@@ -324,6 +369,12 @@ async def run_pipeline(
             step_duration = time.monotonic() - step_start
             step_log["keyframes"] = step_duration
             logger.info(f"Keyframes step completed in {step_duration:.2f}s")
+
+            await _unload_local_ollama_models(
+                user_settings,
+                text_model_id,
+                vision_model_id,
+            )
 
             if await _check_stage_boundary(session, scene):
                 raise PipelineStaged()

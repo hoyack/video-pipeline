@@ -328,12 +328,58 @@ class ComfyUIClient:
             "GET %s/api/job/%s/status — HTTP %d",
             self._safe_host, prompt_id, response.status_code,
         )
+        if response.status_code == 404:
+            return await self._poll_local_status(prompt_id)
         response.raise_for_status()
         data = response.json()
         raw_status = data.get("status", "unknown")
         error_msg = data.get("error_message")
         logger.debug("  raw status=%s error=%s", raw_status, error_msg)
         return raw_status, error_msg
+
+    async def _poll_local_status(self, prompt_id: str) -> tuple[str, Optional[str]]:
+        """Poll a stock local ComfyUI server.
+
+        Local ComfyUI does not expose Comfy Cloud's /api/job/... endpoint.
+        Completed and failed jobs appear under /history/{prompt_id}; queued
+        and running jobs appear under /queue.
+        """
+        history_response = await self.client.get(f"/history/{prompt_id}")
+        logger.debug(
+            "GET %s/history/%s — HTTP %d",
+            self._safe_host, prompt_id, history_response.status_code,
+        )
+        if history_response.status_code == 200:
+            data = history_response.json()
+            prompt_data = data.get(prompt_id, data)
+            status = prompt_data.get("status", {})
+            if status.get("completed"):
+                return "success", None
+            if status.get("status_str") == "error":
+                error_msg = None
+                for message in status.get("messages", []):
+                    if (
+                        isinstance(message, list)
+                        and len(message) >= 2
+                        and message[0] == "execution_error"
+                    ):
+                        error_msg = message[1].get("exception_message")
+                        break
+                return "error", error_msg or "ComfyUI execution failed"
+
+        queue_response = await self.client.get("/queue")
+        logger.debug(
+            "GET %s/queue — HTTP %d", self._safe_host, queue_response.status_code,
+        )
+        queue_response.raise_for_status()
+        queue_data = queue_response.json()
+        for item in queue_data.get("queue_running", []):
+            if len(item) > 1 and item[1] == prompt_id:
+                return "running", None
+        for item in queue_data.get("queue_pending", []):
+            if len(item) > 1 and item[1] == prompt_id:
+                return "pending", None
+        return "pending", None
 
     @_comfyui_retry
     async def get_history(self, prompt_id: str) -> dict:
@@ -346,6 +392,13 @@ class ComfyUIClient:
         )
         response = await self.client.get(f"/api/history_v2/{prompt_id}")
         logger.info("  history response: HTTP %d", response.status_code)
+        if response.status_code == 404:
+            logger.info(
+                "GET %s/history/%s — falling back to local history endpoint",
+                self._safe_host, prompt_id,
+            )
+            response = await self.client.get(f"/history/{prompt_id}")
+            logger.info("  local history response: HTTP %d", response.status_code)
         response.raise_for_status()
         data = response.json()
         # Log output structure for diagnostics
@@ -380,6 +433,8 @@ class ComfyUIClient:
             self._safe_host, filename, subfolder, output_type,
         )
         response = await self.client.get("/api/view", params=params)
+        if response.status_code == 404:
+            response = await self.client.get("/view", params=params)
         logger.info(
             "  download response: HTTP %d, %d bytes",
             response.status_code, len(response.content),

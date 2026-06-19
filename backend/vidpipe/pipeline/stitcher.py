@@ -80,7 +80,7 @@ async def stitch_videos(session: AsyncSession, scene: Scene) -> None:
             if lip_sync_job and lip_sync_job.output_clip_path:
                 clip_paths.append(storage.resolve_local_path(lip_sync_job.output_clip_path))
             else:
-                clip_paths.append(Path(clip_path))
+                clip_paths.append(storage.resolve_local_path(clip_path))
         else:
             # S3 mode: try local temp copy first, download if missing
             local_path = file_mgr.base_dir / clip_path

@@ -4,9 +4,11 @@ import pytest
 
 from vidpipe.mcp.server import mcp
 from vidpipe.mcp.workflow import (
+    APIRequestSpec,
     ProductionSpec,
     _default_scene_breakdown,
     _list_scenes_for_production,
+    normalize_api_path,
 )
 
 
@@ -88,6 +90,8 @@ async def test_mcp_tool_schemas_do_not_expose_context_parameter():
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
     assert set(tools) == {
+        "vidpipe_api_catalog",
+        "vidpipe_api_request",
         "vidpipe_preflight",
         "vidpipe_project_status",
         "vidpipe_produce_project",
@@ -104,3 +108,35 @@ async def test_mcp_tool_schemas_do_not_expose_context_parameter():
     ]
     assert "ctx" not in produce_schema["properties"]
     assert "ctx" not in continue_schema["properties"]
+
+
+def test_api_request_spec_normalizes_api_paths():
+    assert normalize_api_path("settings") == "/settings"
+    assert normalize_api_path("/api/settings") == "/settings"
+    assert normalize_api_path("/api/scenes/abc/status") == "/scenes/abc/status"
+
+
+def test_api_request_spec_requires_mutation_acknowledgement():
+    with pytest.raises(ValueError, match="allow_mutation=true"):
+        APIRequestSpec(method="POST", path="/productions", json_body={"name": "Test"})
+
+    request = APIRequestSpec(
+        method="POST",
+        path="/api/productions",
+        json_body={"name": "Test"},
+        allow_mutation=True,
+    )
+
+    assert request.method == "POST"
+    assert request.path == "/productions"
+
+
+def test_api_request_spec_rejects_mixed_json_and_multipart_payloads():
+    with pytest.raises(ValueError, match="json_body cannot be combined"):
+        APIRequestSpec(
+            method="POST",
+            path="/editor-images",
+            json_body={"name": "bad"},
+            form_fields={"label": "bad"},
+            allow_mutation=True,
+        )

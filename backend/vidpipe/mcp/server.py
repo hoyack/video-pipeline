@@ -8,9 +8,12 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 
 from vidpipe.mcp.workflow import (
+    APIRequestSpec,
     ProductionSpec,
     SceneSpec,
     ShotSpec,
+    call_api_endpoint,
+    get_api_catalog,
     get_project_status,
     preflight,
     produce_project,
@@ -51,6 +54,61 @@ async def vidpipe_project_status(
     """Inspect a Vidpipe production, including screenplay, scenes, sound, and master."""
 
     return await get_project_status(production_id, _api_base(api_base))
+
+
+@mcp.tool()
+async def vidpipe_api_catalog(
+    method: str | None = None,
+    path_contains: str | None = None,
+    tag: str | None = None,
+    api_base: str | None = None,
+) -> dict[str, Any]:
+    """List and filter the live Vidpipe OpenAPI routes available through MCP."""
+
+    return await get_api_catalog(
+        _api_base(api_base),
+        method=method,
+        path_contains=path_contains,
+        tag=tag,
+    )
+
+
+@mcp.tool()
+async def vidpipe_api_request(
+    method: str,
+    path: str,
+    query: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | list[Any] | None = None,
+    form_fields: dict[str, Any] | None = None,
+    file_path: str | None = None,
+    file_field: str = "file",
+    file_content_type: str | None = None,
+    allow_mutation: bool = False,
+    include_binary: bool = False,
+    max_binary_bytes: int = 2_000_000,
+    api_base: str | None = None,
+) -> dict[str, Any]:
+    """Call any Vidpipe /api endpoint.
+
+    GET requests are allowed directly. POST, PUT, PATCH, and DELETE require
+    allow_mutation=true because they may change state, delete data, or spend
+    provider credits. Paths may be passed with or without the /api prefix.
+    """
+
+    request = APIRequestSpec(
+        method=method,
+        path=path,
+        query=query,
+        json_body=json_body,
+        form_fields=form_fields,
+        file_path=file_path,
+        file_field=file_field,
+        file_content_type=file_content_type,
+        allow_mutation=allow_mutation,
+        include_binary=include_binary,
+        max_binary_bytes=max_binary_bytes,
+    )
+    return await call_api_endpoint(request, _api_base(api_base))
 
 
 @mcp.tool()
@@ -182,4 +240,3 @@ def main() -> None:
 
     transport = os.getenv("VIDPIPE_MCP_TRANSPORT", "stdio")
     mcp.run(transport=transport)
-

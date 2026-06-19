@@ -56,6 +56,8 @@ async def generate_sound_deck(production_id: str, request: GenerateSoundDeckRequ
                 uuid.UUID(production_id),
                 adapter,
                 text_model=model_id,
+                include_music=request.include_music,
+                music_prompt=request.music_prompt,
             )
             return SoundDeckActionResponse(
                 sound_deck=await _sound_deck_response(session, uuid.UUID(production_id)),

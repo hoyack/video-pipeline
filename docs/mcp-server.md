@@ -12,6 +12,8 @@ the same production workflow exposed by the web UI and REST API.
 - Run storyboard, keyframe, and video generation scene by scene.
 - Generate and mix narration and sound effects.
 - Render a final production master MP4.
+- Catalog and call any Vidpipe `/api/*` endpoint through a guarded generic API
+  bridge.
 
 The server calls the existing Vidpipe HTTP API rather than using private
 internals. Keep the app stack running before connecting an MCP client.
@@ -71,6 +73,33 @@ that may spend provider credits.
 Returns production metadata, screenplay, scenes, sound deck, master metadata,
 and browser URLs for a production.
 
+### `vidpipe_api_catalog`
+
+Returns a filtered route catalog from the live OpenAPI document. Optional
+filters:
+
+- `method`
+- `path_contains`
+- `tag`
+
+Use this before `vidpipe_api_request` when you need exact paths, required path
+parameters, or operation IDs.
+
+### `vidpipe_api_request`
+
+Calls any Vidpipe `/api/*` endpoint. Paths may be passed with or without the
+`/api` prefix. `GET` calls are allowed directly. `POST`, `PUT`, `PATCH`, and
+`DELETE` require `allow_mutation=true` because they may change state, delete
+data, or spend provider credits.
+
+For JSON endpoints, pass `json_body`. For multipart endpoints, pass
+`form_fields` and optionally `file_path`, `file_field`, and
+`file_content_type`. The MCP server reads `file_path` from the local filesystem
+where it is running.
+
+Binary responses return metadata by default. Set `include_binary=true` to
+include base64 bytes up to `max_binary_bytes`.
+
 ### `vidpipe_produce_project`
 
 Creates and fully produces a project. It accepts:
@@ -94,6 +123,6 @@ runs the same E2E production workflow.
 
 ## Safety
 
-These tools can trigger paid provider calls. Keep Vidpipe on localhost or behind
-auth, and prefer `vidpipe_preflight` plus small `scene_count` / `shots_per_scene`
-values when testing a new MCP client.
+Production tools and mutating API requests can trigger paid provider calls.
+Keep Vidpipe on localhost or behind auth, and prefer `vidpipe_preflight` plus
+small `scene_count` / `shots_per_scene` values when testing a new MCP client.

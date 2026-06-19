@@ -48,6 +48,17 @@ class FakeSoundDeckLLM:
         })
 
 
+class FakeNoMusicLLM(FakeSoundDeckLLM):
+    prompts: list[str]
+
+    def __init__(self) -> None:
+        self.prompts = []
+
+    async def generate_text(self, prompt, schema, **kwargs):
+        self.prompts.append(prompt)
+        return await super().generate_text(prompt, schema, **kwargs)
+
+
 class FakeSFXAdapter(AudioAdapter):
     def __init__(self, tmp_path: Path) -> None:
         self.tmp_path = tmp_path
@@ -233,3 +244,29 @@ async def test_sound_deck_generates_audio_and_scene_stem(session_factory, tmp_pa
         assert _max_volume_db(first_cue) > -80.0
         assert _max_volume_db(gap_between_cues) < -80.0
         assert _max_volume_db(delayed_cue) > -80.0
+
+
+@pytest.mark.asyncio
+async def test_sound_deck_can_request_music_beds(session_factory):
+    service = SoundDeckService()
+    async with session_factory() as session:
+        production = await _seed_production(session)
+        llm = FakeNoMusicLLM()
+
+        cues = await service.generate_from_production(
+            session,
+            production.id,
+            llm,
+            text_model="test-model",
+            include_music=True,
+            music_prompt="gentle analog synth pulse with warm celestial pads",
+        )
+
+        music_cues = [cue for cue in cues if cue.cue_type == "MUSIC"]
+        assert len(music_cues) == 1
+        assert "gentle analog synth pulse" in music_cues[0].prompt
+        assert "no vocals" in music_cues[0].prompt
+        assert music_cues[0].start_time_seconds == 0.0
+        assert music_cues[0].duration_seconds == 4.0
+        assert music_cues[0].volume_db == -30.0
+        assert "Also create one MUSIC cue per scene" in llm.prompts[0]

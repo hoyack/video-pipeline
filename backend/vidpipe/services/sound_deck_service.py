@@ -32,10 +32,12 @@ from vidpipe.services.storage_backend import LocalStorageBackend, get_storage_ba
 logger = logging.getLogger(__name__)
 
 
-SOUND_DECK_SYSTEM_PROMPT = """You design production sound effects for a video timeline.
+SOUND_DECK_SYSTEM_PROMPT = """You design production sound effects and soundtrack beds for a video timeline.
 Return only JSON matching the schema. Create concise, layerable SFX/ambience/foley
-cues that support the visuals without competing with narration. Use scene_number and
-shot_number from the provided list. Prompts must be ready for a text-to-sound model."""
+cues that support the visuals without competing with narration. When asked for MUSIC,
+write instrumental text-to-sound prompts with no vocals, no lyrics, and no speech.
+Use scene_number and shot_number from the provided list. Prompts must be ready for a
+text-to-sound model."""
 
 
 class SoundDeckError(RuntimeError):
@@ -155,12 +157,19 @@ class SoundDeckService:
         llm_adapter: Any,
         *,
         text_model: str | None = None,
+        include_music: bool = False,
+        music_prompt: str | None = None,
     ) -> list[SoundEffectCue]:
         production = await session.get(Production, production_id)
         if production is None:
             raise ValueError("Production not found")
 
-        prompt = await self._build_generation_prompt(session, production)
+        prompt = await self._build_generation_prompt(
+            session,
+            production,
+            include_music=include_music,
+            music_prompt=music_prompt,
+        )
         generated = await llm_adapter.generate_text(
             prompt,
             GeneratedSoundDeck,
@@ -171,6 +180,15 @@ class SoundDeckService:
             generated = GeneratedSoundDeck.model_validate(generated)
         if len(generated.cues) < 2:
             generated = GeneratedSoundDeck(cues=await self._fallback_generated_cues(session, production))
+        if include_music:
+            generated = GeneratedSoundDeck(
+                cues=await self._ensure_music_cues(
+                    session,
+                    production,
+                    list(generated.cues),
+                    music_prompt=music_prompt,
+                )
+            )
 
         await session.execute(delete(SoundEffectCue).where(SoundEffectCue.production_id == production_id))
         await session.flush()
@@ -182,6 +200,11 @@ class SoundDeckService:
                 production_id,
                 cue_data.scene_number,
                 cue_data.shot_number,
+            )
+            default_duration = (
+                await self._scene_duration(session, scene_id)
+                if cue_data.cue_type == "MUSIC" and scene_id
+                else self._default_duration(cue_data.cue_type)
             )
             cue = SoundEffectCue(
                 production_id=production_id,
@@ -195,7 +218,7 @@ class SoundDeckService:
                 prompt=cue_data.prompt,
                 timing_hint=cue_data.timing_hint,
                 start_time_seconds=self._normalized_start_seconds(cue_data.start_time_seconds, scene_start),
-                duration_seconds=cue_data.duration_seconds or self._default_duration(cue_data.cue_type),
+                duration_seconds=cue_data.duration_seconds or default_duration,
                 volume_db=cue_data.volume_db if cue_data.volume_db is not None else self._default_volume(cue_data.cue_type),
                 generation_status="PENDING",
                 provider_metadata={"text_model": text_model} if text_model else None,
@@ -364,7 +387,14 @@ class SoundDeckService:
         await session.commit()
         return artifacts
 
-    async def _build_generation_prompt(self, session: AsyncSession, production: Production) -> str:
+    async def _build_generation_prompt(
+        self,
+        session: AsyncSession,
+        production: Production,
+        *,
+        include_music: bool = False,
+        music_prompt: str | None = None,
+    ) -> str:
         scenes_payload = []
         result = await session.execute(
             select(Scene)
@@ -420,6 +450,17 @@ class SoundDeckService:
                 for binding, asset in result.all()
             ]
 
+        music_instruction = ""
+        if include_music:
+            music_instruction = (
+                "\nAlso create one MUSIC cue per scene as a low-volume instrumental soundtrack bed. "
+                "MUSIC prompts must describe custom music only: no vocals, no lyrics, no spoken words, "
+                "and no recognizable copyrighted melodies. Place each MUSIC cue at scene start, run it "
+                "for the full scene duration, and keep volume_db around -30 so narration remains clear. "
+            )
+            if music_prompt:
+                music_instruction += f"Use this soundtrack direction: {music_prompt}\n"
+
         return (
             f"Production: {production.name}\n"
             f"Description: {production.description or ''}\n"
@@ -430,7 +471,56 @@ class SoundDeckService:
             "Use duration_seconds between 1 and 8 for spot effects, and up to the scene duration "
             "for ambience. Keep volume_db negative: around -24 for ambience, -18 for foley, "
             "and -12 for prominent impacts."
+            f"{music_instruction}"
         )
+
+    async def _ensure_music_cues(
+        self,
+        session: AsyncSession,
+        production: Production,
+        cues: list[Any],
+        *,
+        music_prompt: str | None = None,
+    ) -> list[Any]:
+        """Ensure each scene has a generated soundtrack bed when requested."""
+        from vidpipe.schemas.sound_deck import GeneratedSoundCue
+
+        scenes_result = await session.execute(
+            select(Scene)
+            .where(Scene.production_id == production.id, Scene.deleted_at.is_(None))
+            .order_by(Scene.scene_order, Scene.screenplay_breakdown_index, Scene.created_at)
+        )
+        scenes = list(scenes_result.scalars().all())
+        scenes_with_music = {
+            cue.scene_number
+            for cue in cues
+            if cue.cue_type == "MUSIC" and cue.scene_number is not None
+        }
+        for scene_number, scene in enumerate(scenes, start=1):
+            if scene_number in scenes_with_music:
+                continue
+            duration = (scene.target_clip_duration or 5) * max(scene.target_shot_count or 1, 1)
+            direction = music_prompt or (
+                "subtle cinematic ambient electronic score, warm analog pads, soft pulsing low synth, "
+                "gentle shimmer, intimate science-fiction tone"
+            )
+            cues.append(
+                GeneratedSoundCue(
+                    scene_number=scene_number,
+                    shot_number=1,
+                    cue_type="MUSIC",
+                    name=f"{scene.title or 'Scene'} music bed",
+                    prompt=(
+                        f"{direction}; instrumental underscore for {scene.title or scene.prompt}; "
+                        "no vocals, no lyrics, no speech, no melody from an existing song, mixable under narration."
+                    ),
+                    timing_hint="full scene soundtrack bed",
+                    start_time_seconds=0.0,
+                    duration_seconds=float(duration),
+                    volume_db=-30.0,
+                )
+            )
+        return cues
 
     async def _fallback_generated_cues(self, session: AsyncSession, production: Production):
         from vidpipe.schemas.sound_deck import GeneratedSoundCue
@@ -493,9 +583,13 @@ class SoundDeckService:
         return max(0.0, value)
 
     def _default_duration(self, cue_type: str) -> float:
+        if cue_type == "MUSIC":
+            return 10.0
         return 6.0 if cue_type == "AMBIENCE" else 2.0
 
     def _default_volume(self, cue_type: str) -> float:
+        if cue_type == "MUSIC":
+            return -30.0
         if cue_type == "AMBIENCE":
             return -26.0
         if cue_type in {"IMPACT", "MECHANICAL"}:

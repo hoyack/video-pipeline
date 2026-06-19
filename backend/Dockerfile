@@ -12,7 +12,7 @@ WORKDIR /app
 
 # Install dependencies first (cache-friendly layer ordering)
 COPY backend/pyproject.toml backend/
-RUN pip install --no-cache-dir -e backend/
+RUN pip install --no-cache-dir -e "backend/[dev]"
 
 # ---- Production stage ----
 FROM python:3.11-slim
@@ -32,7 +32,7 @@ COPY config.yaml .
 COPY backend/ backend/
 
 # Install package in editable mode (registers entry points)
-RUN pip install --no-cache-dir -e backend/
+RUN pip install --no-cache-dir -e "backend/[dev]"
 
 # Default Docker paths — overridable via env or .env
 ENV VIDPIPE_STORAGE__DATABASE_URL="sqlite+aiosqlite:///data/vidpipe.db"

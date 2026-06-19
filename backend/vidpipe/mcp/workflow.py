@@ -8,17 +8,20 @@ the browser UI and with the existing opt-in E2E tests.
 from __future__ import annotations
 
 import asyncio
+import base64
 import math
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 ProgressCallback = Callable[[str], Awaitable[None]]
+MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 class VidpipeMCPError(RuntimeError):
@@ -104,6 +107,48 @@ class ProductionSpec(BaseModel):
         return value
 
 
+class APIRequestSpec(BaseModel):
+    """Generic Vidpipe API request accepted by the MCP bridge."""
+
+    method: str
+    path: str
+    query: dict[str, Any] | None = None
+    json_body: dict[str, Any] | list[Any] | None = None
+    form_fields: dict[str, Any] | None = None
+    file_path: str | None = None
+    file_field: str = "file"
+    file_content_type: str | None = None
+    allow_mutation: bool = False
+    include_binary: bool = False
+    max_binary_bytes: int = Field(default=2_000_000, ge=1, le=20_000_000)
+
+    @field_validator("method")
+    @classmethod
+    def _validate_method(cls, value: str) -> str:
+        method = value.upper()
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            raise ValueError("method must be GET, POST, PUT, PATCH, or DELETE")
+        return method
+
+    @field_validator("path")
+    @classmethod
+    def _validate_path(cls, value: str) -> str:
+        return normalize_api_path(value)
+
+    @model_validator(mode="after")
+    def _validate_mutation(self) -> "APIRequestSpec":
+        if self.method in MUTATING_METHODS and not self.allow_mutation:
+            raise ValueError(
+                f"{self.method} requests require allow_mutation=true because they may "
+                "change state, delete data, or spend provider credits"
+            )
+        if self.json_body is not None and (self.form_fields is not None or self.file_path):
+            raise ValueError("json_body cannot be combined with form_fields or file_path")
+        if self.file_path and not self.file_field:
+            raise ValueError("file_field is required when file_path is provided")
+        return self
+
+
 class VidpipeAPI:
     """Thin async client for the Vidpipe API."""
 
@@ -141,6 +186,14 @@ class VidpipeAPI:
             return response.json()
         return response.content
 
+    async def raw_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        response = await self._client.request(method, self.api_url(path), **kwargs)
+        if response.status_code >= 400:
+            raise VidpipeMCPError(
+                f"{method} {path} failed with HTTP {response.status_code}: {response.text[:2000]}"
+            )
+        return response
+
     async def get(self, path: str, **kwargs: Any) -> Any:
         return await self.request("GET", path, **kwargs)
 
@@ -168,6 +221,160 @@ class ProductionArtifacts:
 
 def normalize_api_base(api_base: str | None) -> str:
     return (api_base or "http://localhost:8100").rstrip("/")
+
+
+def normalize_api_path(path: str) -> str:
+    if "://" in path:
+        raise ValueError("path must be relative to the Vidpipe API, not an absolute URL")
+    normalized = path.strip()
+    if not normalized:
+        raise ValueError("path is required")
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized
+    if normalized == "/api":
+        normalized = "/"
+    elif normalized.startswith("/api/"):
+        normalized = normalized[4:]
+    if ".." in normalized.split("/"):
+        raise ValueError("path must not contain '..' segments")
+    return normalized
+
+
+def _binary_omitted_reason(request: APIRequestSpec, byte_count: int) -> str:
+    if not request.include_binary:
+        return "include_binary=false"
+    if byte_count > request.max_binary_bytes:
+        return f"binary response exceeds max_binary_bytes={request.max_binary_bytes}"
+    return "binary response omitted"
+
+
+async def get_api_catalog(
+    api_base: str | None = None,
+    *,
+    method: str | None = None,
+    path_contains: str | None = None,
+    tag: str | None = None,
+) -> dict[str, Any]:
+    """Return a filtered catalog of the live Vidpipe OpenAPI surface."""
+
+    base = normalize_api_base(api_base)
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        response = await client.get(f"{base}/openapi.json")
+        if response.status_code >= 400:
+            raise VidpipeMCPError(
+                f"GET /openapi.json failed with HTTP {response.status_code}: {response.text[:2000]}"
+            )
+        openapi = response.json()
+
+    method_filter = method.upper() if method else None
+    path_filter = path_contains.lower() if path_contains else None
+    tag_filter = tag.lower() if tag else None
+    routes = []
+    valid_methods = {"get", "post", "put", "patch", "delete"}
+
+    for route_path, operations in sorted(openapi.get("paths", {}).items()):
+        for route_method, spec in sorted(operations.items()):
+            if route_method not in valid_methods or not isinstance(spec, dict):
+                continue
+            method_upper = route_method.upper()
+            tags = spec.get("tags") or []
+            if method_filter and method_upper != method_filter:
+                continue
+            if path_filter and path_filter not in route_path.lower():
+                continue
+            if tag_filter and tag_filter not in {str(item).lower() for item in tags}:
+                continue
+            request_body = spec.get("requestBody") or {}
+            routes.append(
+                {
+                    "method": method_upper,
+                    "path": route_path,
+                    "operation_id": spec.get("operationId"),
+                    "summary": spec.get("summary"),
+                    "tags": tags,
+                    "has_request_body": bool(request_body),
+                    "parameters": [
+                        {
+                            "name": parameter.get("name"),
+                            "in": parameter.get("in"),
+                            "required": parameter.get("required", False),
+                        }
+                        for parameter in spec.get("parameters", [])
+                    ],
+                }
+            )
+
+    return {
+        "api_base": base,
+        "total_paths": len(openapi.get("paths", {})),
+        "total_operations": sum(
+            1
+            for operations in openapi.get("paths", {}).values()
+            for route_method in operations
+            if route_method in valid_methods
+        ),
+        "filtered_operations": len(routes),
+        "routes": routes,
+    }
+
+
+async def call_api_endpoint(
+    request: APIRequestSpec,
+    api_base: str | None = None,
+) -> dict[str, Any]:
+    """Call any Vidpipe ``/api`` endpoint through MCP with mutation safeguards."""
+
+    base = normalize_api_base(api_base)
+    kwargs: dict[str, Any] = {}
+    if request.query:
+        kwargs["params"] = request.query
+    if request.json_body is not None:
+        kwargs["json"] = request.json_body
+    if request.form_fields:
+        kwargs["data"] = request.form_fields
+
+    async with VidpipeAPI(base) as api:
+        if request.file_path:
+            upload_path = Path(request.file_path).expanduser()
+            if not upload_path.is_file():
+                raise VidpipeMCPError(f"Upload file not found: {upload_path}")
+            with upload_path.open("rb") as handle:
+                kwargs["files"] = {
+                    request.file_field: (
+                        upload_path.name,
+                        handle,
+                        request.file_content_type or "application/octet-stream",
+                    )
+                }
+                response = await api.raw_request(request.method, request.path, **kwargs)
+        else:
+            response = await api.raw_request(request.method, request.path, **kwargs)
+
+    content_type = response.headers.get("content-type", "")
+    shaped: dict[str, Any] = {
+        "api_base": base,
+        "method": request.method,
+        "path": request.path,
+        "status_code": response.status_code,
+        "content_type": content_type,
+    }
+    if response.status_code == 204 or not response.content:
+        shaped["body"] = None
+    elif "application/json" in content_type:
+        shaped["body"] = response.json()
+    elif content_type.startswith("text/") or "charset=" in content_type:
+        shaped["body"] = response.text
+    else:
+        shaped["binary"] = {
+            "byte_count": len(response.content),
+            "base64": base64.b64encode(response.content).decode("ascii")
+            if request.include_binary and len(response.content) <= request.max_binary_bytes
+            else None,
+            "base64_omitted_reason": None
+            if request.include_binary and len(response.content) <= request.max_binary_bytes
+            else _binary_omitted_reason(request, len(response.content)),
+        }
+    return shaped
 
 
 async def preflight(api_base: str | None = None) -> dict[str, Any]:

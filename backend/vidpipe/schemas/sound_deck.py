@@ -6,7 +6,16 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SoundCueType = Literal["SFX", "AMBIENCE", "FOLEY", "UI", "IMPACT", "MECHANICAL", "NATURAL"]
+SoundCueType = Literal[
+    "SFX",
+    "AMBIENCE",
+    "FOLEY",
+    "UI",
+    "IMPACT",
+    "MECHANICAL",
+    "NATURAL",
+    "MUSIC",
+]
 SoundCueStatus = Literal["PENDING", "GENERATING", "READY", "FAILED", "SKIPPED"]
 
 
@@ -28,6 +37,8 @@ class GeneratedSoundDeck(BaseModel):
 
 class GenerateSoundDeckRequest(BaseModel):
     text_model: Optional[str] = None
+    include_music: bool = False
+    music_prompt: Optional[str] = None
 
 
 class SoundEffectCueUpdate(BaseModel):

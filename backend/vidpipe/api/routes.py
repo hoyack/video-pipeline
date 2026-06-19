@@ -611,9 +611,9 @@ class CandidateResponse(BaseModel):
 class CreateSceneRequest(BaseModel):
     """Request schema for POST /api/scenes (draft scene creation)."""
     prompt: str = ""
-    title: str = ""
-    style: Optional[str] = None
-    aspect_ratio: Optional[str] = None
+    title: str = Field(default="", max_length=200)
+    style: Optional[str] = Field(default=None, max_length=50)
+    aspect_ratio: Optional[str] = Field(default=None, max_length=10)
     clip_duration: Optional[int] = None
     shot_count: int = 1
     text_model: Optional[str] = None

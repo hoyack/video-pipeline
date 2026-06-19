@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 import pytest_asyncio
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -55,6 +56,17 @@ def test_catalog_excludes_known_bad_preview_ids_from_new_validation():
     assert "veo-3.1-fast-generate-preview" not in routes.ALLOWED_VIDEO_MODELS
     assert "veo-3.1-generate-001" in routes.ALLOWED_VIDEO_MODELS
     assert "veo-3.1-fast-generate-001" in routes.ALLOWED_VIDEO_MODELS
+
+
+def test_create_scene_request_rejects_overlong_fixed_width_fields():
+    with pytest.raises(ValidationError, match="style"):
+        routes.CreateSceneRequest(style="x" * 51)
+
+    with pytest.raises(ValidationError, match="title"):
+        routes.CreateSceneRequest(title="x" * 201)
+
+    with pytest.raises(ValidationError, match="aspect_ratio"):
+        routes.CreateSceneRequest(aspect_ratio="x" * 11)
 
 
 @pytest.mark.asyncio

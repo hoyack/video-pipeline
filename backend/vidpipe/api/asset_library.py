@@ -992,6 +992,20 @@ async def generate_actor_image(actor_id: str, body: GenerateActorImageRequest):
                 input_image_bytes=ref_bytes,
                 seed=random.randint(0, 2**32 - 1),
             )
+        elif image_model == "flux-2-klein":
+            from vidpipe.services.comfyui_client import get_comfyui_client, flux2_resolution
+            import random
+            comfy_client = await get_comfyui_client()
+            from vidpipe.pipeline.keyframes import _generate_image_comfyui_flux2_klein
+            fw, fh = flux2_resolution("1:1")
+            image_bytes = await _generate_image_comfyui_flux2_klein(
+                comfy_client,
+                wrapped_prompt,
+                seed=random.randint(0, 2**32 - 1),
+                width=fw,
+                height=fh,
+                reference_image_bytes_list=[ref_bytes] if ref_bytes else None,
+            )
         elif image_model in COMFYUI_IMAGE_MODELS and image_model.startswith("flux-"):
             from vidpipe.services.comfyui_client import get_comfyui_client, _FLUX_RESOLUTIONS
             import random

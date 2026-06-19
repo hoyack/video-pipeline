@@ -55,9 +55,17 @@ async def _seed_default_user(conn) -> None:
         sid = _uuid.uuid4().hex if _is_sqlite() else str(_uuid.uuid4())
         await conn.execute(
             text(
-                "INSERT INTO user_settings (id, user_id) VALUES (:sid, :uid)"
+                """
+                INSERT INTO user_settings (
+                    id,
+                    user_id,
+                    ollama_use_cloud,
+                    show_cost
+                )
+                VALUES (:sid, :uid, :ollama_use_cloud, :show_cost)
+                """
             ),
-            {"sid": sid, "uid": uid},
+            {"sid": sid, "uid": uid, "ollama_use_cloud": False, "show_cost": True},
         )
         logger.info("Seeded default user %s", uid)
 

@@ -16,6 +16,8 @@ services:
       # Persist InsightFace models (inswapper_128.onnx for face-swap + buffalo_l).
       - ./models/insightface:/root/.insightface/models
       - ${GOOGLE_APPLICATION_CREDENTIALS:-./.gcp-credentials.json}:/app/credentials.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${VIDPIPE_PORT:-8000}:8000"
     command: ["uvicorn", "vidpipe.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

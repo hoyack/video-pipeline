@@ -1308,7 +1308,9 @@ class UserSettings(Base):
     show_cost: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
     # Phase 13: Ollama configuration
-    ollama_use_cloud: Mapped[bool] = mapped_column(Boolean, default=False)
+    ollama_use_cloud: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     ollama_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ollama_endpoint: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     ollama_models: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)

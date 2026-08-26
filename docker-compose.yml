@@ -5,6 +5,8 @@ services:
       dockerfile: backend/Dockerfile
     gpus: all  # RTX 4070 Ti via nvidia runtime — GPU face restoration + 4x upscale (torch)
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - VIDPIPE_STORAGE__DATABASE_URL=${VIDPIPE_STORAGE__DATABASE_URL}
       - VIDPIPE_STORAGE__TMP_DIR=/app/tmp
